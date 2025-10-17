@@ -1,0 +1,22 @@
+[project]
+name = "manga-translation-backend"
+version = "0.1.0"
+description = "Add your description here"
+requires-python = ">=3.11"
+dependencies = [
+    "aiofiles>=25.1.0",
+    "fastapi>=0.119.0",
+    "google-generativeai>=0.8.5",
+    "manga-ocr>=0.1.11",
+    "numpy>=2.3.3",
+    "paddleocr>=2.9.2",
+    "paddlepaddle>=3.0.0",
+    "pillow>=11.3.0",
+    "pydantic>=2.12.2",
+    "pydantic-settings>=2.11.0",
+    "python-dotenv>=1.1.1",
+    "python-multipart>=0.0.20",
+    "torch>=2.0.0",
+    "transformers>=4.30.0",
+    "uvicorn[standard]>=0.37.0",
+]
