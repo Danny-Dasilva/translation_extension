@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Test script to verify new OCR setup with a manga image"""
+"""Test script to verify PaddleOCR setup with a manga image"""
 import asyncio
 import base64
 import sys
@@ -12,8 +12,8 @@ from app.services.ocr_service import OCRService
 
 
 async def test_ocr(image_path: str):
-    """Test OCR on a manga image"""
-    print(f"Testing OCR on: {image_path}")
+    """Test OCR on a manga image using PaddleOCR with built-in recognition"""
+    print(f"Testing PaddleOCR on: {image_path}")
 
     # Read image and convert to base64
     with open(image_path, 'rb') as f:
@@ -21,11 +21,12 @@ async def test_ocr(image_path: str):
         base64_image = base64.b64encode(image_data).decode('utf-8')
 
     # Initialize OCR service
-    print("Initializing OCR service...")
+    print("Initializing PaddleOCR service...")
+    print("(First run will download models, this may take a moment...)")
     ocr_service = OCRService()
 
     # Detect text
-    print("Detecting text...")
+    print("\nDetecting text with PaddleOCR (detection + recognition)...")
     results = await ocr_service.detect_text(base64_image)
 
     print(f"\n{'='*80}")
@@ -56,6 +57,7 @@ if __name__ == "__main__":
             image_path = str(sorted(images)[-1])
         else:
             print("Please provide an image path as argument")
+            print("Usage: uv run python test_new_ocr.py path/to/manga/image.jpg")
             sys.exit(1)
 
     asyncio.run(test_ocr(image_path))

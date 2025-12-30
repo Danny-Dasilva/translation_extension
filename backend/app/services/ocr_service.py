@@ -1,4 +1,4 @@
-"""OCR service using PaddleOCR for detection and manga-ocr for recognition"""
+"""OCR service using PaddleOCR for unified detection and recognition"""
 import base64
 import io
 import logging
@@ -8,7 +8,6 @@ from typing import List, Dict, Any, Optional
 from PIL import Image, ImageDraw, ImageFont
 import numpy as np
 from paddleocr import PaddleOCR
-from manga_ocr import MangaOcr
 
 logger = logging.getLogger(__name__)
 
@@ -18,36 +17,30 @@ DEBUG_DIR.mkdir(exist_ok=True)
 
 
 class OCRService:
-    """Service for detecting text in images using PaddleOCR + manga-ocr"""
+    """Service for detecting and recognizing text using PaddleOCR unified pipeline"""
 
     def __init__(self):
-        """Initialize PaddleOCR for detection and manga-ocr for recognition"""
+        """Initialize PaddleOCR pipeline with recognition enabled"""
         try:
-            # Initialize PaddleOCR for text detection only (Japanese optimized)
-            self.detector = PaddleOCR(
-                use_doc_orientation_classify=False,  # Disable document orientation (manga already oriented)
-                use_doc_unwarping=False,  # Disable unwarping (not needed for flat manga images)
-                use_textline_orientation=True,  # Enable text angle classification for rotated text
-                lang='japan',  # Japanese language
-                text_det_thresh=0.3,  # Lower threshold for better detection
-                text_det_box_thresh=0.5,  # Box threshold
-                text_det_unclip_ratio=1.8,  # Unclip ratio for text regions
+            # Initialize PaddleOCR - matching run.py configuration for consistent coordinates
+            self.pipeline = PaddleOCR(
+                use_doc_orientation_classify=False,
+                use_doc_unwarping=False,
+                use_textline_orientation=False
             )
-            logger.info("PaddleOCR detector initialized successfully")
-
-            # Initialize manga-ocr for Japanese text recognition
-            self.recognizer = MangaOcr()
-            logger.info("manga-ocr recognizer initialized successfully")
+            logger.info("PaddleOCR pipeline initialized successfully with detection + recognition")
 
         except Exception as e:
-            logger.error(f"Failed to initialize OCR engines: {e}")
+            logger.error(f"Failed to initialize PaddleOCR pipeline: {e}")
             raise
 
     async def detect_text(self, base64_image: str) -> List[Dict[str, Any]]:
         """
-        Detect text and bounding boxes in a base64-encoded image using two-stage pipeline:
-        1. PaddleOCR detects text regions (bounding boxes)
-        2. manga-ocr recognizes Japanese text in each region
+        Detect text and bounding boxes in a base64-encoded image using PaddleOCR.
+
+        This replaces the previous two-stage pipeline:
+        - Old: PaddleOCR detection only → crop regions → manga-ocr recognition
+        - New: Single PaddleOCR call with built-in detection + recognition
 
         Args:
             base64_image: Base64-encoded image string (with or without data URI prefix)
@@ -56,60 +49,99 @@ class OCRService:
             List of dictionaries containing:
             - text: detected Japanese text
             - minX, minY, maxX, maxY: bounding box coordinates
-            - confidence: detection confidence (0-1)
+            - confidence: recognition confidence (0-1)
         """
         try:
             # Decode base64 image
             image_np = self._decode_base64_image(base64_image)
-            image_pil = Image.fromarray(image_np)
 
-            # Stage 1: Detect text regions using PaddleOCR
-            logger.info("Running PaddleOCR text detection...")
-            detection_result = self.detector.predict(image_np)
+            orig_height, orig_width = image_np.shape[:2]
+            logger.info(f"Original image dimensions: {orig_width}x{orig_height}")
+
+            # Save input image to temp file (predict() requires file path, not numpy array)
+            timestamp = int(time.time() * 1000)
+            input_image_path = DEBUG_DIR / f"input_image_{timestamp}.jpg"
+            Image.fromarray(image_np).save(input_image_path, 'JPEG', quality=95)
+            logger.info(f"Saved input image to: {input_image_path}")
+
+            # Run PaddleOCR using predict() method (matches run.py approach)
+            # predict() returns correct dt_polys coordinates, unlike ocr()
+            logger.info("Running PaddleOCR predict() for detection and recognition...")
+            result = self.pipeline.predict(str(input_image_path))
+            logger.info(f"PaddleOCR processing complete for image: {orig_width}x{orig_height}")
+            # DEBUG: Log raw result structure
+            logger.info(f"PaddleOCR raw result type: {type(result)}")
+            logger.info(f"PaddleOCR raw result length: {len(result) if result else 0}")
+            if result and len(result) > 0:
+                logger.info(f"First result element type: {type(result[0])}")
 
             ocr_boxes = []
-            if detection_result and len(detection_result) > 0:
-                result_dict = detection_result[0]
-                dt_polys = result_dict.get('dt_polys', [])
 
-                logger.info(f"PaddleOCR detected {len(dt_polys)} text regions")
+            # Parse PaddleOCR predict() output - simplified approach matching run.py
+            if result and len(result) > 0:
+                # Get first result (single image)
+                page = result[0]
 
-                # Stage 2: Recognize text in each detected region using manga-ocr
-                for idx, bbox_points in enumerate(dt_polys):
-                    # Convert bbox to minX, minY, maxX, maxY format
-                    x_coords = [point[0] for point in bbox_points]
-                    y_coords = [point[1] for point in bbox_points]
-                    minX = int(min(x_coords))
-                    minY = int(min(y_coords))
-                    maxX = int(max(x_coords))
-                    maxY = int(max(y_coords))
+                # Access the 'res' dictionary within json (matching run.py lines 38-42)
+                res_dict = page.json.get('res', {})
 
-                    # Crop the text region
-                    try:
-                        cropped_region = image_pil.crop((minX, minY, maxX, maxY))
+                # Extract dt_polys (detection polygons), rec_texts, and rec_scores
+                dt_polys = res_dict.get('dt_polys', [])
+                rec_texts = res_dict.get('rec_texts', [])
+                rec_scores = res_dict.get('rec_scores', [])
 
-                        # Recognize text using manga-ocr
-                        recognized_text = self.recognizer(cropped_region)
+                logger.info(f"PaddleOCR detected {len(dt_polys)} text boxes with {len(rec_texts)} recognized texts")
 
-                        # Skip empty or very short detections (likely noise)
-                        if recognized_text and len(recognized_text.strip()) > 0:
-                            ocr_boxes.append({
-                                'text': recognized_text,
-                                'minX': minX,
-                                'minY': minY,
-                                'maxX': maxX,
-                                'maxY': maxY,
-                                'confidence': 0.9  # manga-ocr doesn't provide confidence scores
-                            })
-                            logger.debug(f"Region {idx+1}: '{recognized_text}'")
-
-                    except Exception as e:
-                        logger.warning(f"Failed to recognize text in region {idx+1}: {e}")
+                # Process each detected text box
+                for idx, (poly, text, score) in enumerate(zip(dt_polys, rec_texts, rec_scores)):
+                    # Skip empty text
+                    if not text or not text.strip():
+                        logger.debug(f"Skipping box {idx + 1} due to empty text")
                         continue
 
-                logger.info(f"Successfully recognized {len(ocr_boxes)} text regions")
+                    # Convert polygon to bounding box (minX, minY, maxX, maxY)
+                    poly_np = np.array(poly)
+                    minX = int(np.min(poly_np[:, 0]))
+                    minY = int(np.min(poly_np[:, 1]))
+                    maxX = int(np.max(poly_np[:, 0]))
+                    maxY = int(np.max(poly_np[:, 1]))
 
-                # DEBUG: Visualize OCR boxes
+                    # Clip to image bounds
+                    minX = max(0, min(minX, orig_width - 1))
+                    minY = max(0, min(minY, orig_height - 1))
+                    maxX = max(0, min(maxX, orig_width - 1))
+                    maxY = max(0, min(maxY, orig_height - 1))
+
+                    # Filter sound effects: huge boxes with small text (area/char > 8000)
+                    box_area = (maxX - minX) * (maxY - minY)
+                    text_len = len(text.strip())
+                    area_per_char = box_area / text_len if text_len > 0 else 0
+
+                    if area_per_char > 6000:
+                        logger.debug(f"Skipping sound effect box {idx + 1}: '{text}' (area/char: {area_per_char:.0f})")
+                        continue
+
+                    entry = {
+                        'text': text.strip(),
+                        'confidence': float(score),
+                        'minX': minX,
+                        'minY': minY,
+                        'maxX': maxX,
+                        'maxY': maxY,
+                    }
+                    ocr_boxes.append(entry)
+                    logger.info(
+                        f"Added text box {len(ocr_boxes)}: '{text[:30]}...' "
+                        f"(confidence: {score:.2f}, bounds: {minX},{minY} to {maxX},{maxY})"
+                    )
+
+            else:
+                logger.warning(f"PaddleOCR returned empty or invalid result: {result}")
+
+            logger.info(f"PaddleOCR detected {len(ocr_boxes)} text regions total")
+
+            # DEBUG: Visualize OCR boxes
+            if ocr_boxes:
                 self._visualize_ocr_boxes(image_np, ocr_boxes)
             else:
                 logger.warning("No text detected in image")
@@ -119,176 +151,6 @@ class OCRService:
         except Exception as e:
             logger.error(f"OCR detection failed: {e}", exc_info=True)
             raise ValueError(f"Failed to detect text: {str(e)}")
-
-    def group_text_regions(
-        self,
-        ocr_boxes: List[Dict[str, Any]],
-        vertical_threshold: float = 15.0,
-        horizontal_threshold: float = 15.0
-    ) -> List[Dict[str, Any]]:
-        """
-        Group nearby text regions into complete sentences/paragraphs.
-
-        Japanese manga typically has vertical text in speech bubbles where multiple
-        small text regions should be combined into one sentence before translation.
-
-        Args:
-            ocr_boxes: List of individual OCR detection boxes
-            vertical_threshold: Max vertical distance (pixels) to group boxes
-            horizontal_threshold: Max horizontal distance (pixels) to group boxes
-
-        Returns:
-            List of grouped text regions with:
-            - text: combined text from all boxes in group
-            - minX, minY, maxX, maxY: merged bounding box
-            - original_boxes: list of original boxes in this group
-            - confidence: average confidence
-        """
-        if not ocr_boxes:
-            return []
-
-        try:
-            logger.info(f"Grouping {len(ocr_boxes)} text regions...")
-
-            # Create list of boxes with indices
-            boxes = [(i, box) for i, box in enumerate(ocr_boxes)]
-            groups = []
-            visited = set()
-
-            def get_box_center(box):
-                """Get center point of box"""
-                cx = (box['minX'] + box['maxX']) / 2
-                cy = (box['minY'] + box['maxY']) / 2
-                return cx, cy
-
-            def boxes_are_close(box1, box2):
-                """Check if two boxes are close enough to be in same group"""
-                # Get box dimensions
-                b1_width = box1['maxX'] - box1['minX']
-                b1_height = box1['maxY'] - box1['minY']
-                b2_width = box2['maxX'] - box2['minX']
-                b2_height = box2['maxY'] - box2['minY']
-
-                # Calculate gaps between boxes
-                # Horizontal gap: distance between boxes in X direction
-                if box1['maxX'] < box2['minX']:
-                    h_gap = box2['minX'] - box1['maxX']
-                elif box2['maxX'] < box1['minX']:
-                    h_gap = box1['minX'] - box2['maxX']
-                else:
-                    h_gap = 0  # Boxes overlap horizontally
-
-                # Vertical gap: distance between boxes in Y direction
-                if box1['maxY'] < box2['minY']:
-                    v_gap = box2['minY'] - box1['maxY']
-                elif box2['maxY'] < box1['minY']:
-                    v_gap = box1['minY'] - box2['maxY']
-                else:
-                    v_gap = 0  # Boxes overlap vertically
-
-                # Detect text orientation (vertical vs horizontal)
-                avg_height = (b1_height + b2_height) / 2
-                avg_width = (b1_width + b2_width) / 2
-                is_vertical = avg_height > avg_width * 1.5  # Text is vertical if height >> width
-
-                # For vertical text (typical in manga):
-                # - Allow small horizontal gap (text columns are close)
-                # - Allow moderate vertical gap (text flows top to bottom)
-                if is_vertical:
-                    return h_gap <= horizontal_threshold and v_gap <= vertical_threshold
-                else:
-                    # For horizontal text:
-                    # - Allow moderate horizontal gap (text flows left to right)
-                    # - Allow small vertical gap (same line)
-                    return h_gap <= vertical_threshold and v_gap <= horizontal_threshold / 2
-
-            def get_reading_order(group_boxes):
-                """
-                Sort boxes in reading order.
-                For vertical Japanese: top-to-bottom, right-to-left columns
-                For horizontal text: left-to-right, top-to-bottom
-                """
-                if not group_boxes:
-                    return []
-
-                # Detect if text is vertical or horizontal
-                heights = [b['maxY'] - b['minY'] for _, b in group_boxes]
-                widths = [b['maxX'] - b['minX'] for _, b in group_boxes]
-                avg_height = sum(heights) / len(heights)
-                avg_width = sum(widths) / len(widths)
-                is_vertical = avg_height > avg_width * 1.5
-
-                if is_vertical:
-                    # Vertical text: sort by X (right to left), then Y (top to bottom)
-                    return sorted(group_boxes, key=lambda x: (-x[1]['minX'], x[1]['minY']))
-                else:
-                    # Horizontal text: sort by Y (top to bottom), then X (left to right)
-                    return sorted(group_boxes, key=lambda x: (x[1]['minY'], x[1]['minX']))
-
-            # Group boxes using connected components approach
-            for idx, box in boxes:
-                if idx in visited:
-                    continue
-
-                # Start new group with this box
-                group = [(idx, box)]
-                visited.add(idx)
-
-                # Find all connected boxes
-                queue = [(idx, box)]
-                while queue:
-                    current_idx, current_box = queue.pop(0)
-
-                    # Check all unvisited boxes
-                    for other_idx, other_box in boxes:
-                        if other_idx in visited:
-                            continue
-
-                        if boxes_are_close(current_box, other_box):
-                            group.append((other_idx, other_box))
-                            visited.add(other_idx)
-                            queue.append((other_idx, other_box))
-
-                groups.append(group)
-
-            # Create merged boxes for each group
-            merged_boxes = []
-            for group in groups:
-                # Sort boxes in reading order
-                sorted_group = get_reading_order(group)
-
-                # Merge text
-                merged_text = ''.join([box['text'] for _, box in sorted_group])
-
-                # Merge bounding boxes
-                all_boxes = [box for _, box in sorted_group]
-                merged_minX = min(b['minX'] for b in all_boxes)
-                merged_minY = min(b['minY'] for b in all_boxes)
-                merged_maxX = max(b['maxX'] for b in all_boxes)
-                merged_maxY = max(b['maxY'] for b in all_boxes)
-
-                # Average confidence
-                avg_confidence = sum(b['confidence'] for b in all_boxes) / len(all_boxes)
-
-                merged_boxes.append({
-                    'text': merged_text,
-                    'minX': merged_minX,
-                    'minY': merged_minY,
-                    'maxX': merged_maxX,
-                    'maxY': merged_maxY,
-                    'confidence': avg_confidence,
-                    'original_boxes': all_boxes,
-                    'group_size': len(all_boxes)
-                })
-
-            logger.info(f"Grouped into {len(merged_boxes)} text regions (from {len(ocr_boxes)} original boxes)")
-
-            return merged_boxes
-
-        except Exception as e:
-            logger.error(f"Text grouping failed: {e}", exc_info=True)
-            # Return original boxes if grouping fails
-            return ocr_boxes
 
     def _decode_base64_image(self, base64_image: str) -> np.ndarray:
         """
@@ -424,11 +286,11 @@ class OCRService:
                 draw.line([(maxX, maxY), (maxX, maxY - corner_size)], fill='blue', width=2)
 
             # Save debug image
-            # timestamp = int(time.time() * 1000)
-            # output_path = DEBUG_DIR / f"ocr_debug_{timestamp}.jpg"
-            # image.save(output_path, 'JPEG', quality=95)
+            timestamp = int(time.time() * 1000)
+            output_path = DEBUG_DIR / f"ocr_debug_{timestamp}.jpg"
+            image.save(output_path, 'JPEG', quality=95)
 
-            # logger.info(f"OCR visualization saved to: {output_path}")
+            logger.info(f"OCR visualization saved to: {output_path}")
 
         except Exception as e:
             logger.error(f"Failed to visualize OCR boxes: {e}")
@@ -542,11 +404,11 @@ class OCRService:
                     )
 
             # Save debug image
-            # timestamp = int(time.time() * 1000)
-            # output_path = DEBUG_DIR / f"translation_debug_{timestamp}.jpg"
-            # image.save(output_path, 'JPEG', quality=95)
+            timestamp = int(time.time() * 1000)
+            output_path = DEBUG_DIR / f"translation_debug_{timestamp}.jpg"
+            image.save(output_path, 'JPEG', quality=95)
 
-            # logger.info(f"Translation visualization saved to: {output_path}")
+            logger.info(f"Translation visualization saved to: {output_path}")
 
         except Exception as e:
             logger.error(f"Failed to visualize translated text: {e}")
