@@ -24,8 +24,8 @@ warmup_epochs: 3             # Warmup epochs
 warmup_momentum: 0.8         # Warmup momentum
 warmup_bias_lr: 0.1          # Warmup bias learning rate
 
-# Data
-data: datasets/data.yaml
+# Data - Using manga-bubble-pqdou (largest dataset: 3,844 train images)
+data: datasets/manga-bubble-pqdou/data.yaml
 
 # Output
 project: runs
