@@ -1,19 +1,27 @@
 [project]
 name = "manga-translation-backend"
 version = "0.1.0"
-description = "Add your description here"
+description = "Local AI-powered manga translation backend"
 requires-python = ">=3.11"
 dependencies = [
     "aiofiles>=25.1.0",
     "fastapi>=0.119.0",
-    "google-generativeai>=0.8.5",
     "numpy>=2.3.3",
-    "paddleocr[doc-parser]>=3.0.0",
-    "paddlepaddle>=3.0.0",
     "pillow>=11.3.0",
     "pydantic>=2.12.2",
     "pydantic-settings>=2.11.0",
     "python-dotenv>=1.1.1",
     "python-multipart>=0.0.20",
     "uvicorn[standard]>=0.37.0",
+    # Local AI pipeline
+    "ultralytics>=8.3.0",           # YOLOv10 detection
+    "transformers>=4.40.0",         # PaddleOCR-VL model loading
+    "accelerate>=0.30.0",           # Model loading optimization
+    "llama-cpp-python>=0.2.80",     # GGUF inference for HY-MT1.5
+    "huggingface-hub>=0.23.0",      # Model downloads
+    "torch>=2.0.0",                 # PyTorch backend
+    "jinja2>=3.1.0",                # HTML templating
 ]
+
+[tool.uv]
+package = false

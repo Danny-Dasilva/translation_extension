@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 
 from app.config import settings
 from app.routers import translate
+from app.routers import test_page
 
 # Configure logging
 logging.basicConfig(
@@ -44,6 +45,7 @@ app.add_middleware(
 
 # Include routers
 app.include_router(translate.router, tags=["translation"])
+app.include_router(test_page.router)
 
 
 @app.get("/")
