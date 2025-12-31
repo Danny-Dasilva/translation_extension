@@ -7,3 +7,10 @@ dist-firefox
 *.jpg
 # Continuous Claude cache (local only)
 .claude/cache/
+
+# Local AI model weights (download via scripts/download_models.py)
+backend/app/weights/*.gguf
+backend/app/weights/paddleocr-vl/
+
+# Debug output from test page
+backend/debug_output/
