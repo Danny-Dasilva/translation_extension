@@ -67,12 +67,12 @@ This installs:
 3. Click your profile icon → **Settings**
 4. Go to **API Keys** tab
 5. Copy your **Private API Key**
-
+`
 ## Step 5: Download Dataset
 
 ```bash
 # Set your API key
-export ROBOFLOW_API_KEY="your_private_api_key_here"
+export ROBOFLOW_API_KEY="44YDd0Z9w0JIbhFaJcYa"
 
 # Download dataset (interactive selection)
 uv run python scripts/download_dataset.py
