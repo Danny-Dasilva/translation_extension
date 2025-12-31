@@ -1,0 +1,55 @@
+# YOLOv10n Fine-tuning Configuration for Manga Speech Bubbles
+#
+# YOLOv10 uses NMS-free architecture (Consistent Dual Assignments),
+# providing deterministic inference time regardless of detection count.
+# Ideal for manga pages with 30+ speech bubbles.
+
+# Model (NMS-free for manga)
+model: weights/yolov10n.pt
+task: detect
+
+# Training
+epochs: 50
+batch: 16                    # Reduce to 8 if VRAM issues (see train.py)
+imgsz: 640
+patience: 10                 # Early stopping patience
+save_period: 10              # Save checkpoint every N epochs
+
+# Optimizer
+optimizer: AdamW
+lr0: 0.02                    # Initial learning rate
+lrf: 0.01                    # Final learning rate factor (lr0 * lrf)
+weight_decay: 0.0005         # L2 regularization
+warmup_epochs: 3             # Warmup epochs
+warmup_momentum: 0.8         # Warmup momentum
+warmup_bias_lr: 0.1          # Warmup bias learning rate
+
+# Data
+data: datasets/data.yaml
+
+# Output
+project: runs
+name: manga-bubbles
+
+# Hardware (CUDA)
+device: 0                    # GPU device ID, or 'cpu' for CPU training
+
+# Augmentation (manga-optimized)
+# Aggressive augmentation to compensate for small dataset (<10k instances)
+hsv_h: 0.015                 # HSV hue augmentation
+hsv_s: 0.4                   # HSV saturation augmentation
+hsv_v: 0.3                   # HSV value augmentation
+degrees: 15                  # Rotation (+/- degrees)
+translate: 0.1               # Translation (+/- fraction)
+scale: 0.3                   # Scale (+/- fraction)
+shear: 0.0                   # Shear (disabled - distorts bubbles)
+perspective: 0.001           # Perspective transform (manga bubbles often angled)
+flipud: 0.0                  # Vertical flip disabled (text orientation matters)
+fliplr: 0.3                  # Horizontal flip
+mosaic: 0.8                  # Mosaic augmentation (increased for small dataset)
+mixup: 0.1                   # MixUp augmentation
+copy_paste: 0.1              # Copy-paste augmentation (synthetic bubbles)
+
+# Validation
+val: true                    # Run validation during training
+plots: true                  # Generate training plots

@@ -5,3 +5,5 @@ dist-firefox
 *.pyc
 *.png
 *.jpg
+# Continuous Claude cache (local only)
+.claude/cache/
