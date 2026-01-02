@@ -8,6 +8,10 @@ from typing import List
 
 import numpy as np
 from PIL import Image
+import onnxruntime as ort
+
+# Suppress ONNX runtime warnings about node assignments to execution providers
+ort.set_default_logger_severity(3)  # 3 = ERROR only
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +70,7 @@ class MangaOCRService:
         start_time = time.perf_counter()
 
         # Load image processor and tokenizer separately
-        self.image_processor = AutoImageProcessor.from_pretrained(model_id)
+        self.image_processor = AutoImageProcessor.from_pretrained(model_id, use_fast=True)
         self.tokenizer = AutoTokenizer.from_pretrained(model_id)
 
         # Load ONNX model with CUDA provider
@@ -75,7 +79,9 @@ class MangaOCRService:
             self.model = ORTModelForVision2Seq.from_pretrained(
                 model_id,
                 provider="CUDAExecutionProvider",
-                use_cache=False
+                use_cache=False,
+                decoder_file_name="decoder_model.onnx",
+                encoder_file_name="encoder_model.onnx"
             )
             self.device = "cuda"
             logger.info("ONNX model loaded with CUDAExecutionProvider")
@@ -84,7 +90,9 @@ class MangaOCRService:
             self.model = ORTModelForVision2Seq.from_pretrained(
                 model_id,
                 provider="CPUExecutionProvider",
-                use_cache=False
+                use_cache=False,
+                decoder_file_name="decoder_model.onnx",
+                encoder_file_name="encoder_model.onnx"
             )
             self.device = "cpu"
 

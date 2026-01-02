@@ -25,8 +25,10 @@ dependencies = [
     "torch>=2.0.0", # PyTorch backend
     "jinja2>=3.1.0", # HTML templating
     "einops>=0.8.1",
+    "orjson>=3.10.0", # Fast JSON parsing (3-6x faster than stdlib)
     "sentencepiece>=0.1.99", # Required for LLaMA tokenizers
     "protobuf>=4.0.0", # Required for tokenizer serialization
+    "streaming-form-data>=1.14.0", # Fast streaming multipart parser
 ]
 
 [tool.uv]
