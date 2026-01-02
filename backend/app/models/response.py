@@ -3,6 +3,15 @@ from pydantic import BaseModel, Field
 from typing import List
 
 
+class TextRegion(BaseModel):
+    """Precise text bounding box within a bubble for targeted masking"""
+
+    minX: int = Field(description="Bounding box minimum X coordinate")
+    minY: int = Field(description="Bounding box minimum Y coordinate")
+    maxX: int = Field(description="Bounding box maximum X coordinate")
+    maxY: int = Field(description="Bounding box maximum Y coordinate")
+
+
 class TextBox(BaseModel):
     """Represents a single text box with OCR result and translation"""
     
@@ -19,6 +28,10 @@ class TextBox(BaseModel):
     zIndex: int = Field(default=1, description="Layer order")
     translatedText: str = Field(description="Translated text")
     subtextBoxes: List = Field(default_factory=list, description="Nested text boxes")
+    textRegions: List[TextRegion] = Field(
+        default_factory=list,
+        description="Precise text region boxes for targeted masking"
+    )
     
     model_config = {
         "json_schema_extra": {

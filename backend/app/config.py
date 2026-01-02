@@ -27,18 +27,28 @@ class Settings(BaseSettings):
 
     # Local AI Model Paths
     yolo_model_path: str = "app/models/yolov10n_manga.pt"
-    ocr_model_id: str = "jzhang533/PaddleOCR-VL-For-Manga"
-    translation_model_path: str = "app/weights/HY-MT1.5-1.8B-Q8_0.gguf"
+    # Note: manga-ocr auto-downloads its model, no path config needed
+
+    # Translation model
+    translation_model_filename: str = "HY-MT1.5-1.8B-Q8_0.gguf"
 
     # Weights directory (for downloaded models)
     weights_dir: str = "app/weights"
 
+    @property
+    def translation_model_path(self) -> str:
+        """Get translation model path."""
+        return f"{self.weights_dir}/{self.translation_model_filename}"
+
     # Performance Tuning
-    use_flash_attention: bool = True
-    ocr_batch_size: int = 4
-    translation_batch_mode: str = "concatenated"  # "individual" or "concatenated"
     detection_confidence: float = 0.25
     detection_image_size: int = 640
+    parallel_image_processing: bool = True  # Process multiple images in parallel
+    max_parallel_images: int = 3  # Max concurrent image processing
+
+    # Translation parallelization
+    translation_use_parallel: bool = True  # Use parallel translation with asyncio.gather
+    translation_num_instances: int = 3  # Number of translation model instances
 
     class Config:
         env_file = ".env"
