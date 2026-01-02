@@ -5,6 +5,12 @@ import os
 import uvicorn
 
 if __name__ == "__main__":
+    # Increase Uvicorn's flow control buffer for faster large body reads
+    # Default 64KB causes 31 pause/resume cycles for 2MB uploads
+    # Must be patched BEFORE uvicorn.run() is called
+    from uvicorn.protocols.http import flow_control
+    flow_control.HIGH_WATER_LIMIT = 262144  # 256KB (4x larger)
+
     # Reload mode disabled by default for optimal performance with llama-cpp
     # Enable with RELOAD=true environment variable for development
     use_reload = os.getenv("RELOAD", "false").lower() == "true"
