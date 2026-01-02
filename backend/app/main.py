@@ -9,6 +9,7 @@ import numpy as np
 from app.config import settings
 from app.routers import translate
 from app.routers import test_page
+from app.routers import websocket_upload
 
 # Configure logging
 logging.basicConfig(
@@ -100,6 +101,7 @@ app.add_middleware(
 # Include routers
 app.include_router(translate.router, tags=["translation"])
 app.include_router(test_page.router)
+app.include_router(websocket_upload.router)
 
 
 @app.get("/")
