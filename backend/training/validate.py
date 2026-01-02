@@ -17,42 +17,13 @@ import argparse
 import sys
 from pathlib import Path
 
+from utils import find_best_model, find_dataset
+
 try:
     from ultralytics import YOLO
 except ImportError:
     print("Error: ultralytics not installed. Run: uv sync")
     sys.exit(1)
-
-
-def find_best_model(base_dir: Path) -> Path:
-    """Find the best trained model."""
-    # Check common locations
-    candidates = [
-        base_dir / "runs" / "manga-bubbles" / "weights" / "best.pt",
-        base_dir.parent / "app" / "models" / "yolov10n_manga.pt",
-        base_dir / "weights" / "yolov10n.pt",  # Fallback to pretrained
-    ]
-
-    for path in candidates:
-        if path.exists():
-            return path
-
-    return None
-
-
-def find_dataset(base_dir: Path) -> Path:
-    """Find the dataset config."""
-    data_yaml = base_dir / "datasets" / "data.yaml"
-    if data_yaml.exists():
-        return data_yaml
-
-    # Try to find any data.yaml in datasets dir
-    datasets_dir = base_dir / "datasets"
-    if datasets_dir.exists():
-        for yaml_file in datasets_dir.glob("**/data.yaml"):
-            return yaml_file
-
-    return None
 
 
 def validate(model_path: Path, data_path: Path, split: str = "val"):

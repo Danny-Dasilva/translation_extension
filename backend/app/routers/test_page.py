@@ -1,8 +1,6 @@
 """Test page router for debugging the manga translation pipeline."""
 
 import asyncio
-import base64
-import io
 import json
 import logging
 import time
@@ -14,7 +12,6 @@ from typing import List, Tuple
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.templating import Jinja2Templates
-from PIL import Image
 import numpy as np
 
 from app.models.request import TranslateRequest
@@ -23,6 +20,7 @@ from app.services.detector_service import DetectorService
 from app.services.manga_ocr_service import MangaOCRService
 from app.services.local_translation_service import LocalTranslationService, LocalTranslationPool
 from app.config import settings
+from app.utils.image_processing import decode_base64_to_numpy
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/test", tags=["test"])
@@ -70,13 +68,8 @@ async def test_translate(request: Request):
     if not base64_images:
         return {"error": "No images provided"}
 
-    # Generate session ID
+    # Generate session ID for tracking
     session_id = str(uuid.uuid4())[:8]
-    session_dir = DEBUG_DIR / session_id
-    session_dir.mkdir(parents=True, exist_ok=True)
-    crops_dir = session_dir / "crops"
-    crops_dir.mkdir(exist_ok=True)
-
     logger.info(f"Test translation session: {session_id}")
 
     all_results = []
@@ -88,19 +81,8 @@ async def test_translate(request: Request):
 
             # Decode image
             preprocess_start = time.time()
-            image_data = base64_image
-            if ',' in image_data and image_data.startswith('data:image'):
-                image_data = image_data.split(',', 1)[1]
-            image_bytes = base64.b64decode(image_data)
-            image = Image.open(io.BytesIO(image_bytes))
-            if image.mode != 'RGB':
-                image = image.convert('RGB')
-            image_np = np.array(image)
+            image_np = decode_base64_to_numpy(base64_image)
             preprocess_time = (time.time() - preprocess_start) * 1000
-
-            # Save original image
-            original_path = session_dir / f"original_{idx}.jpg"
-            image.save(str(original_path), "JPEG", quality=90)
 
             # Step 1: Detect bubbles
             detect_start = time.time()
@@ -124,15 +106,9 @@ async def test_translate(request: Request):
                 })
                 continue
 
-            # Step 2: Crop regions and save
+            # Step 2: Crop regions
             crop_start = time.time()
             crops = detector_service.crop_regions(image_np, bubbles)
-            crop_paths = []
-            for i, crop in enumerate(crops):
-                crop_path = crops_dir / f"crop_{idx}_{i}.jpg"
-                crop_img = Image.fromarray(crop)
-                crop_img.save(str(crop_path), "JPEG", quality=90)
-                crop_paths.append(str(crop_path.relative_to(DEBUG_DIR)))
             crop_time = (time.time() - crop_start) * 1000
 
             # Step 3: OCR - manga-ocr is fast (~20-100ms per crop)
@@ -140,12 +116,11 @@ async def test_translate(request: Request):
             ocr_texts, ocr_times = await _test_ocr_batch(crops)
             ocr_time = (time.time() - ocr_start) * 1000
 
-            # Step 4: Translate
+            # Step 4: Translate (uses functions from translate.py with timing wrapper)
             translate_start = time.time()
-            if settings.translation_use_parallel:
-                translations, translate_times = await _test_translate_parallel(ocr_texts, target_language)
-            else:
-                translations, translate_times = await _test_translate_sequential(ocr_texts, target_language)
+            translations, translate_times = await _test_translate_with_timing(
+                ocr_texts, target_language, parallel=settings.translation_use_parallel
+            )
             translate_time = (time.time() - translate_start) * 1000
 
             # Use bubble bboxes as text regions (entire bubble will be masked)
@@ -190,7 +165,6 @@ async def test_translate(request: Request):
                     "confidence": bubble.get("confidence", 0),
                     "ocr_text": ocr_text,
                     "translated_text": translated_text,
-                    "crop_file": crop_paths[i] if i < len(crop_paths) else None,
                     "ocr_time_ms": round(ocr_times[i], 2) if i < len(ocr_times) else 0,
                     "translate_time_ms": round(translate_times[i], 2) if i < len(translate_times) else 0
                 })
@@ -200,7 +174,6 @@ async def test_translate(request: Request):
             all_results.append(text_boxes)
             all_debug.append({
                 "image_index": idx,
-                "original_file": str(original_path.relative_to(DEBUG_DIR)),
                 "bubbles": bubble_debug,
                 "timing": {
                     "preprocess_ms": round(preprocess_time, 2),
@@ -233,7 +206,7 @@ async def test_translate(request: Request):
 
     total_time = (time.time() - start_time) * 1000
 
-    # Save debug.json
+    # Build debug data (returned in response, not saved to disk)
     debug_data = {
         "session_id": session_id,
         "timestamp": datetime.now().isoformat(),
@@ -241,9 +214,6 @@ async def test_translate(request: Request):
         "images": all_debug,
         "total_time_ms": round(total_time, 2)
     }
-    debug_json_path = session_dir / "debug.json"
-    with open(debug_json_path, "w") as f:
-        json.dump(debug_data, f, indent=2, ensure_ascii=False)
 
     # Convert TextBox objects to dicts for JSON response
     # Include confidence from debug data
@@ -252,20 +222,7 @@ async def test_translate(request: Request):
         bubble_data = all_debug[img_idx].get("bubbles", []) if img_idx < len(all_debug) else []
         images_response.append([
             {
-                "ocrText": tb.ocrText,
-                "originalLanguage": tb.originalLanguage,
-                "minX": tb.minX,
-                "minY": tb.minY,
-                "maxX": tb.maxX,
-                "maxY": tb.maxY,
-                "background": tb.background,
-                "fontHeightPx": tb.fontHeightPx,
-                "fontColor": tb.fontColor,
-                "fontStrokeColor": tb.fontStrokeColor,
-                "zIndex": tb.zIndex,
-                "translatedText": tb.translatedText,
-                "subtextBoxes": [],
-                "textRegions": [{"minX": r.minX, "minY": r.minY, "maxX": r.maxX, "maxY": r.maxY} for r in tb.textRegions],
+                **tb.model_dump(),
                 "confidence": bubble_data[i].get("confidence", 0) if i < len(bubble_data) else 0,
                 "ocrTimeMs": bubble_data[i].get("ocr_time_ms", 0) if i < len(bubble_data) else 0,
                 "translateTimeMs": bubble_data[i].get("translate_time_ms", 0) if i < len(bubble_data) else 0
@@ -282,7 +239,6 @@ async def test_translate(request: Request):
         "session_id": session_id,
         "images": images_response,
         "debug": {
-            "session_dir": f"/test/debug/{session_id}",
             "timing": first_image_timing,
             "total_ms": round(total_time, 2)
         }
@@ -333,14 +289,7 @@ async def benchmark_ocr(request: Request):
     for idx, base64_image in enumerate(base64_images):
         try:
             # Decode image
-            image_data = base64_image
-            if ',' in image_data and image_data.startswith('data:image'):
-                image_data = image_data.split(',', 1)[1]
-            image_bytes = base64.b64decode(image_data)
-            image = Image.open(io.BytesIO(image_bytes))
-            if image.mode != 'RGB':
-                image = image.convert('RGB')
-            image_np = np.array(image)
+            image_np = decode_base64_to_numpy(base64_image)
 
             # Step 1: Detect bubbles
             detect_start = time.time()
@@ -429,138 +378,76 @@ async def benchmark_ocr(request: Request):
 
 
 # ============================================================================
-# Phase 1 Optimization Helper Functions
+# Test Helper Functions with Timing
+# These wrap the core translation functions from translate.py and add timing.
 # ============================================================================
 
 
 async def _test_ocr_batch(crops: List[np.ndarray]) -> Tuple[List[str], List[float]]:
     """
-    OCR using manga-ocr (fast ~20-100ms per crop).
+    OCR using manga-ocr with timing.
 
     Returns:
-        Tuple of (texts, times_ms)
+        Tuple of (texts, times_ms) where times_ms is estimated per-crop timing.
     """
     if not crops:
         return [], []
 
-    start = time.time()
-
-    # manga-ocr processes sequentially but is fast
+    start = time.perf_counter()
     texts = await ocr_service.recognize_text_batch(crops)
+    total_time = (time.perf_counter() - start) * 1000
 
-    total_time = (time.time() - start) * 1000
-
-    # Estimate per-crop time
+    # Estimate per-crop time (manga-ocr processes sequentially)
     avg_time = total_time / len(crops)
     times = [avg_time] * len(crops)
 
     logger.info(f"manga-ocr: {len(crops)} crops in {total_time:.1f}ms (avg {avg_time:.1f}ms/crop)")
-
     return texts, times
 
 
-async def _test_translate_sequential(
+async def _test_translate_with_timing(
     texts: List[str],
-    target_language: str
+    target_language: str,
+    parallel: bool = False
 ) -> Tuple[List[str], List[float]]:
     """
-    Sequential translation with per-text timing.
+    Translate texts with per-text timing, wrapping core functions from translate.py.
 
-    Uses translation pool when available.
-
-    Returns:
-        Tuple of (translations, times_ms)
-    """
-    translations = []
-    times = []
-
-    for text in texts:
-        start = time.time()
-        if translation_pool:
-            trans = await translation_pool.translate_single(text, target_language)
-        else:
-            trans = await translation_service.translate_single(text, target_language)
-        times.append((time.time() - start) * 1000)
-        translations.append(trans)
-
-    return translations, times
-
-
-async def _test_translate_parallel(
-    texts: List[str],
-    target_language: str
-) -> Tuple[List[str], List[float]]:
-    """
-    Parallel translation with per-text timing.
-
-    Uses translation pool for true parallelism when available.
+    Args:
+        texts: List of texts to translate.
+        target_language: Target language for translation.
+        parallel: If True, use parallel translation; otherwise sequential.
 
     Returns:
-        Tuple of (translations, times_ms)
+        Tuple of (translations, times_ms) where times_ms is per-text timing.
     """
     if not texts:
         return [], []
 
-    logger.info(f"[DEBUG] Starting parallel translation of {len(texts)} texts")
+    translations = []
+    times = []
 
-    async def translate_with_timing(idx: int, text: str) -> Tuple[int, str, float]:
-        logger.info(f"[DEBUG] Translation task {idx} starting: '{text[:30]}...'")
-        try:
+    if parallel and translation_pool:
+        # Use translate_parallel which properly distributes across instances with semaphores
+        # This avoids the crash from concurrent access to the same Llama instance
+        start = time.perf_counter()
+        translations = await translation_pool.translate_parallel(texts, target_language)
+        total_time = (time.perf_counter() - start) * 1000
+
+        # Estimate per-text timing (parallel execution = total time / parallelism)
+        avg_time = total_time / len(texts)
+        times = [avg_time] * len(texts)
+
+        logger.info(f"[DEBUG] Parallel translation: {len(texts)} texts in {total_time:.1f}ms (avg {avg_time:.1f}ms/text)")
+    else:
+        # Sequential translation with timing
+        for text in texts:
+            start = time.perf_counter()
             if translation_pool:
-                # Use pool for parallel translation
-                instance_id = idx % translation_pool.num_instances
-                logger.info(f"[DEBUG] Task {idx} using instance {instance_id}")
-                start = time.time()
-                # Per-instance semaphore: prevents concurrent calls to same llama instance
-                async with translation_pool.semaphores[instance_id]:
-                    logger.info(f"[DEBUG] Task {idx} acquired semaphore, entering asyncio.to_thread")
-                    trans = await asyncio.to_thread(
-                        translation_pool._translate_sync,
-                        translation_pool.instances[instance_id], text, target_language, instance_id, idx
-                    )
-                    logger.info(f"[DEBUG] Task {idx} returned from asyncio.to_thread")
-                elapsed = (time.time() - start) * 1000
+                trans = await translation_pool.translate_single(text, target_language)
             else:
-                start = time.time()
                 trans = await translation_service.translate_single(text, target_language)
-                elapsed = (time.time() - start) * 1000
-            logger.info(f"[DEBUG] Task {idx} completed: {elapsed:.1f}ms")
-            return (idx, trans, elapsed)
-        except Exception as e:
-            logger.error(f"[DEBUG] Task {idx} EXCEPTION: {e}", exc_info=True)
-            return (idx, "", 0.0)
-
-    logger.info("[DEBUG] Creating translation tasks")
-    tasks = [asyncio.create_task(translate_with_timing(i, text)) for i, text in enumerate(texts)]
-    logger.info(f"[DEBUG] Awaiting {len(tasks)} tasks with asyncio.gather")
-    results = await asyncio.gather(*tasks)
-    logger.info("[DEBUG] asyncio.gather completed")
-
-    # Sort by index
-    results = sorted(results, key=lambda x: x[0])
-    translations = [trans for _, trans, _ in results]
-    times = [t for _, _, t in results]
+            times.append((time.perf_counter() - start) * 1000)
+            translations.append(trans)
 
     return translations, times
-
-
-async def _test_process_with_overlap(
-    crops: List[np.ndarray],
-    target_language: str
-) -> Tuple[List[str], List[str], List[float], List[float]]:
-    """
-    OCR followed by parallel translation.
-
-    Returns:
-        Tuple of (ocr_texts, translations, ocr_times_ms, translate_times_ms)
-    """
-    if not crops:
-        return [], [], [], []
-
-    # Step 1: OCR with manga-ocr
-    ocr_texts, ocr_times = await _test_ocr_batch(crops)
-
-    # Step 2: Parallel translation
-    translations, translate_times = await _test_translate_parallel(ocr_texts, target_language)
-
-    return ocr_texts, translations, ocr_times, translate_times

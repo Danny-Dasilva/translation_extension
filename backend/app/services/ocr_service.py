@@ -9,6 +9,8 @@ from PIL import Image, ImageDraw, ImageFont
 import numpy as np
 from paddleocr import PaddleOCR
 
+from app.utils.image_processing import decode_base64_to_numpy
+
 logger = logging.getLogger(__name__)
 
 # Create debug directory
@@ -163,23 +165,7 @@ class OCRService:
             Numpy array representing the image
         """
         try:
-            # Remove data URI prefix if present
-            if ',' in base64_image and base64_image.startswith('data:image'):
-                base64_image = base64_image.split(',', 1)[1]
-
-            # Decode base64
-            image_bytes = base64.b64decode(base64_image)
-
-            # Load as PIL Image
-            image = Image.open(io.BytesIO(image_bytes))
-
-            # Convert to RGB if necessary
-            if image.mode != 'RGB':
-                image = image.convert('RGB')
-
-            # Convert to numpy array
-            return np.array(image)
-
+            return decode_base64_to_numpy(base64_image)
         except Exception as e:
             logger.error(f"Failed to decode base64 image: {e}")
             raise ValueError(f"Invalid base64 image data: {str(e)}")

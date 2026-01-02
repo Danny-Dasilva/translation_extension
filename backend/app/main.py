@@ -44,13 +44,14 @@ async def lifespan(app: FastAPI):
         await translate.ocr_service.recognize_text_batch([dummy_crop], batch_size=1)
         logger.info(f"OCR warmup (ONNX): {(time.time() - ocr_start)*1000:.1f}ms")
 
-        # Warmup translation (HY-MT1.5) - use pool if available
+        # Warmup translation (HY-MT1.5) - warm up ALL instances in pool
         translate_start = time.time()
         if translate.translation_pool:
-            await translate.translation_pool.translate_single("テスト", "English")
+            warmup_stats = await translate.translation_pool.warmup()
+            logger.info(f"Translation warmup ({warmup_stats['num_instances']} instances): {warmup_stats['total_warmup_ms']:.1f}ms")
         else:
             await translate.translation_service.translate_single("テスト", "English")
-        logger.info(f"Translation warmup: {(time.time() - translate_start)*1000:.1f}ms")
+            logger.info(f"Translation warmup: {(time.time() - translate_start)*1000:.1f}ms")
 
         logger.info(f"All models warmed up in {(time.time() - warmup_start)*1000:.1f}ms")
     except Exception as e:
@@ -102,24 +103,3 @@ async def health():
             "translation": "ready"
         }
     }
-
-
-if __name__ == "__main__":
-    import os
-    import sys
-
-    # Ensure the parent directory is in the path for imports
-    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-    import uvicorn
-
-    # Reload mode disabled by default for optimal performance with llama-cpp
-    # Enable with RELOAD=true environment variable for development
-    use_reload = os.getenv("RELOAD", "false").lower() == "true"
-
-    uvicorn.run(
-        "app.main:app",
-        host=settings.host,
-        port=settings.port,
-        reload=use_reload,
-    )

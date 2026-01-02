@@ -48,7 +48,13 @@ class Settings(BaseSettings):
 
     # Translation parallelization
     translation_use_parallel: bool = True  # Use parallel translation with asyncio.gather
-    translation_num_instances: int = 3  # Number of translation model instances
+    translation_num_instances: int = 6  # Number of translation model instances (6 for single-round 6-bubble pages)
+
+    # Translation model tuning
+    translation_n_ctx: int = 1024  # Context window (reduced from 2048, but 512 was too tight)
+    translation_n_batch: int = 256  # Prompt processing batch size
+    translation_n_ubatch: int = 128  # Physical batch size for GPU
+    translation_max_tokens: int = 96  # Max output tokens (reduced from 256 - manga dialogue is short)
 
     # Pipeline optimization
     use_pipeline_overlap: bool = True  # Start translation as each OCR completes (overlap OCR+translation)
