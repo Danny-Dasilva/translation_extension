@@ -12,9 +12,10 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-# Global GPU inference semaphore - serializes ALL translation GPU operations
+# Global GPU inference semaphore - DISABLED: serializes ALL translation GPU operations
 # Prevents GPU contention that causes slowdown when multiple inferences run simultaneously
-_translation_gpu_semaphore = asyncio.Semaphore(1)
+# This was defeating the purpose of having multiple instances - now each instance can run in parallel
+# _translation_gpu_semaphore = asyncio.Semaphore(1)
 
 
 class LocalTranslationService:
@@ -91,6 +92,12 @@ class LocalTranslationService:
         # Remove "Assistant:" prefix if present (model chat template artifact)
         if translation.startswith("Assistant:"):
             translation = translation[len("Assistant:"):].strip()
+
+        # Strip any special end tokens that may have leaked through
+        for token in ["<|im_end|>", "<|im_end>", "</s>", "<|eot_id|>"]:
+            translation = translation.replace(token, "")
+        translation = translation.strip()
+
         return translation
 
 
@@ -164,14 +171,17 @@ class LocalTranslationPool:
         Returns:
             Translated text
         """
+        logger.info(f"[DEBUG-SYNC] Instance {instance_id}, Text {text_idx}: ENTERED _translate_sync")
         t0 = time.perf_counter()
 
         if not text.strip():
+            logger.info(f"[DEBUG-SYNC] Instance {instance_id}, Text {text_idx}: empty text, returning")
             return ""
 
         # Format prompt
         prompt = f"<|im_start|>user\nTranslate the following segment into {target_language}, without additional explanation.\n\n{text}<|im_end|>\n<|im_start|>assistant\n"
         t_prompt = time.perf_counter()
+        logger.info(f"[DEBUG-SYNC] Instance {instance_id}, Text {text_idx}: calling llm.create_completion")
 
         # Inference
         response = llm.create_completion(
@@ -183,12 +193,19 @@ class LocalTranslationPool:
             repeat_penalty=1.05,
             stop=["<|im_end|>"]
         )
+        logger.info(f"[DEBUG-SYNC] Instance {instance_id}, Text {text_idx}: llm.create_completion returned")
         t_inference = time.perf_counter()
 
         # Cleanup
         translation = response["choices"][0]["text"].strip()
         if translation.startswith("Assistant:"):
             translation = translation[len("Assistant:"):].strip()
+
+        # Strip any special end tokens that may have leaked through
+        for token in ["<|im_end|>", "<|im_end>", "</s>", "<|eot_id|>"]:
+            translation = translation.replace(token, "")
+        translation = translation.strip()
+
         t_cleanup = time.perf_counter()
 
         # Log detailed timing breakdown
@@ -228,8 +245,9 @@ class LocalTranslationPool:
             instance_id = idx % self.num_instances
             llm = self.instances[instance_id]
 
-            # Use global GPU semaphore to prevent contention (not per-instance)
-            async with _translation_gpu_semaphore:
+            # Per-instance semaphore: prevents concurrent calls to same llama instance
+            # (llama-cpp is NOT thread-safe for concurrent calls to same instance)
+            async with self.semaphores[instance_id]:
                 try:
                     # Run sync function in thread pool to avoid blocking event loop
                     translation = await asyncio.to_thread(
@@ -268,12 +286,10 @@ class LocalTranslationPool:
         Returns:
             Translated text
         """
-        # Use global GPU semaphore to prevent contention
-        async with _translation_gpu_semaphore:
-            # Use instance 0 for single translations
-            return await asyncio.to_thread(
-                self._translate_sync, self.instances[0], text, target_language, 0, 0
-            )
+        # Use instance 0 for single translations
+        return await asyncio.to_thread(
+            self._translate_sync, self.instances[0], text, target_language, 0, 0
+        )
 
     async def translate_streaming(
         self,
@@ -308,18 +324,17 @@ class LocalTranslationPool:
                 idx, text = item
                 instance_id = worker_id % self.num_instances
 
-                # Use global GPU semaphore to prevent contention (not per-instance)
-                async with _translation_gpu_semaphore:
-                    try:
-                        # Run sync function in thread pool to avoid blocking event loop
-                        translation = await asyncio.to_thread(
-                            self._translate_sync,
-                            self.instances[instance_id], text, target_language, instance_id, idx
-                        )
-                        await output_queue.put((idx, text, translation))
-                    except Exception as e:
-                        logger.warning(f"Trans[{instance_id}] text {idx+1} failed: {e}")
-                        await output_queue.put((idx, text, ""))
+                # Per-instance execution allows true parallel translation across instances
+                try:
+                    # Run sync function in thread pool to avoid blocking event loop
+                    translation = await asyncio.to_thread(
+                        self._translate_sync,
+                        self.instances[instance_id], text, target_language, instance_id, idx
+                    )
+                    await output_queue.put((idx, text, translation))
+                except Exception as e:
+                    logger.warning(f"Trans[{instance_id}] text {idx+1} failed: {e}")
+                    await output_queue.put((idx, text, ""))
 
         # Start worker tasks
         workers = [worker(i) for i in range(num_workers)]

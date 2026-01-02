@@ -16,12 +16,11 @@ dependencies = [
     # Local AI pipeline
     "opencv-python>=4.8.0", # Required by ultralytics
     "ultralytics>=8.3.0", # YOLOv10 detection
-    "manga-ocr>=0.1.8", # Manga OCR (kha-white/manga-ocr)
     "transformers>=4.40.0", # Model loading for manga-ocr and translation
     "accelerate>=0.30.0", # Model loading optimization
     "llama-cpp-python>=0.3.0", # GGUF inference for HY-MT1.5
     "onnxruntime>=1.18.0", # ONNX Runtime (for training export)
-    "optimum[onnxruntime]>=1.19.0", # ONNX optimization
+    "optimum[onnxruntime-gpu]>=1.19.0", # ONNX Runtime with CUDA support
     "huggingface-hub>=0.23.0", # Model downloads
     "torch>=2.0.0", # PyTorch backend
     "jinja2>=3.1.0", # HTML templating
