@@ -161,8 +161,18 @@ export class OverlayRenderer {
     const width = textBox.maxX - textBox.minX;
     const height = textBox.maxY - textBox.minY;
 
-    // Draw white rounded rectangle background
-    this.drawRoundedRect(ctx, x, y, width, height, 'white', 8);
+    // Draw white background - use textRegions for targeted masking if available
+    if (textBox.textRegions && textBox.textRegions.length > 0) {
+      // Mask only the text regions (targeted masking)
+      for (const region of textBox.textRegions) {
+        const rw = region.maxX - region.minX;
+        const rh = region.maxY - region.minY;
+        this.drawRoundedRect(ctx, region.minX, region.minY, rw, rh, 'white', 4);
+      }
+    } else {
+      // Fallback: mask entire bubble region
+      this.drawRoundedRect(ctx, x, y, width, height, 'white', 8);
+    }
 
     // Prepare text rendering
     const text = textBox.translatedText;

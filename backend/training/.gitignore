@@ -1,0 +1,9 @@
+datasets/
+weights/
+runs/
+*.pt
+*.onnx
+__pycache__/
+.env
+*.pyc
+.venv/

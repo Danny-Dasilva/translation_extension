@@ -1,0 +1,15 @@
+1767219206:/Users/dannydasilva/Documents/personal/translation_extension/backend/pyproject.toml:backend
+1767219264:/Users/dannydasilva/Documents/personal/translation_extension/backend/scripts/download_models.py:backend
+1767219341:/Users/dannydasilva/Documents/personal/translation_extension/backend/app/services/detector_service.py:backend
+1767219341:/Users/dannydasilva/Documents/personal/translation_extension/backend/app/services/manga_ocr_service.py:backend
+1767219341:/Users/dannydasilva/Documents/personal/translation_extension/backend/app/services/local_translation_service.py:backend
+1767219371:/Users/dannydasilva/Documents/personal/translation_extension/backend/app/config.py:backend
+1767219394:/Users/dannydasilva/Documents/personal/translation_extension/backend/app/routers/translate.py:backend
+1767219455:/Users/dannydasilva/Documents/personal/translation_extension/backend/app/routers/translate.py:backend
+1767219485:/Users/dannydasilva/Documents/personal/translation_extension/.gitignore:root
+1767222006:/Users/dannydasilva/Documents/personal/translation_extension/backend/pyproject.toml:backend
+1767222066:/Users/dannydasilva/Documents/personal/translation_extension/backend/app/routers/test_page.py:backend
+1767222155:/Users/dannydasilva/Documents/personal/translation_extension/backend/app/templates/test_page.html:backend
+1767222168:/Users/dannydasilva/Documents/personal/translation_extension/backend/app/main.py:backend
+1767222173:/Users/dannydasilva/Documents/personal/translation_extension/backend/app/main.py:backend
+1767222184:/Users/dannydasilva/Documents/personal/translation_extension/.gitignore:root
