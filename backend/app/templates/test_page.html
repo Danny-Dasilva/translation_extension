@@ -4,6 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Manga Translation Test</title>
+    <!-- Preconnect hints to eliminate DNS/TCP/TLS handshake on first request -->
+    <link rel="preconnect" href="http://localhost:8000">
+    <link rel="dns-prefetch" href="http://localhost:8000">
     <script src="https://unpkg.com/htmx.org@1.9.10"></script>
     <style>
         * {
@@ -284,9 +287,10 @@
             <option value="multipart">Multipart (baseline)</option>
             <option value="binary" selected>Binary (fastest)</option>
             <option value="streaming">Streaming Multipart</option>
+            <option value="websocket">WebSocket (batch-optimized)</option>
         </select>
         <span id="method-hint" style="font-size:12px; color:#666;">
-            Multipart: 340ms | Binary: ~10-50ms | Streaming: ~50-100ms
+            Multipart: 340ms | Binary: ~80-100ms | Streaming: ~50-100ms | WebSocket: ~15-25ms
         </span>
     </div>
 
@@ -603,6 +607,93 @@
             }
         });
 
+        // WebSocket connection (reused for multiple uploads)
+        let wsConnection = null;
+        let wsResolve = null;
+
+        function getWebSocket(targetLang) {
+            return new Promise((resolve, reject) => {
+                // Close existing connection if language changed
+                if (wsConnection && wsConnection.targetLang !== targetLang) {
+                    console.log('[WS] Closing old connection (language changed)');
+                    wsConnection.close();
+                    wsConnection = null;
+                }
+
+                if (wsConnection && wsConnection.readyState === WebSocket.OPEN) {
+                    console.log('[WS] Reusing existing connection');
+                    resolve(wsConnection);
+                    return;
+                }
+
+                const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                const wsUrl = `${protocol}//${window.location.host}/ws/translate/${targetLang}`;
+                console.log('[WS] Creating new WebSocket to:', wsUrl);
+
+                try {
+                    const ws = new WebSocket(wsUrl);
+                    console.log('[WS] WebSocket created, readyState:', ws.readyState);
+                    ws.binaryType = 'arraybuffer';
+                    ws.targetLang = targetLang;
+
+                    ws.onopen = () => {
+                        console.log('[WS] Connection opened!');
+                        wsConnection = ws;
+                        resolve(ws);
+                    };
+
+                    ws.onerror = (err) => {
+                        console.error('[WS] Connection error:', err);
+                        reject(new Error('WebSocket connection failed'));
+                    };
+
+                    ws.onclose = (event) => {
+                        console.log('[WS] Connection closed, code:', event.code, 'reason:', event.reason);
+                        if (wsConnection === ws) wsConnection = null;
+                    };
+                } catch (e) {
+                    console.error('[WS] Failed to create WebSocket:', e);
+                    reject(e);
+                }
+            });
+        }
+
+        async function translateViaWebSocket(arrayBuffer, targetLang) {
+            console.log('[WS] Getting WebSocket connection...');
+            const ws = await getWebSocket(targetLang);
+            console.log('[WS] Got connection, readyState:', ws.readyState);
+
+            return new Promise((resolve, reject) => {
+                const timeout = setTimeout(() => {
+                    console.error('[WS] Request timeout after 60s');
+                    reject(new Error('WebSocket request timeout'));
+                }, 60000);
+
+                ws.onmessage = (event) => {
+                    console.log('[WS] Received response:', event.data.length, 'chars');
+                    clearTimeout(timeout);
+                    try {
+                        const data = JSON.parse(event.data);
+                        resolve(data);
+                    } catch (e) {
+                        console.error('[WS] Failed to parse JSON:', e);
+                        reject(new Error('Invalid JSON response'));
+                    }
+                };
+
+                ws.onerror = (err) => {
+                    console.error('[WS] Error during request:', err);
+                    clearTimeout(timeout);
+                    reject(new Error('WebSocket error during request'));
+                };
+
+                // Send binary image data
+                console.log('[WS] Sending', arrayBuffer.byteLength, 'bytes...');
+                ws.send(arrayBuffer);
+                console.log('[WS] Send complete, waiting for response...');
+            });
+        }
+
         // Translate using selected upload method
         async function translateImage() {
             if (!currentFile && !currentBase64) return;
@@ -615,9 +706,25 @@
 
             try {
                 let response;
+                let data;
 
-                if (method === 'binary' && currentFile) {
-                    // Raw binary upload - fastest! (~10-50ms overhead)
+                if (method === 'websocket' && currentFile) {
+                    // WebSocket binary upload - best for batches! (~15-25ms overhead)
+                    console.log('[WS] Starting WebSocket upload for', currentFile.name);
+                    const arrayBuffer = await currentFile.arrayBuffer();
+                    console.log('[WS] Got arrayBuffer, size:', arrayBuffer.byteLength);
+                    data = await translateViaWebSocket(arrayBuffer, targetLang);
+
+                    if (!data.success) {
+                        throw new Error(data.error || 'WebSocket translation failed');
+                    }
+
+                    hideLoading();
+                    showResults(data, method);
+                    return;  // Early return - already handled
+
+                } else if (method === 'binary' && currentFile) {
+                    // Raw binary upload - fastest HTTP! (~80-100ms overhead)
                     const arrayBuffer = await currentFile.arrayBuffer();
                     response = await fetch(`/test/translate-binary?targetLanguage=${encodeURIComponent(targetLang)}`, {
                         method: 'POST',
@@ -656,7 +763,7 @@
                     });
                 }
 
-                const data = await response.json();
+                data = await response.json();
 
                 if (data.error) {
                     throw new Error(data.error);
@@ -714,7 +821,13 @@
             let overheadHtml = '';
             let methodLabel = '';
 
-            if (method === 'binary') {
+            if (method === 'websocket') {
+                methodLabel = 'WebSocket (Binary)';
+                const frameKB = timing.ws_frame_bytes ? (timing.ws_frame_bytes / 1024).toFixed(1) : 0;
+                overheadHtml = `
+                    <div class="timing-item" style="background:#e1bee7">Frame Size: <strong>${frameKB} KB</strong></div>
+                `;
+            } else if (method === 'binary') {
                 methodLabel = 'Binary (Raw)';
                 overheadHtml = `
                     <div class="timing-item" style="background:#c8e6c9">Body Read: <strong>${timing.body_read_ms || 0}ms</strong></div>
