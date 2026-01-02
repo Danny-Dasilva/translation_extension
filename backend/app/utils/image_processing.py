@@ -9,6 +9,18 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 
+def decode_base64_to_numpy(base64_image: str) -> np.ndarray:
+    """Decode base64 image string (with optional data URI prefix) to RGB numpy array."""
+    image_data = base64_image
+    if ',' in image_data and image_data.startswith('data:image'):
+        image_data = image_data.split(',', 1)[1]
+    image_bytes = base64.b64decode(image_data)
+    image = Image.open(io.BytesIO(image_bytes))
+    if image.mode != 'RGB':
+        image = image.convert('RGB')
+    return np.array(image)
+
+
 def calculate_font_size(bbox_width: int, bbox_height: int, text_length: int) -> int:
     """
     Calculate appropriate font size based on bounding box dimensions and text length

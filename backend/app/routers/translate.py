@@ -4,10 +4,6 @@ import logging
 import time
 from fastapi import APIRouter, HTTPException, status
 from typing import List, Tuple
-import base64
-import io
-from PIL import Image
-import numpy as np
 
 from app.models.request import TranslateRequest
 from app.models.response import TranslateResponse, TextBox, TextRegion
@@ -16,6 +12,7 @@ from app.services.manga_ocr_service import MangaOCRService
 from app.services.local_translation_service import LocalTranslationService, LocalTranslationPool
 from app.utils.image_processing import (
     calculate_font_size,
+    decode_base64_to_numpy,
     detect_font_colors,
     extract_text_region_background
 )
@@ -49,18 +46,6 @@ else:
 logger.info("Local AI pipeline ready")
 
 
-def decode_base64_image(base64_image: str) -> np.ndarray:
-    """Decode a base64 image string to numpy array (RGB)."""
-    image_data = base64_image
-    if ',' in image_data and image_data.startswith('data:image'):
-        image_data = image_data.split(',', 1)[1]
-    image_bytes = base64.b64decode(image_data)
-    image = Image.open(io.BytesIO(image_bytes))
-    if image.mode != 'RGB':
-        image = image.convert('RGB')
-    return np.array(image)
-
-
 async def process_single_image(
     idx: int,
     base64_image: str,
@@ -92,7 +77,7 @@ async def process_single_image(
         # GPU-intensive operations inside semaphore (detection + OCR)
         async with semaphore:
             # Step 1: Decode image
-            image_np = decode_base64_image(base64_image)
+            image_np = decode_base64_to_numpy(base64_image)
             logger.debug(f"Image {idx + 1} decoded: {image_np.shape}")
 
             # Step 2: Detect speech bubbles (YOLOv10n - NMS-free, ~2ms)

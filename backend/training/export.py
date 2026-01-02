@@ -18,25 +18,13 @@ import shutil
 import sys
 from pathlib import Path
 
+from utils import find_best_model
+
 try:
     from ultralytics import YOLO
 except ImportError:
     print("Error: ultralytics not installed. Run: uv sync")
     sys.exit(1)
-
-
-def find_best_model(base_dir: Path) -> Path:
-    """Find the best trained model."""
-    candidates = [
-        base_dir / "runs" / "manga-bubbles" / "weights" / "best.pt",
-        base_dir.parent / "app" / "models" / "yolov10n_manga.pt",
-    ]
-
-    for path in candidates:
-        if path.exists():
-            return path
-
-    return None
 
 
 def export_model(
