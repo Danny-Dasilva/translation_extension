@@ -1,37 +1,34 @@
 """Response models for the translation API"""
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from typing import List
 
 
 class TextRegion(BaseModel):
     """Precise text bounding box within a bubble for targeted masking"""
 
-    minX: int = Field(description="Bounding box minimum X coordinate")
-    minY: int = Field(description="Bounding box minimum Y coordinate")
-    maxX: int = Field(description="Bounding box maximum X coordinate")
-    maxY: int = Field(description="Bounding box maximum Y coordinate")
+    minX: int
+    minY: int
+    maxX: int
+    maxY: int
 
 
 class TextBox(BaseModel):
     """Represents a single text box with OCR result and translation"""
-    
-    ocrText: str = Field(description="Original text detected by OCR")
-    originalLanguage: str = Field(default="", description="Detected source language")
-    minX: int = Field(description="Bounding box minimum X coordinate")
-    minY: int = Field(description="Bounding box minimum Y coordinate")
-    maxX: int = Field(description="Bounding box maximum X coordinate")
-    maxY: int = Field(description="Bounding box maximum Y coordinate")
-    background: str = Field(description="Base64 of text region background")
-    fontHeightPx: int = Field(description="Suggested font size in pixels")
-    fontColor: str = Field(description="Text color (hex)")
-    fontStrokeColor: str = Field(description="Text stroke color (hex)")
-    zIndex: int = Field(default=1, description="Layer order")
-    translatedText: str = Field(description="Translated text")
-    subtextBoxes: List = Field(default_factory=list, description="Nested text boxes")
-    textRegions: List[TextRegion] = Field(
-        default_factory=list,
-        description="Precise text region boxes for targeted masking"
-    )
+
+    ocrText: str
+    originalLanguage: str = ""
+    minX: int
+    minY: int
+    maxX: int
+    maxY: int
+    background: str
+    fontHeightPx: int
+    fontColor: str
+    fontStrokeColor: str
+    zIndex: int = 1
+    translatedText: str
+    subtextBoxes: List = []
+    textRegions: List[TextRegion] = []
     
     model_config = {
         "json_schema_extra": {
@@ -56,10 +53,8 @@ class TextBox(BaseModel):
 
 class TranslateResponse(BaseModel):
     """Response model for /translate endpoint"""
-    
-    images: List[List[TextBox]] = Field(
-        description="Array of text boxes for each image"
-    )
+
+    images: List[List[TextBox]]
     
     model_config = {
         "json_schema_extra": {

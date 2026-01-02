@@ -1,10 +1,11 @@
 """Local translation service using HY-MT1.5-1.8B-Q4_K_M via llama-cpp."""
 
 import asyncio
+import concurrent.futures
 import logging
 import time
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Tuple, Dict, Any
 
 from llama_cpp import Llama
 
@@ -24,6 +25,31 @@ class LocalTranslationService:
 
     Uses llama-cpp-python for efficient GGUF inference with GPU acceleration.
     """
+
+    @staticmethod
+    def _clean_translation_output(translation: str) -> str:
+        """
+        Clean up translation output by removing model artifacts.
+
+        Removes "Assistant:" prefix and special end tokens that may leak through.
+
+        Args:
+            translation: Raw translation text from model
+
+        Returns:
+            Cleaned translation text
+        """
+        translation = translation.strip()
+
+        # Remove "Assistant:" prefix if present (model chat template artifact)
+        if translation.startswith("Assistant:"):
+            translation = translation[len("Assistant:"):].strip()
+
+        # Strip any special end tokens that may have leaked through
+        for token in ["<|im_end|>", "<|im_end>", "</s>", "<|eot_id|>"]:
+            translation = translation.replace(token, "")
+
+        return translation.strip()
 
     def __init__(self, model_path: str | None = None):
         """
@@ -87,18 +113,8 @@ class LocalTranslationService:
             repeat_penalty=1.05,
             stop=["<|im_end|>"]
         )
-        translation = response["choices"][0]["text"].strip()
-
-        # Remove "Assistant:" prefix if present (model chat template artifact)
-        if translation.startswith("Assistant:"):
-            translation = translation[len("Assistant:"):].strip()
-
-        # Strip any special end tokens that may have leaked through
-        for token in ["<|im_end|>", "<|im_end>", "</s>", "<|eot_id|>"]:
-            translation = translation.replace(token, "")
-        translation = translation.strip()
-
-        return translation
+        translation = response["choices"][0]["text"]
+        return self._clean_translation_output(translation)
 
 
 class LocalTranslationPool:
@@ -109,12 +125,12 @@ class LocalTranslationPool:
     parallel translation without lock contention that caused progressive slowdown.
 
     VRAM Usage: ~1.5GB per instance
-    Recommended: 3 instances for 32GB VRAM
+    Recommended: 6 instances for 32GB VRAM (handles 6-bubble pages in single round)
     """
 
     def __init__(self, num_instances: int | None = None, model_path: str | None = None):
         """
-        Initialize multiple translation model instances.
+        Initialize multiple translation model instances in parallel.
 
         Args:
             num_instances: Number of model instances to load. Defaults to settings.
@@ -136,23 +152,79 @@ class LocalTranslationPool:
                 "Run: uv run python scripts/download_models.py --translation"
             )
 
-        logger.info(f"Translation Pool: Loading {num_instances} instances from {model_path}")
+        logger.info(f"Translation Pool: Loading {num_instances} instances in parallel from {model_path}")
+        load_start = time.perf_counter()
 
-        for i in range(num_instances):
-            logger.info(f"Loading translation instance {i+1}/{num_instances}...")
-
+        def load_single_instance(instance_id: int) -> Tuple[int, Llama]:
+            """Load a single Llama instance (for parallel loading)."""
+            instance_start = time.perf_counter()
             llm = Llama(
                 model_path=str(model_path),
-                n_ctx=2048,
+                n_ctx=settings.translation_n_ctx,
+                n_batch=settings.translation_n_batch,
+                n_ubatch=settings.translation_n_ubatch,
                 n_gpu_layers=-1,
                 n_threads=2,  # Reduced threads per instance
                 verbose=False,
             )
+            elapsed = (time.perf_counter() - instance_start) * 1000
+            logger.info(f"Translation instance {instance_id+1}/{num_instances} loaded in {elapsed:.0f}ms")
+            return (instance_id, llm)
 
-            self.instances.append(llm)
-            self.semaphores.append(asyncio.Semaphore(1))
+        # Load all instances in parallel using ThreadPoolExecutor
+        with concurrent.futures.ThreadPoolExecutor(max_workers=num_instances) as executor:
+            futures = [executor.submit(load_single_instance, i) for i in range(num_instances)]
+            results = [f.result() for f in concurrent.futures.as_completed(futures)]
 
-        logger.info(f"Translation Pool ready: {num_instances} instances loaded")
+        # Sort by instance_id to maintain order and extract instances
+        results.sort(key=lambda x: x[0])
+        self.instances = [llm for _, llm in results]
+        self.semaphores = [asyncio.Semaphore(1) for _ in self.instances]
+
+        load_time = (time.perf_counter() - load_start) * 1000
+        logger.info(f"Translation Pool ready: {num_instances} instances loaded in {load_time:.0f}ms")
+
+    async def warmup(self) -> Dict[str, Any]:
+        """
+        Warm up all translation instances with dummy inference.
+
+        First inference on each instance has cold-start latency. This warms up
+        all instances at startup to ensure consistent latency.
+
+        Returns:
+            dict with warmup timing statistics
+        """
+        warmup_text = "テスト"
+        timings = []
+
+        async def warmup_one(instance_id: int) -> float:
+            """Warmup single instance."""
+            start = time.perf_counter()
+            await asyncio.to_thread(
+                self._translate_sync,
+                self.instances[instance_id], warmup_text, "English", instance_id, -1
+            )
+            elapsed = (time.perf_counter() - start) * 1000
+            logger.debug(f"Instance {instance_id} warmup: {elapsed:.1f}ms")
+            return elapsed
+
+        # Warmup all instances in parallel
+        tasks = [warmup_one(i) for i in range(self.num_instances)]
+        timings = await asyncio.gather(*tasks)
+
+        stats = {
+            'num_instances': self.num_instances,
+            'avg_warmup_ms': sum(timings) / len(timings),
+            'max_warmup_ms': max(timings),
+            'total_warmup_ms': max(timings),  # Parallel = max time
+        }
+
+        logger.info(
+            f"Translation warmup complete: {self.num_instances} instances, "
+            f"avg={stats['avg_warmup_ms']:.1f}ms, max={stats['max_warmup_ms']:.1f}ms"
+        )
+
+        return stats
 
     def _translate_sync(
         self, llm: Llama, text: str, target_language: str,
@@ -171,51 +243,32 @@ class LocalTranslationPool:
         Returns:
             Translated text
         """
-        logger.info(f"[DEBUG-SYNC] Instance {instance_id}, Text {text_idx}: ENTERED _translate_sync")
         t0 = time.perf_counter()
 
         if not text.strip():
-            logger.info(f"[DEBUG-SYNC] Instance {instance_id}, Text {text_idx}: empty text, returning")
+            logger.debug(f"Instance {instance_id}, text {text_idx}: empty text, skipping")
             return ""
 
         # Format prompt
         prompt = f"<|im_start|>user\nTranslate the following segment into {target_language}, without additional explanation.\n\n{text}<|im_end|>\n<|im_start|>assistant\n"
-        t_prompt = time.perf_counter()
-        logger.info(f"[DEBUG-SYNC] Instance {instance_id}, Text {text_idx}: calling llm.create_completion")
 
         # Inference
         response = llm.create_completion(
             prompt=prompt,
-            max_tokens=256,
+            max_tokens=settings.translation_max_tokens,
             temperature=0.7,
             top_k=20,
             top_p=0.6,
             repeat_penalty=1.05,
             stop=["<|im_end|>"]
         )
-        logger.info(f"[DEBUG-SYNC] Instance {instance_id}, Text {text_idx}: llm.create_completion returned")
-        t_inference = time.perf_counter()
 
-        # Cleanup
-        translation = response["choices"][0]["text"].strip()
-        if translation.startswith("Assistant:"):
-            translation = translation[len("Assistant:"):].strip()
-
-        # Strip any special end tokens that may have leaked through
-        for token in ["<|im_end|>", "<|im_end>", "</s>", "<|eot_id|>"]:
-            translation = translation.replace(token, "")
-        translation = translation.strip()
-
-        t_cleanup = time.perf_counter()
-
-        # Log detailed timing breakdown
-        logger.info(
-            f"[Trans-{instance_id}] Text {text_idx}: "
-            f"prompt={(t_prompt-t0)*1000:.1f}ms, "
-            f"INFER={(t_inference-t_prompt)*1000:.1f}ms, "
-            f"clean={(t_cleanup-t_inference)*1000:.1f}ms, "
-            f"TOTAL={(t_cleanup-t0)*1000:.1f}ms"
+        translation = LocalTranslationService._clean_translation_output(
+            response["choices"][0]["text"]
         )
+
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+        logger.debug(f"Instance {instance_id}, text {text_idx}: completed in {elapsed_ms:.1f}ms")
 
         return translation
 
@@ -275,9 +328,10 @@ class LocalTranslationPool:
         target_language: str = "English"
     ) -> str:
         """
-        Translate a single text using next available instance.
+        Translate a single text using instance 0 with semaphore protection.
 
         For backward compatibility with code expecting single translate calls.
+        Uses semaphore to prevent concurrent access to the same Llama instance.
 
         Args:
             text: Text to translate
@@ -286,10 +340,11 @@ class LocalTranslationPool:
         Returns:
             Translated text
         """
-        # Use instance 0 for single translations
-        return await asyncio.to_thread(
-            self._translate_sync, self.instances[0], text, target_language, 0, 0
-        )
+        # Use instance 0 with semaphore protection (llama-cpp is NOT thread-safe)
+        async with self.semaphores[0]:
+            return await asyncio.to_thread(
+                self._translate_sync, self.instances[0], text, target_language, 0, 0
+            )
 
     async def translate_streaming(
         self,
