@@ -3,7 +3,6 @@ import logging
 import time
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from starlette.middleware.base import BaseHTTPMiddleware
 from contextlib import asynccontextmanager
 import numpy as np
 
@@ -71,12 +70,21 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# Middleware to capture request start time (before body parsing)
-class TimingMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):
-        request.state.start_time = time.time()
-        response = await call_next(request)
-        return response
+# Pure ASGI middleware for timing (5x faster than BaseHTTPMiddleware)
+# BaseHTTPMiddleware has known performance issues - causes 5x RPS reduction
+class TimingMiddleware:
+    """Pure ASGI middleware to capture request start time before body parsing."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http":
+            # Initialize state dict if not present
+            if "state" not in scope:
+                scope["state"] = {}
+            scope["state"]["start_time"] = time.time()
+        await self.app(scope, receive, send)
 
 app.add_middleware(TimingMiddleware)
 
