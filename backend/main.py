@@ -15,4 +15,7 @@ if __name__ == "__main__":
         port=int(os.getenv("PORT", "8000")),
         reload=use_reload,
         log_level="info",
+        # Performance optimizations for large body handling
+        http="httptools",  # C-accelerated HTTP parser (faster than h11)
+        loop="uvloop",     # 2-4x faster event loop than asyncio
     )

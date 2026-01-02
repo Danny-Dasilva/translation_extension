@@ -533,6 +533,19 @@ async def test_translate_multipart(
     }
 
 
+async def read_body_optimized(request: Request) -> bytes:
+    """
+    Read request body using bytearray for O(n) performance.
+
+    Standard request.body() uses list + b"".join() which is O(n²) for many chunks.
+    This version uses bytearray.extend() which is O(n) amortized.
+    """
+    buffer = bytearray()
+    async for chunk in request.stream():
+        buffer.extend(chunk)
+    return bytes(buffer)
+
+
 @router.post("/translate-binary")
 async def test_translate_binary(
     request: Request,
@@ -542,15 +555,13 @@ async def test_translate_binary(
     Optimized endpoint accepting raw binary image data.
     Eliminates multipart parsing overhead entirely.
 
-    Expected improvement: 340ms → 10-50ms (85-97% reduction)
-
-    Send image as raw bytes with Content-Type header.
+    Uses bytearray accumulation for O(n) body reading performance.
     """
     middleware_start = getattr(request.state, 'start_time', None)
     processing_start = time.time()
 
-    # Direct body read - no multipart parsing!
-    body = await request.body()
+    # Optimized body read using bytearray (O(n) vs O(n²) for list+join)
+    body = await read_body_optimized(request)
     body_read_time = (time.time() - processing_start) * 1000
 
     if not body:
