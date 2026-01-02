@@ -1,159 +1,80 @@
-"""PaddleOCR-VL manga OCR service using Vision-Language model."""
+"""Manga OCR service using kha-white/manga-ocr."""
 
+import asyncio
 import logging
-from pathlib import Path
+import time
 from typing import List
 
 import numpy as np
-import torch
 from PIL import Image
-from transformers import AutoModelForCausalLM, AutoProcessor
-
-from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+# Global GPU inference semaphore - serializes ALL OCR GPU operations
+# Prevents GPU contention when multiple inferences run simultaneously
+_ocr_gpu_semaphore = asyncio.Semaphore(1)
 
 
 class MangaOCRService:
     """
-    OCR service using PaddleOCR-VL-For-Manga Vision-Language model.
+    OCR service using kha-white/manga-ocr.
 
-    This model is specifically trained for manga text recognition and
-    handles vertical text, stylized fonts, and sound effects better
-    than traditional OCR.
+    This model is specifically trained for Japanese manga text recognition
+    and handles vertical text, stylized fonts, and various text orientations.
+    It's fast (~100-200ms per image) and accurate.
     """
 
     def __init__(self, model_id: str | None = None):
         """
-        Initialize the OCR model.
+        Initialize the Manga OCR model.
 
         Args:
-            model_id: HuggingFace model ID or local path. Defaults to settings.
+            model_id: Not used - manga-ocr auto-downloads its model.
+                      Kept for interface compatibility.
         """
-        if model_id is None:
-            model_id = settings.ocr_model_id
+        from manga_ocr import MangaOcr
 
-        # Check for local model first
-        local_path = Path(settings.weights_dir) / "paddleocr-vl"
-        if local_path.exists():
-            model_id = str(local_path)
-            logger.info(f"Using local OCR model from {model_id}")
-        else:
-            logger.info(f"Using HuggingFace model: {model_id}")
+        logger.info("Loading manga-ocr model...")
+        start_time = time.perf_counter()
 
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        logger.info(f"OCR device: {self.device}")
+        # MangaOcr auto-detects CUDA and handles device placement
+        self._mocr = MangaOcr()
 
-        # Determine attention implementation
-        attn_impl = None
-        if self.device == "cuda":
-            try:
-                # Try Flash Attention 2 for speed
-                attn_impl = "flash_attention_2"
-            except Exception:
-                attn_impl = "sdpa"  # Fallback to scaled dot product attention
+        # Try to apply torch.compile for optimization (PyTorch 2.0+)
+        self._compiled = False
+        try:
+            import torch
+            if hasattr(torch, 'compile') and torch.cuda.is_available():
+                logger.info("Applying torch.compile() optimization...")
+                self._mocr.model = torch.compile(self._mocr.model, mode="reduce-overhead")
+                self._compiled = True
+                logger.info("torch.compile() applied successfully")
+        except Exception as e:
+            logger.warning(f"torch.compile() not available or failed: {e}")
 
-        logger.info(f"Loading PaddleOCR-VL model...")
+        load_time = time.perf_counter() - start_time
+        device = "cuda" if self._is_cuda_available() else "cpu"
+        logger.info(f"manga-ocr loaded in {load_time:.2f}s on {device}")
 
-        # Load model with optimizations
-        model_kwargs = {
-            "trust_remote_code": True,
-            "torch_dtype": torch.bfloat16 if self.device == "cuda" else torch.float32,
-        }
-        if attn_impl:
-            model_kwargs["attn_implementation"] = attn_impl
+    def _is_cuda_available(self) -> bool:
+        """Check if CUDA is available."""
+        try:
+            import torch
+            return torch.cuda.is_available()
+        except ImportError:
+            return False
 
-        self.model = AutoModelForCausalLM.from_pretrained(
-            model_id,
-            **model_kwargs
-        ).to(self.device)
-
-        self.processor = AutoProcessor.from_pretrained(
-            model_id,
-            trust_remote_code=True
-        )
-
-        logger.info("PaddleOCR-VL model loaded successfully")
-
-    async def recognize_text(self, image_crops: List[np.ndarray]) -> List[str]:
+    def _recognize_sync(self, pil_image: Image.Image) -> str:
         """
-        Perform OCR on a list of image crops.
+        Synchronous OCR recognition on a single PIL image.
 
         Args:
-            image_crops: List of image regions as numpy arrays (RGB)
-
-        Returns:
-            List of recognized text strings, one per crop
-        """
-        if not image_crops:
-            return []
-
-        texts = []
-        for i, crop in enumerate(image_crops):
-            try:
-                text = await self._recognize_single(crop)
-                texts.append(text)
-                logger.debug(f"OCR crop {i+1}/{len(image_crops)}: '{text[:50]}...' " if len(text) > 50 else f"OCR crop {i+1}/{len(image_crops)}: '{text}'")
-            except Exception as e:
-                logger.warning(f"OCR failed for crop {i+1}: {e}")
-                texts.append("")
-
-        return texts
-
-    async def _recognize_single(self, image: np.ndarray) -> str:
-        """
-        Recognize text from a single image crop.
-
-        Args:
-            image: Image as numpy array (RGB)
+            pil_image: PIL Image to recognize text from
 
         Returns:
             Recognized text string
         """
-        # Convert to PIL Image
-        pil_image = Image.fromarray(image)
-
-        # Prepare chat message for OCR
-        messages = [{
-            "role": "user",
-            "content": [
-                {"type": "image"},
-                {"type": "text", "text": "OCR:"}
-            ]
-        }]
-
-        # Apply chat template
-        text = self.processor.apply_chat_template(
-            messages,
-            add_generation_prompt=True
-        )
-
-        # Process inputs
-        inputs = self.processor(
-            images=[pil_image],
-            text=[text],
-            return_tensors="pt"
-        )
-        inputs = {k: v.to(self.device) for k, v in inputs.items()}
-
-        # Generate text
-        with torch.no_grad():
-            generated_ids = self.model.generate(
-                **inputs,
-                max_new_tokens=128,
-                do_sample=False  # Deterministic for OCR
-            )
-
-        # Decode output
-        output = self.processor.batch_decode(
-            generated_ids,
-            skip_special_tokens=True
-        )[0]
-
-        # Extract text after "OCR:" prompt
-        clean_text = output.split("OCR:")[-1].strip()
-
-        return clean_text
+        return self._mocr(pil_image)
 
     async def recognize_text_batch(
         self,
@@ -161,11 +82,52 @@ class MangaOCRService:
         batch_size: int = 4
     ) -> List[str]:
         """
-        Batch OCR for better throughput (experimental).
+        Perform OCR on a list of image crops.
 
-        Note: Current implementation processes sequentially.
-        True batching requires model-specific optimizations.
+        Processes images sequentially since manga-ocr is already fast (~100-200ms).
+        Uses asyncio.to_thread() to avoid blocking the event loop.
+
+        Args:
+            image_crops: List of image regions as numpy arrays (RGB)
+            batch_size: Not used - kept for interface compatibility.
+                       manga-ocr processes one image at a time.
+
+        Returns:
+            List of recognized text strings, one per crop
         """
-        # For now, delegate to sequential processing
-        # TODO: Implement true batching when model supports it
-        return await self.recognize_text(image_crops)
+        if not image_crops:
+            return []
+
+        results = []
+        total_start = time.perf_counter()
+
+        for i, crop in enumerate(image_crops):
+            crop_start = time.perf_counter()
+
+            try:
+                # Convert numpy array to PIL Image
+                pil_image = Image.fromarray(crop)
+
+                # Acquire semaphore to serialize GPU access
+                async with _ocr_gpu_semaphore:
+                    # Run sync OCR in thread pool to avoid blocking
+                    text = await asyncio.to_thread(self._recognize_sync, pil_image)
+
+                crop_time = (time.perf_counter() - crop_start) * 1000
+                text_preview = text[:50] + "..." if len(text) > 50 else text
+                logger.debug(f"OCR crop {i+1}/{len(image_crops)}: '{text_preview}' ({crop_time:.1f}ms)")
+
+                results.append(text)
+
+            except Exception as e:
+                logger.warning(f"OCR failed for crop {i+1}: {e}")
+                results.append("")
+
+        total_time = (time.perf_counter() - total_start) * 1000
+        avg_time = total_time / len(image_crops) if image_crops else 0
+        logger.info(
+            f"OCR batch complete: {len(image_crops)} crops in {total_time:.1f}ms "
+            f"(avg {avg_time:.1f}ms/crop)"
+        )
+
+        return results

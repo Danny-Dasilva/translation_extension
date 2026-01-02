@@ -319,7 +319,9 @@
                             <th>#</th>
                             <th>Crop</th>
                             <th>OCR Text</th>
+                            <th>OCR (ms)</th>
                             <th>Translation</th>
+                            <th>Trans (ms)</th>
                             <th>Confidence</th>
                         </tr>
                     </thead>
@@ -389,8 +391,18 @@
                 const text = box.translatedText || '';
                 const fontSize = box.fontHeightPx || 20;
 
-                // 1. White rounded background
-                this.roundedRect(ctx, x, y, w, h, 8, 'white');
+                // 1. White background - use textRegions for targeted masking if available
+                if (box.textRegions && box.textRegions.length > 0) {
+                    // Mask only the text regions (targeted masking)
+                    for (const region of box.textRegions) {
+                        const rw = region.maxX - region.minX;
+                        const rh = region.maxY - region.minY;
+                        this.roundedRect(ctx, region.minX, region.minY, rw, rh, 4, 'white');
+                    }
+                } else {
+                    // Fallback: mask entire bubble region
+                    this.roundedRect(ctx, x, y, w, h, 8, 'white');
+                }
 
                 // 2. Word wrap text
                 ctx.font = `bold ${fontSize}px ${fontFamily}`;
@@ -625,7 +637,9 @@
 
             const timing = data.debug?.timing || {};
             document.getElementById('timing').innerHTML = `
+                <div class="timing-item">Preprocess: <strong>${timing.preprocess_ms || 0}ms</strong></div>
                 <div class="timing-item">Detection: <strong>${timing.detection_ms || 0}ms</strong></div>
+                <div class="timing-item">Crop: <strong>${timing.crop_ms || 0}ms</strong></div>
                 <div class="timing-item">OCR: <strong>${timing.ocr_ms || 0}ms</strong></div>
                 <div class="timing-item">Translation: <strong>${timing.translation_ms || 0}ms</strong></div>
                 <div class="timing-item">Total: <strong>${data.debug?.total_ms || 0}ms</strong></div>
@@ -641,7 +655,9 @@
                     <td>${i + 1}</td>
                     <td><img src="/test/debug/${data.session_id}/crops/crop_0_${i}.jpg" alt="crop" onerror="this.style.display='none'"></td>
                     <td>${box.ocrText || '-'}</td>
+                    <td>${box.ocrTimeMs?.toFixed(1) || '-'}</td>
                     <td>${box.translatedText || '-'}</td>
+                    <td>${box.translateTimeMs?.toFixed(1) || '-'}</td>
                     <td>${(box.confidence * 100).toFixed(1) || '-'}%</td>
                 `;
                 tbody.appendChild(row);

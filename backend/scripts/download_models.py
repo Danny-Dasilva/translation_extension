@@ -7,14 +7,13 @@ Usage:
 
 Models:
     - PaddleOCR-VL-For-Manga (~2GB) - Vision-Language OCR for manga
-    - HY-MT1.5-1.8B-GGUF (~2GB) - Quantized translation model
+    - HY-MT1.5-1.8B-Q4_K_M (~1GB) - JP->EN translation model
 
 Storage:
     Models are saved to backend/app/weights/
 """
 
 import argparse
-import os
 import sys
 from pathlib import Path
 
@@ -26,15 +25,15 @@ MODELS = {
     "ocr": {
         "repo_id": "jzhang533/PaddleOCR-VL-For-Manga",
         "description": "PaddleOCR-VL-For-Manga (Vision-Language OCR)",
-        "type": "snapshot",  # Download entire repo
+        "type": "snapshot",
         "size": "~2GB",
     },
     "translation": {
-        "repo_id": "Hongyao-Yu/HY-MT1.5-1.8B-GGUF",
+        "repo_id": "tencent/HY-MT1.5-1.8B-GGUF",
         "filename": "HY-MT1.5-1.8B-Q8_0.gguf",
-        "description": "HY-MT1.5 (Q8_0 quantized translation model)",
-        "type": "file",  # Download single file
-        "size": "~2GB",
+        "description": "HY-MT1.5-1.8B-Q6_K translation model",
+        "type": "file",
+        "size": "~1GB",
     },
 }
 
@@ -71,12 +70,13 @@ def download_ocr_model(weights_dir: Path) -> None:
         local_dir=str(target_dir),
         local_dir_use_symlinks=False,
     )
-    print(f"✓ OCR model downloaded to {target_dir}")
+    print(f"OCR model downloaded to {target_dir}")
 
 
 def download_translation_model(weights_dir: Path) -> None:
-    """Download HY-MT1.5 GGUF model."""
+    """Download HY-MT1.5-1.8B-Q4_K_M translation model."""
     config = MODELS["translation"]
+
     print(f"\n{'='*60}")
     print(f"Downloading: {config['description']}")
     print(f"Size: {config['size']}")
@@ -98,7 +98,7 @@ def download_translation_model(weights_dir: Path) -> None:
         local_dir=str(weights_dir),
         local_dir_use_symlinks=False,
     )
-    print(f"✓ Translation model downloaded to {target_path}")
+    print(f"Translation model downloaded to {target_path}")
 
 
 def main():
@@ -128,7 +128,7 @@ Examples:
     )
     parser.add_argument(
         "--translation", action="store_true",
-        help="Download HY-MT1.5 GGUF translation model"
+        help="Download HY-MT1.5-1.8B-Q4_K_M translation model"
     )
     parser.add_argument(
         "--list", action="store_true",
@@ -149,7 +149,7 @@ Examples:
             print()
         return
 
-    # Default to --all if no specific model selected
+    # Require explicit model selection
     if not (args.all or args.ocr or args.translation):
         print("No model specified. Use --all to download all models.")
         print("Run with --help for more options.")
@@ -158,18 +158,15 @@ Examples:
     weights_dir = get_weights_dir()
     print(f"Weights directory: {weights_dir}")
 
-    download_ocr = args.all or args.ocr
-    download_translation = args.all or args.translation
-
     try:
-        if download_ocr:
+        if args.all or args.ocr:
             download_ocr_model(weights_dir)
 
-        if download_translation:
+        if args.all or args.translation:
             download_translation_model(weights_dir)
 
         print("\n" + "="*60)
-        print("✓ Download complete!")
+        print("Download complete!")
         print("="*60)
 
         # Show what was downloaded
@@ -177,16 +174,16 @@ Examples:
         for item in weights_dir.iterdir():
             if item.is_dir():
                 size = sum(f.stat().st_size for f in item.rglob("*") if f.is_file())
-                print(f"  📁 {item.name}/ ({size / 1e9:.2f} GB)")
+                print(f"  {item.name}/ ({size / 1e9:.2f} GB)")
             else:
                 size = item.stat().st_size
-                print(f"  📄 {item.name} ({size / 1e9:.2f} GB)")
+                print(f"  {item.name} ({size / 1e9:.2f} GB)")
 
     except KeyboardInterrupt:
         print("\n\nDownload cancelled.")
         sys.exit(1)
     except Exception as e:
-        print(f"\n❌ Error: {e}")
+        print(f"\nError: {e}")
         sys.exit(1)
 
 
