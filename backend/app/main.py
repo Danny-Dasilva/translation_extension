@@ -1,8 +1,9 @@
 """FastAPI application entry point"""
 import logging
 import time
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 from contextlib import asynccontextmanager
 import numpy as np
 
@@ -13,7 +14,8 @@ from app.routers import test_page
 # Configure logging
 logging.basicConfig(
     level=logging.INFO if settings.debug else logging.WARNING,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    force=True  # Force reconfiguration even if uvicorn already set up handlers
 )
 
 logger = logging.getLogger(__name__)
@@ -68,6 +70,15 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan
 )
+
+# Middleware to capture request start time (before body parsing)
+class TimingMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        request.state.start_time = time.time()
+        response = await call_next(request)
+        return response
+
+app.add_middleware(TimingMiddleware)
 
 # Add CORS middleware
 app.add_middleware(
