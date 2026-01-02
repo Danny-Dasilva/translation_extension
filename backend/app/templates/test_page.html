@@ -278,6 +278,16 @@
             <option value="German">German</option>
             <option value="Chinese">Chinese</option>
         </select>
+
+        <label for="method-select">Upload Method:</label>
+        <select id="method-select">
+            <option value="multipart">Multipart (baseline)</option>
+            <option value="binary">Binary (fastest)</option>
+            <option value="streaming">Streaming Multipart</option>
+        </select>
+        <span id="method-hint" style="font-size:12px; color:#666;">
+            Multipart: 340ms | Binary: ~10-50ms | Streaming: ~50-100ms
+        </span>
     </div>
 
     <div id="drop-zone" class="drop-zone">
@@ -335,6 +345,7 @@
         // State
         let currentImage = null;
         let currentBase64 = null;
+        let currentFile = null;  // Store File object for binary upload
 
         // DOM elements
         const dropZone = document.getElementById('drop-zone');
@@ -346,6 +357,7 @@
         const translatedCanvas = document.getElementById('translated-canvas');
         const fontSelect = document.getElementById('font-select');
         const langSelect = document.getElementById('lang-select');
+        const methodSelect = document.getElementById('method-select');
 
         // Overlay Renderer (matches browser extension)
         class OverlayRenderer {
@@ -375,9 +387,27 @@
                 const x = box.minX, y = box.minY;
                 const w = box.maxX - box.minX, h = box.maxY - box.minY;
 
+                // Draw bubble bounds (red)
                 ctx.strokeStyle = '#FF0000';
                 ctx.lineWidth = 2;
                 ctx.strokeRect(x, y, w, h);
+
+                // Draw text regions (green) if available
+                if (box.textRegions && box.textRegions.length > 0) {
+                    for (const region of box.textRegions) {
+                        const rx = region.minX, ry = region.minY;
+                        const rw = region.maxX - region.minX;
+                        const rh = region.maxY - region.minY;
+
+                        ctx.strokeStyle = '#00AA00';
+                        ctx.lineWidth = 2;
+                        ctx.strokeRect(rx, ry, rw, rh);
+
+                        // Semi-transparent green fill to show text area
+                        ctx.fillStyle = 'rgba(0, 200, 0, 0.15)';
+                        ctx.fillRect(rx, ry, rw, rh);
+                    }
+                }
 
                 // Label
                 ctx.fillStyle = '#FF0000';
@@ -516,6 +546,10 @@
                 return;
             }
 
+            // Store File object for binary upload (faster!)
+            currentFile = file;
+
+            // Still read as base64 for preview display
             const reader = new FileReader();
             reader.onload = (e) => {
                 currentBase64 = e.target.result;
@@ -561,30 +595,66 @@
             for (const item of items) {
                 if (item.type.startsWith('image/')) {
                     const file = item.getAsFile();
-                    handleFile(file);
+                    if (file) {
+                        handleFile(file);  // Now stores File object for binary upload
+                    }
                     break;
                 }
             }
         });
 
-        // Translate
+        // Translate using selected upload method
         async function translateImage() {
-            if (!currentBase64) return;
+            if (!currentFile && !currentBase64) return;
 
             showLoading();
             hideError();
 
+            const method = methodSelect.value;
+            const targetLang = langSelect.value;
+
             try {
-                const response = await fetch('/test/translate', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        base64Images: [currentBase64],
-                        targetLanguage: langSelect.value
-                    })
-                });
+                let response;
+
+                if (method === 'binary' && currentFile) {
+                    // Raw binary upload - fastest! (~10-50ms overhead)
+                    const arrayBuffer = await currentFile.arrayBuffer();
+                    response = await fetch(`/test/translate-binary?targetLanguage=${encodeURIComponent(targetLang)}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/octet-stream' },
+                        body: arrayBuffer
+                    });
+                } else if (method === 'streaming' && currentFile) {
+                    // Streaming multipart - uses streaming-form-data (~50-100ms overhead)
+                    const formData = new FormData();
+                    formData.append('files', currentFile);
+                    formData.append('targetLanguage', targetLang);
+
+                    response = await fetch('/test/translate-streaming', {
+                        method: 'POST',
+                        body: formData
+                    });
+                } else if (currentFile) {
+                    // Default multipart - baseline (~340ms overhead)
+                    const formData = new FormData();
+                    formData.append('files', currentFile);
+                    formData.append('targetLanguage', targetLang);
+
+                    response = await fetch('/test/translate-multipart', {
+                        method: 'POST',
+                        body: formData
+                    });
+                } else {
+                    // Fallback to JSON endpoint (for paste without File object)
+                    response = await fetch('/test/translate', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            base64Images: [currentBase64],
+                            targetLanguage: targetLang
+                        })
+                    });
+                }
 
                 const data = await response.json();
 
@@ -593,7 +663,7 @@
                 }
 
                 hideLoading();
-                showResults(data);
+                showResults(data, method);
 
             } catch (err) {
                 hideLoading();
@@ -620,11 +690,14 @@
             error.classList.remove('active');
         }
 
-        async function showResults(data) {
+        async function showResults(data, method = 'multipart') {
             results.classList.add('active');
 
             const textBoxes = data.images[0] || [];
             const fontFamily = fontSelect.value;
+
+            // Store for font change re-renders
+            window._lastTextBoxes = textBoxes;
 
             // Render original with detection boxes
             await renderer.render(currentBase64, textBoxes, originalCanvas, fontFamily, true);
@@ -636,13 +709,51 @@
             document.getElementById('session-id').textContent = data.session_id;
 
             const timing = data.debug?.timing || {};
+
+            // Build request overhead section based on endpoint type
+            let overheadHtml = '';
+            let methodLabel = '';
+
+            if (method === 'binary') {
+                methodLabel = 'Binary (Raw)';
+                overheadHtml = `
+                    <div class="timing-item" style="background:#c8e6c9">Body Read: <strong>${timing.body_read_ms || 0}ms</strong></div>
+                `;
+            } else if (method === 'streaming') {
+                methodLabel = 'Streaming Multipart';
+                overheadHtml = `
+                    <div class="timing-item" style="background:#bbdefb">Stream Parse: <strong>${timing.stream_parse_ms || 0}ms</strong></div>
+                `;
+            } else if (timing.multipart_parse_ms !== undefined) {
+                methodLabel = 'Multipart (Default)';
+                overheadHtml = `
+                    <div class="timing-item" style="background:#fff3e0">Multipart Parse: <strong>${timing.multipart_parse_ms || 0}ms</strong></div>
+                    <div class="timing-item" style="background:#c8e6c9">File Read: <strong>${timing.file_read_ms || 0}ms</strong></div>
+                `;
+            } else {
+                methodLabel = 'JSON';
+                overheadHtml = `
+                    <div class="timing-item" style="background:#fff3e0">Pre-parse: <strong>${timing.pre_parse_ms || 0}ms</strong></div>
+                    <div class="timing-item" style="background:#fff3e0">JSON Parse: <strong>${timing.json_parse_ms || 0}ms</strong></div>
+                `;
+            }
+
             document.getElementById('timing').innerHTML = `
+                <div style="font-weight:bold; margin-bottom:4px; border-bottom:1px solid #ccc">Per-Image Processing:</div>
                 <div class="timing-item">Preprocess: <strong>${timing.preprocess_ms || 0}ms</strong></div>
                 <div class="timing-item">Detection: <strong>${timing.detection_ms || 0}ms</strong></div>
                 <div class="timing-item">Crop: <strong>${timing.crop_ms || 0}ms</strong></div>
                 <div class="timing-item">OCR: <strong>${timing.ocr_ms || 0}ms</strong></div>
                 <div class="timing-item">Translation: <strong>${timing.translation_ms || 0}ms</strong></div>
-                <div class="timing-item">Total: <strong>${data.debug?.total_ms || 0}ms</strong></div>
+                <div class="timing-item" style="background:#e0f7fa">Text Extract: <strong>${timing.text_extract_ms || 0}ms</strong></div>
+                <div class="timing-item" style="background:#e8e8e8">Measured Sum: <strong>${timing.measured_sum_ms || 0}ms</strong></div>
+                <div class="timing-item" style="background:#ffcccc; color:#c00; font-weight:bold">GAP: <strong>${timing.gap_ms || 0}ms</strong></div>
+                <div class="timing-item" style="background:#d4edda">Image Total: <strong>${timing.total_ms || 0}ms</strong></div>
+
+                <div style="font-weight:bold; margin:8px 0 4px 0; border-bottom:1px solid #ccc">Request Overhead (${methodLabel}):</div>
+                ${overheadHtml}
+                <div class="timing-item" style="background:#fff3e0">Serialization: <strong>${timing.serialization_ms || 0}ms</strong></div>
+                <div class="timing-item" style="background:#c8e6c9; font-weight:bold">Request Total: <strong>${timing.request_total_ms || 0}ms</strong></div>
             `;
 
             // Bubbles table

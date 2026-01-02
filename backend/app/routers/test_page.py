@@ -1,6 +1,7 @@
 """Test page router for debugging the manga translation pipeline."""
 
 import asyncio
+import base64
 import json
 import logging
 import time
@@ -9,10 +10,14 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Tuple
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, File, UploadFile, Form, Query, HTTPException
 from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.templating import Jinja2Templates
 import numpy as np
+import cv2
+import orjson
+from streaming_form_data import StreamingFormDataParser
+from streaming_form_data.targets import ValueTarget
 
 from app.models.request import TranslateRequest
 from app.models.response import TranslateResponse, TextBox, TextRegion
@@ -21,6 +26,7 @@ from app.services.manga_ocr_service import MangaOCRService
 from app.services.local_translation_service import LocalTranslationService, LocalTranslationPool
 from app.config import settings
 from app.utils.image_processing import decode_base64_to_numpy
+from app.utils.text_region_extractor import extract_text_bounds, calculate_inset_region
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/test", tags=["test"])
@@ -58,12 +64,23 @@ async def test_translate(request: Request):
     - images: Same format as /translate endpoint
     - debug: Timing info and file paths
     """
+    # Use middleware start time to capture true request start (before body reading)
+    middleware_start = getattr(request.state, 'start_time', None)
     start_time = time.time()
 
-    # Parse JSON body
-    body = await request.json()
+    # Parse JSON body using orjson (3-6x faster than stdlib json)
+    json_start = time.time()
+    body_bytes = await request.body()
+    body = orjson.loads(body_bytes)
+    json_parse_time = (time.time() - json_start) * 1000
+
+    # Calculate any pre-parsing overhead (network buffering, etc.)
+    pre_parse_time = (json_start - middleware_start) * 1000 if middleware_start else 0
+
     base64_images = body.get("base64Images", [])
     target_language = body.get("targetLanguage", "English")
+
+    logger.info(f"[TIMING] Pre-parse: {pre_parse_time:.1f}ms, JSON parse: {json_parse_time:.1f}ms for {len(base64_images)} image(s)")
 
     if not base64_images:
         return {"error": "No images provided"}
@@ -123,53 +140,90 @@ async def test_translate(request: Request):
             )
             translate_time = (time.time() - translate_start) * 1000
 
-            # Use bubble bboxes as text regions (entire bubble will be masked)
-            all_text_regions = [[{
-                'minX': bubble['minX'],
-                'minY': bubble['minY'],
-                'maxX': bubble['maxX'],
-                'maxY': bubble['maxY']
-            }] for bubble in bubbles]
+            # Step 5: Extract tight text bounds and build response
+            text_extract_start = time.time()
 
-            # Build response
+            # Extract tight text bounds from each crop (1-2ms per bubble)
+            all_text_regions = []
+            for crop, bubble in zip(crops, bubbles):
+                text_bounds = extract_text_bounds(crop, method='morphological')
+                if text_bounds:
+                    # Convert crop-relative coords to image-absolute coords
+                    rel_x1, rel_y1, rel_x2, rel_y2 = text_bounds
+                    all_text_regions.append([{
+                        'minX': bubble['minX'] + rel_x1,
+                        'minY': bubble['minY'] + rel_y1,
+                        'maxX': bubble['minX'] + rel_x2,
+                        'maxY': bubble['minY'] + rel_y2
+                    }])
+                else:
+                    # Fallback: 15% inset from bubble bounds
+                    all_text_regions.append([calculate_inset_region(bubble, inset_percent=0.15)])
+
+            text_extract_time = (time.time() - text_extract_start) * 1000
+
+            # Build response - use dicts directly to skip Pydantic serialization overhead
             text_boxes = []
             bubble_debug = []
 
             for i, (bubble, ocr_text, translated_text, text_regions) in enumerate(zip(bubbles, ocr_texts, translations, all_text_regions)):
-                text_box = TextBox(
-                    ocrText=ocr_text,
-                    originalLanguage="ja",
-                    minX=bubble["minX"],
-                    minY=bubble["minY"],
-                    maxX=bubble["maxX"],
-                    maxY=bubble["maxY"],
-                    background="",
-                    fontHeightPx=20,
-                    fontColor="#000000",
-                    fontStrokeColor="#FFFFFF",
-                    zIndex=1,
-                    translatedText=translated_text,
-                    subtextBoxes=[],
-                    textRegions=[TextRegion(**r) for r in text_regions]
-                )
-                text_boxes.append(text_box)
+                # Convert numpy types to Python types for JSON serialization
+                min_x = int(bubble["minX"])
+                min_y = int(bubble["minY"])
+                max_x = int(bubble["maxX"])
+                max_y = int(bubble["maxY"])
+                confidence = float(bubble.get("confidence", 0))
+                ocr_time_ms = round(ocr_times[i], 2) if i < len(ocr_times) else 0
+                translate_time_ms = round(translate_times[i], 2) if i < len(translate_times) else 0
+
+                # Convert text_regions coords to Python ints
+                text_regions_clean = [
+                    {k: int(v) for k, v in region.items()}
+                    for region in text_regions
+                ]
+
+                # Build dict directly - skips Pydantic validation AND model_dump() serialization
+                text_box_dict = {
+                    "ocrText": ocr_text,
+                    "originalLanguage": "ja",
+                    "minX": min_x,
+                    "minY": min_y,
+                    "maxX": max_x,
+                    "maxY": max_y,
+                    "background": "",
+                    "fontHeightPx": 20,
+                    "fontColor": "#000000",
+                    "fontStrokeColor": "#FFFFFF",
+                    "zIndex": 1,
+                    "translatedText": translated_text,
+                    "subtextBoxes": [],
+                    "textRegions": text_regions_clean,
+                    "confidence": confidence,
+                    "ocrTimeMs": ocr_time_ms,
+                    "translateTimeMs": translate_time_ms,
+                }
+                text_boxes.append(text_box_dict)
 
                 bubble_debug.append({
                     "index": i,
                     "bbox": {
-                        "minX": bubble["minX"],
-                        "minY": bubble["minY"],
-                        "maxX": bubble["maxX"],
-                        "maxY": bubble["maxY"]
+                        "minX": min_x,
+                        "minY": min_y,
+                        "maxX": max_x,
+                        "maxY": max_y,
                     },
-                    "confidence": bubble.get("confidence", 0),
+                    "confidence": confidence,
                     "ocr_text": ocr_text,
                     "translated_text": translated_text,
-                    "ocr_time_ms": round(ocr_times[i], 2) if i < len(ocr_times) else 0,
-                    "translate_time_ms": round(translate_times[i], 2) if i < len(translate_times) else 0
+                    "ocr_time_ms": ocr_time_ms,
+                    "translate_time_ms": translate_time_ms,
                 })
 
             image_time = (time.time() - image_start) * 1000
+
+            # Calculate gap (unaccounted time)
+            measured_sum = preprocess_time + detect_time + crop_time + ocr_time + translate_time + text_extract_time
+            gap_time = image_time - measured_sum
 
             all_results.append(text_boxes)
             all_debug.append({
@@ -181,20 +235,19 @@ async def test_translate(request: Request):
                     "crop_ms": round(crop_time, 2),
                     "ocr_ms": round(ocr_time, 2),
                     "translation_ms": round(translate_time, 2),
+                    "text_extract_ms": round(text_extract_time, 2),
+                    "measured_sum_ms": round(measured_sum, 2),
+                    "gap_ms": round(gap_time, 2),
                     "total_ms": round(image_time, 2)
                 }
             })
 
-            # Log confidence for each bubble
-            confidences = [b.get("confidence", 0) for b in bubbles]
-            avg_conf = sum(confidences) / len(confidences) if confidences else 0
             logger.info(
-                f"Image {idx}: {len(bubbles)} bubbles (avg conf: {avg_conf:.2f}), "
-                f"preprocess={preprocess_time:.1f}ms, detect={detect_time:.1f}ms, "
-                f"crop={crop_time:.1f}ms, ocr={ocr_time:.1f}ms, translate={translate_time:.1f}ms"
+                f"[TIMING] Image {idx}: preprocess={preprocess_time:.1f}ms, detect={detect_time:.1f}ms, "
+                f"crop={crop_time:.1f}ms, ocr={ocr_time:.1f}ms, translate={translate_time:.1f}ms, "
+                f"text_extract={text_extract_time:.1f}ms, GAP={gap_time:.1f}ms, TOTAL={image_time:.1f}ms"
             )
-            for i, (conf, ocr_text) in enumerate(zip(confidences, ocr_texts)):
-                logger.debug(f"  Bubble {i+1}: conf={conf:.2f}, text='{ocr_text[:30]}...'" if len(ocr_text) > 30 else f"  Bubble {i+1}: conf={conf:.2f}, text='{ocr_text}'")
+
 
         except Exception as e:
             logger.error(f"Error processing image {idx}: {e}", exc_info=True)
@@ -204,40 +257,702 @@ async def test_translate(request: Request):
                 "error": str(e)
             })
 
-    total_time = (time.time() - start_time) * 1000
+    # text_boxes are already dicts (built during processing to skip Pydantic overhead)
+    # Just use them directly - no model_dump() needed
+    serialization_start = time.time()
+    images_response = all_results  # Already list of list of dicts
+    serialization_time = (time.time() - serialization_start) * 1000
 
-    # Build debug data (returned in response, not saved to disk)
-    debug_data = {
-        "session_id": session_id,
-        "timestamp": datetime.now().isoformat(),
-        "target_language": target_language,
-        "images": all_debug,
-        "total_time_ms": round(total_time, 2)
-    }
+    # Calculate total_time from middleware start (captures full request time)
+    total_time = (time.time() - middleware_start) * 1000 if middleware_start else (time.time() - start_time) * 1000
 
-    # Convert TextBox objects to dicts for JSON response
-    # Include confidence from debug data
-    images_response = []
-    for img_idx, text_boxes in enumerate(all_results):
-        bubble_data = all_debug[img_idx].get("bubbles", []) if img_idx < len(all_debug) else []
-        images_response.append([
-            {
-                **tb.model_dump(),
-                "confidence": bubble_data[i].get("confidence", 0) if i < len(bubble_data) else 0,
-                "ocrTimeMs": bubble_data[i].get("ocr_time_ms", 0) if i < len(bubble_data) else 0,
-                "translateTimeMs": bubble_data[i].get("translate_time_ms", 0) if i < len(bubble_data) else 0
-            }
-            for i, tb in enumerate(text_boxes)
-        ])
-
-    # Get timing from first image if available
+    # Get timing from first image and add request-level timing
     first_image_timing = {}
-    if debug_data["images"] and "timing" in debug_data["images"][0]:
-        first_image_timing = debug_data["images"][0]["timing"]
+    if all_debug and "timing" in all_debug[0]:
+        first_image_timing = all_debug[0]["timing"].copy()
+
+    # Add request-level timing (outside per-image timing)
+    first_image_timing["pre_parse_ms"] = round(pre_parse_time, 2)
+    first_image_timing["json_parse_ms"] = round(json_parse_time, 2)
+    first_image_timing["serialization_ms"] = round(serialization_time, 2)
+    first_image_timing["request_total_ms"] = round(total_time, 2)
+
+    logger.info(
+        f"[TIMING] Request complete: pre_parse={pre_parse_time:.1f}ms, json_parse={json_parse_time:.1f}ms, "
+        f"serialization={serialization_time:.1f}ms, total={total_time:.1f}ms"
+    )
 
     return {
         "session_id": session_id,
         "images": images_response,
+        "debug": {
+            "timing": first_image_timing,
+            "total_ms": round(total_time, 2)
+        }
+    }
+
+
+@router.post("/translate-multipart")
+async def test_translate_multipart(
+    request: Request,
+    files: List[UploadFile] = File(..., description="Image files (JPEG/PNG/WebP)"),
+    targetLanguage: str = Form(default="English", description="Target language for translation")
+):
+    """
+    Translate images using multipart/form-data (binary upload).
+
+    This endpoint eliminates JSON parsing overhead by accepting binary files directly.
+    Expected improvement: ~86% faster request parsing (359ms → ~50ms).
+
+    Returns JSON with:
+    - session_id: Unique ID for this request
+    - images: Same format as /translate endpoint
+    - debug: Timing info and file paths
+    """
+    # Use middleware start time to capture true request start (before body parsing)
+    middleware_start = getattr(request.state, 'start_time', None)
+    processing_start = time.time()
+
+    # Calculate multipart parsing overhead (done by FastAPI before we get here)
+    multipart_parse_time = (processing_start - middleware_start) * 1000 if middleware_start else 0
+
+    # Read files from memory (already parsed by FastAPI)
+    file_read_start = time.time()
+    base64_images = []
+    for file in files:
+        content = await file.read()
+        # Convert to base64 for compatibility with existing pipeline
+        b64_str = base64.b64encode(content).decode('utf-8')
+        # Determine content type
+        content_type = file.content_type or 'image/jpeg'
+        ext = content_type.split('/')[-1] if '/' in content_type else 'jpeg'
+        base64_images.append(f"data:image/{ext};base64,{b64_str}")
+    file_read_time = (time.time() - file_read_start) * 1000
+
+    target_language = targetLanguage
+
+    logger.info(f"[TIMING] Multipart parse: {multipart_parse_time:.1f}ms, file read: {file_read_time:.1f}ms for {len(base64_images)} image(s)")
+
+    if not base64_images:
+        return {"error": "No images provided"}
+
+    # Generate session ID for tracking
+    session_id = str(uuid.uuid4())[:8]
+    logger.info(f"Test translation session (multipart): {session_id}")
+
+    all_results = []
+    all_debug = []
+
+    for idx, base64_image in enumerate(base64_images):
+        try:
+            image_start = time.time()
+
+            # Decode image
+            preprocess_start = time.time()
+            image_np = decode_base64_to_numpy(base64_image)
+            preprocess_time = (time.time() - preprocess_start) * 1000
+
+            # Step 1: Detect bubbles
+            detect_start = time.time()
+            bubbles = await detector_service.detect_bubbles(
+                image_np,
+                conf=settings.detection_confidence,
+                imgsz=settings.detection_image_size
+            )
+            detect_time = (time.time() - detect_start) * 1000
+
+            if not bubbles:
+                logger.warning(f"No bubbles detected in image {idx}")
+                all_results.append([])
+                all_debug.append({
+                    "image_index": idx,
+                    "bubbles": [],
+                    "timing": {
+                        "preprocess_ms": round(preprocess_time, 2),
+                        "detection_ms": round(detect_time, 2)
+                    }
+                })
+                continue
+
+            # Step 2: Crop regions
+            crop_start = time.time()
+            crops = detector_service.crop_regions(image_np, bubbles)
+            crop_time = (time.time() - crop_start) * 1000
+
+            # Step 3: OCR
+            ocr_start = time.time()
+            ocr_texts, ocr_times = await _test_ocr_batch(crops)
+            ocr_time = (time.time() - ocr_start) * 1000
+
+            # Step 4: Translate
+            translate_start = time.time()
+            translations, translate_times = await _test_translate_with_timing(
+                ocr_texts, target_language, parallel=settings.translation_use_parallel
+            )
+            translate_time = (time.time() - translate_start) * 1000
+
+            # Step 5: Extract tight text bounds and build response
+            text_extract_start = time.time()
+
+            all_text_regions = []
+            for crop, bubble in zip(crops, bubbles):
+                text_bounds = extract_text_bounds(crop, method='morphological')
+                if text_bounds:
+                    rel_x1, rel_y1, rel_x2, rel_y2 = text_bounds
+                    all_text_regions.append([{
+                        'minX': bubble['minX'] + rel_x1,
+                        'minY': bubble['minY'] + rel_y1,
+                        'maxX': bubble['minX'] + rel_x2,
+                        'maxY': bubble['minY'] + rel_y2
+                    }])
+                else:
+                    all_text_regions.append([calculate_inset_region(bubble, inset_percent=0.15)])
+
+            text_extract_time = (time.time() - text_extract_start) * 1000
+
+            # Build response
+            text_boxes = []
+            bubble_debug = []
+
+            for i, (bubble, ocr_text, translated_text, text_regions) in enumerate(zip(bubbles, ocr_texts, translations, all_text_regions)):
+                min_x = int(bubble["minX"])
+                min_y = int(bubble["minY"])
+                max_x = int(bubble["maxX"])
+                max_y = int(bubble["maxY"])
+                confidence = float(bubble.get("confidence", 0))
+                ocr_time_ms = round(ocr_times[i], 2) if i < len(ocr_times) else 0
+                translate_time_ms = round(translate_times[i], 2) if i < len(translate_times) else 0
+
+                text_regions_clean = [
+                    {k: int(v) for k, v in region.items()}
+                    for region in text_regions
+                ]
+
+                text_box_dict = {
+                    "ocrText": ocr_text,
+                    "originalLanguage": "ja",
+                    "minX": min_x,
+                    "minY": min_y,
+                    "maxX": max_x,
+                    "maxY": max_y,
+                    "background": "",
+                    "fontHeightPx": 20,
+                    "fontColor": "#000000",
+                    "fontStrokeColor": "#FFFFFF",
+                    "zIndex": 1,
+                    "translatedText": translated_text,
+                    "subtextBoxes": [],
+                    "textRegions": text_regions_clean,
+                    "confidence": confidence,
+                    "ocrTimeMs": ocr_time_ms,
+                    "translateTimeMs": translate_time_ms,
+                }
+                text_boxes.append(text_box_dict)
+
+                bubble_debug.append({
+                    "index": i,
+                    "bbox": {
+                        "minX": min_x,
+                        "minY": min_y,
+                        "maxX": max_x,
+                        "maxY": max_y,
+                    },
+                    "confidence": confidence,
+                    "ocr_text": ocr_text,
+                    "translated_text": translated_text,
+                    "ocr_time_ms": ocr_time_ms,
+                    "translate_time_ms": translate_time_ms,
+                })
+
+            image_time = (time.time() - image_start) * 1000
+
+            measured_sum = preprocess_time + detect_time + crop_time + ocr_time + translate_time + text_extract_time
+            gap_time = image_time - measured_sum
+
+            all_results.append(text_boxes)
+            all_debug.append({
+                "image_index": idx,
+                "bubbles": bubble_debug,
+                "timing": {
+                    "preprocess_ms": round(preprocess_time, 2),
+                    "detection_ms": round(detect_time, 2),
+                    "crop_ms": round(crop_time, 2),
+                    "ocr_ms": round(ocr_time, 2),
+                    "translation_ms": round(translate_time, 2),
+                    "text_extract_ms": round(text_extract_time, 2),
+                    "measured_sum_ms": round(measured_sum, 2),
+                    "gap_ms": round(gap_time, 2),
+                    "total_ms": round(image_time, 2)
+                }
+            })
+
+            logger.info(
+                f"[TIMING] Image {idx}: preprocess={preprocess_time:.1f}ms, detect={detect_time:.1f}ms, "
+                f"crop={crop_time:.1f}ms, ocr={ocr_time:.1f}ms, translate={translate_time:.1f}ms, "
+                f"text_extract={text_extract_time:.1f}ms, GAP={gap_time:.1f}ms, TOTAL={image_time:.1f}ms"
+            )
+
+        except Exception as e:
+            logger.error(f"Error processing image {idx}: {e}", exc_info=True)
+            all_results.append([])
+            all_debug.append({
+                "image_index": idx,
+                "error": str(e)
+            })
+
+    serialization_start = time.time()
+    images_response = all_results
+    serialization_time = (time.time() - serialization_start) * 1000
+
+    # Calculate total time from middleware start (includes multipart parsing)
+    total_time = (time.time() - middleware_start) * 1000 if middleware_start else (time.time() - processing_start) * 1000
+
+    first_image_timing = {}
+    if all_debug and "timing" in all_debug[0]:
+        first_image_timing = all_debug[0]["timing"].copy()
+
+    # Include multipart parsing time (the overhead we're trying to measure)
+    first_image_timing["multipart_parse_ms"] = round(multipart_parse_time, 2)
+    first_image_timing["file_read_ms"] = round(file_read_time, 2)
+    first_image_timing["json_parse_ms"] = 0  # No JSON parsing!
+    first_image_timing["serialization_ms"] = round(serialization_time, 2)
+    first_image_timing["request_total_ms"] = round(total_time, 2)
+
+    logger.info(
+        f"[TIMING] Request complete (multipart): multipart_parse={multipart_parse_time:.1f}ms, "
+        f"file_read={file_read_time:.1f}ms, serialization={serialization_time:.1f}ms, total={total_time:.1f}ms"
+    )
+
+    return {
+        "session_id": session_id,
+        "images": images_response,
+        "debug": {
+            "timing": first_image_timing,
+            "total_ms": round(total_time, 2)
+        }
+    }
+
+
+@router.post("/translate-binary")
+async def test_translate_binary(
+    request: Request,
+    targetLanguage: str = Query(default="English", description="Target language for translation")
+):
+    """
+    Optimized endpoint accepting raw binary image data.
+    Eliminates multipart parsing overhead entirely.
+
+    Expected improvement: 340ms → 10-50ms (85-97% reduction)
+
+    Send image as raw bytes with Content-Type header.
+    """
+    middleware_start = getattr(request.state, 'start_time', None)
+    processing_start = time.time()
+
+    # Direct body read - no multipart parsing!
+    body = await request.body()
+    body_read_time = (time.time() - processing_start) * 1000
+
+    if not body:
+        raise HTTPException(status_code=400, detail="No image data provided")
+
+    logger.info(f"[TIMING] Binary body read: {body_read_time:.1f}ms for {len(body)} bytes")
+
+    # Generate session ID for tracking
+    session_id = str(uuid.uuid4())[:8]
+    logger.info(f"Test translation session (binary): {session_id}")
+
+    all_results = []
+    all_debug = []
+
+    try:
+        image_start = time.time()
+
+        # Decode image directly from bytes (skip base64 entirely!)
+        preprocess_start = time.time()
+        image_np = cv2.imdecode(np.frombuffer(body, np.uint8), cv2.IMREAD_COLOR)
+        if image_np is None:
+            raise HTTPException(status_code=400, detail="Invalid image data - could not decode")
+        preprocess_time = (time.time() - preprocess_start) * 1000
+
+        # Step 1: Detect bubbles
+        detect_start = time.time()
+        bubbles = await detector_service.detect_bubbles(
+            image_np,
+            conf=settings.detection_confidence,
+            imgsz=settings.detection_image_size
+        )
+        detect_time = (time.time() - detect_start) * 1000
+
+        if not bubbles:
+            logger.warning("No bubbles detected in image")
+            all_results.append([])
+            all_debug.append({
+                "image_index": 0,
+                "bubbles": [],
+                "timing": {
+                    "preprocess_ms": round(preprocess_time, 2),
+                    "detection_ms": round(detect_time, 2)
+                }
+            })
+        else:
+            # Step 2: Crop regions
+            crop_start = time.time()
+            crops = detector_service.crop_regions(image_np, bubbles)
+            crop_time = (time.time() - crop_start) * 1000
+
+            # Step 3: OCR
+            ocr_start = time.time()
+            ocr_texts, ocr_times = await _test_ocr_batch(crops)
+            ocr_time = (time.time() - ocr_start) * 1000
+
+            # Step 4: Translate
+            translate_start = time.time()
+            translations, translate_times = await _test_translate_with_timing(
+                ocr_texts, targetLanguage, parallel=settings.translation_use_parallel
+            )
+            translate_time = (time.time() - translate_start) * 1000
+
+            # Step 5: Extract tight text bounds
+            text_extract_start = time.time()
+            all_text_regions = []
+            for crop, bubble in zip(crops, bubbles):
+                text_bounds = extract_text_bounds(crop, method='morphological')
+                if text_bounds:
+                    rel_x1, rel_y1, rel_x2, rel_y2 = text_bounds
+                    all_text_regions.append([{
+                        'minX': bubble['minX'] + rel_x1,
+                        'minY': bubble['minY'] + rel_y1,
+                        'maxX': bubble['minX'] + rel_x2,
+                        'maxY': bubble['minY'] + rel_y2
+                    }])
+                else:
+                    all_text_regions.append([calculate_inset_region(bubble, inset_percent=0.15)])
+            text_extract_time = (time.time() - text_extract_start) * 1000
+
+            # Build response
+            text_boxes = []
+            bubble_debug = []
+
+            for i, (bubble, ocr_text, translated_text, text_regions) in enumerate(zip(bubbles, ocr_texts, translations, all_text_regions)):
+                min_x = int(bubble["minX"])
+                min_y = int(bubble["minY"])
+                max_x = int(bubble["maxX"])
+                max_y = int(bubble["maxY"])
+                confidence = float(bubble.get("confidence", 0))
+                ocr_time_ms = round(ocr_times[i], 2) if i < len(ocr_times) else 0
+                translate_time_ms = round(translate_times[i], 2) if i < len(translate_times) else 0
+
+                text_regions_clean = [
+                    {k: int(v) for k, v in region.items()}
+                    for region in text_regions
+                ]
+
+                text_box_dict = {
+                    "ocrText": ocr_text,
+                    "originalLanguage": "ja",
+                    "minX": min_x,
+                    "minY": min_y,
+                    "maxX": max_x,
+                    "maxY": max_y,
+                    "background": "",
+                    "fontHeightPx": 20,
+                    "fontColor": "#000000",
+                    "fontStrokeColor": "#FFFFFF",
+                    "zIndex": 1,
+                    "translatedText": translated_text,
+                    "subtextBoxes": [],
+                    "textRegions": text_regions_clean,
+                    "confidence": confidence,
+                    "ocrTimeMs": ocr_time_ms,
+                    "translateTimeMs": translate_time_ms,
+                }
+                text_boxes.append(text_box_dict)
+
+                bubble_debug.append({
+                    "index": i,
+                    "bbox": {"minX": min_x, "minY": min_y, "maxX": max_x, "maxY": max_y},
+                    "confidence": confidence,
+                    "ocr_text": ocr_text,
+                    "translated_text": translated_text,
+                    "ocr_time_ms": ocr_time_ms,
+                    "translate_time_ms": translate_time_ms,
+                })
+
+            image_time = (time.time() - image_start) * 1000
+            measured_sum = preprocess_time + detect_time + crop_time + ocr_time + translate_time + text_extract_time
+            gap_time = image_time - measured_sum
+
+            all_results.append(text_boxes)
+            all_debug.append({
+                "image_index": 0,
+                "bubbles": bubble_debug,
+                "timing": {
+                    "preprocess_ms": round(preprocess_time, 2),
+                    "detection_ms": round(detect_time, 2),
+                    "crop_ms": round(crop_time, 2),
+                    "ocr_ms": round(ocr_time, 2),
+                    "translation_ms": round(translate_time, 2),
+                    "text_extract_ms": round(text_extract_time, 2),
+                    "measured_sum_ms": round(measured_sum, 2),
+                    "gap_ms": round(gap_time, 2),
+                    "total_ms": round(image_time, 2)
+                }
+            })
+
+            logger.info(
+                f"[TIMING] Binary: preprocess={preprocess_time:.1f}ms, detect={detect_time:.1f}ms, "
+                f"crop={crop_time:.1f}ms, ocr={ocr_time:.1f}ms, translate={translate_time:.1f}ms, "
+                f"text_extract={text_extract_time:.1f}ms, GAP={gap_time:.1f}ms, TOTAL={image_time:.1f}ms"
+            )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error processing binary image: {e}", exc_info=True)
+        all_results.append([])
+        all_debug.append({"image_index": 0, "error": str(e)})
+
+    # Calculate total time
+    total_time = (time.time() - middleware_start) * 1000 if middleware_start else (time.time() - processing_start) * 1000
+
+    first_image_timing = {}
+    if all_debug and "timing" in all_debug[0]:
+        first_image_timing = all_debug[0]["timing"].copy()
+
+    # Request overhead timing (binary = just body read, no parsing)
+    first_image_timing["body_read_ms"] = round(body_read_time, 2)
+    first_image_timing["multipart_parse_ms"] = 0  # No multipart!
+    first_image_timing["json_parse_ms"] = 0  # No JSON!
+    first_image_timing["serialization_ms"] = 0
+    first_image_timing["request_total_ms"] = round(total_time, 2)
+
+    logger.info(
+        f"[TIMING] Request complete (binary): body_read={body_read_time:.1f}ms, total={total_time:.1f}ms"
+    )
+
+    return {
+        "session_id": session_id,
+        "images": all_results,
+        "debug": {
+            "timing": first_image_timing,
+            "total_ms": round(total_time, 2)
+        }
+    }
+
+
+@router.post("/translate-streaming")
+async def test_translate_streaming(request: Request):
+    """
+    Streaming multipart parser - processes chunks as they arrive.
+    Compatible with standard multipart/form-data requests but much faster.
+
+    Expected improvement: 340ms → 50-100ms (70-85% reduction)
+
+    Uses streaming-form-data library for chunk-by-chunk parsing.
+    """
+    middleware_start = getattr(request.state, 'start_time', None)
+    processing_start = time.time()
+
+    # Create streaming parser with targets for each field
+    parser = StreamingFormDataParser(headers=request.headers)
+    file_target = ValueTarget()
+    language_target = ValueTarget()
+
+    parser.register("files", file_target)
+    parser.register("targetLanguage", language_target)
+
+    # Stream chunks directly to parser (non-blocking)
+    async for chunk in request.stream():
+        parser.data_received(chunk)
+
+    stream_parse_time = (time.time() - processing_start) * 1000
+
+    # Get parsed data
+    image_bytes = file_target.value
+    if not image_bytes:
+        raise HTTPException(status_code=400, detail="No file received")
+
+    target_language = language_target.value.decode() if language_target.value else "English"
+
+    logger.info(f"[TIMING] Streaming parse: {stream_parse_time:.1f}ms for {len(image_bytes)} bytes")
+
+    # Generate session ID
+    session_id = str(uuid.uuid4())[:8]
+    logger.info(f"Test translation session (streaming): {session_id}")
+
+    all_results = []
+    all_debug = []
+
+    try:
+        image_start = time.time()
+
+        # Decode image directly from bytes (skip base64!)
+        preprocess_start = time.time()
+        image_np = cv2.imdecode(np.frombuffer(image_bytes, np.uint8), cv2.IMREAD_COLOR)
+        if image_np is None:
+            raise HTTPException(status_code=400, detail="Invalid image data - could not decode")
+        preprocess_time = (time.time() - preprocess_start) * 1000
+
+        # Step 1: Detect bubbles
+        detect_start = time.time()
+        bubbles = await detector_service.detect_bubbles(
+            image_np,
+            conf=settings.detection_confidence,
+            imgsz=settings.detection_image_size
+        )
+        detect_time = (time.time() - detect_start) * 1000
+
+        if not bubbles:
+            logger.warning("No bubbles detected in image")
+            all_results.append([])
+            all_debug.append({
+                "image_index": 0,
+                "bubbles": [],
+                "timing": {
+                    "preprocess_ms": round(preprocess_time, 2),
+                    "detection_ms": round(detect_time, 2)
+                }
+            })
+        else:
+            # Step 2: Crop regions
+            crop_start = time.time()
+            crops = detector_service.crop_regions(image_np, bubbles)
+            crop_time = (time.time() - crop_start) * 1000
+
+            # Step 3: OCR
+            ocr_start = time.time()
+            ocr_texts, ocr_times = await _test_ocr_batch(crops)
+            ocr_time = (time.time() - ocr_start) * 1000
+
+            # Step 4: Translate
+            translate_start = time.time()
+            translations, translate_times = await _test_translate_with_timing(
+                ocr_texts, target_language, parallel=settings.translation_use_parallel
+            )
+            translate_time = (time.time() - translate_start) * 1000
+
+            # Step 5: Extract tight text bounds
+            text_extract_start = time.time()
+            all_text_regions = []
+            for crop, bubble in zip(crops, bubbles):
+                text_bounds = extract_text_bounds(crop, method='morphological')
+                if text_bounds:
+                    rel_x1, rel_y1, rel_x2, rel_y2 = text_bounds
+                    all_text_regions.append([{
+                        'minX': bubble['minX'] + rel_x1,
+                        'minY': bubble['minY'] + rel_y1,
+                        'maxX': bubble['minX'] + rel_x2,
+                        'maxY': bubble['minY'] + rel_y2
+                    }])
+                else:
+                    all_text_regions.append([calculate_inset_region(bubble, inset_percent=0.15)])
+            text_extract_time = (time.time() - text_extract_start) * 1000
+
+            # Build response
+            text_boxes = []
+            bubble_debug = []
+
+            for i, (bubble, ocr_text, translated_text, text_regions) in enumerate(zip(bubbles, ocr_texts, translations, all_text_regions)):
+                min_x = int(bubble["minX"])
+                min_y = int(bubble["minY"])
+                max_x = int(bubble["maxX"])
+                max_y = int(bubble["maxY"])
+                confidence = float(bubble.get("confidence", 0))
+                ocr_time_ms = round(ocr_times[i], 2) if i < len(ocr_times) else 0
+                translate_time_ms = round(translate_times[i], 2) if i < len(translate_times) else 0
+
+                text_regions_clean = [
+                    {k: int(v) for k, v in region.items()}
+                    for region in text_regions
+                ]
+
+                text_box_dict = {
+                    "ocrText": ocr_text,
+                    "originalLanguage": "ja",
+                    "minX": min_x,
+                    "minY": min_y,
+                    "maxX": max_x,
+                    "maxY": max_y,
+                    "background": "",
+                    "fontHeightPx": 20,
+                    "fontColor": "#000000",
+                    "fontStrokeColor": "#FFFFFF",
+                    "zIndex": 1,
+                    "translatedText": translated_text,
+                    "subtextBoxes": [],
+                    "textRegions": text_regions_clean,
+                    "confidence": confidence,
+                    "ocrTimeMs": ocr_time_ms,
+                    "translateTimeMs": translate_time_ms,
+                }
+                text_boxes.append(text_box_dict)
+
+                bubble_debug.append({
+                    "index": i,
+                    "bbox": {"minX": min_x, "minY": min_y, "maxX": max_x, "maxY": max_y},
+                    "confidence": confidence,
+                    "ocr_text": ocr_text,
+                    "translated_text": translated_text,
+                    "ocr_time_ms": ocr_time_ms,
+                    "translate_time_ms": translate_time_ms,
+                })
+
+            image_time = (time.time() - image_start) * 1000
+            measured_sum = preprocess_time + detect_time + crop_time + ocr_time + translate_time + text_extract_time
+            gap_time = image_time - measured_sum
+
+            all_results.append(text_boxes)
+            all_debug.append({
+                "image_index": 0,
+                "bubbles": bubble_debug,
+                "timing": {
+                    "preprocess_ms": round(preprocess_time, 2),
+                    "detection_ms": round(detect_time, 2),
+                    "crop_ms": round(crop_time, 2),
+                    "ocr_ms": round(ocr_time, 2),
+                    "translation_ms": round(translate_time, 2),
+                    "text_extract_ms": round(text_extract_time, 2),
+                    "measured_sum_ms": round(measured_sum, 2),
+                    "gap_ms": round(gap_time, 2),
+                    "total_ms": round(image_time, 2)
+                }
+            })
+
+            logger.info(
+                f"[TIMING] Streaming: preprocess={preprocess_time:.1f}ms, detect={detect_time:.1f}ms, "
+                f"crop={crop_time:.1f}ms, ocr={ocr_time:.1f}ms, translate={translate_time:.1f}ms, "
+                f"text_extract={text_extract_time:.1f}ms, GAP={gap_time:.1f}ms, TOTAL={image_time:.1f}ms"
+            )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error processing streaming image: {e}", exc_info=True)
+        all_results.append([])
+        all_debug.append({"image_index": 0, "error": str(e)})
+
+    # Calculate total time
+    total_time = (time.time() - middleware_start) * 1000 if middleware_start else (time.time() - processing_start) * 1000
+
+    first_image_timing = {}
+    if all_debug and "timing" in all_debug[0]:
+        first_image_timing = all_debug[0]["timing"].copy()
+
+    # Request overhead timing
+    first_image_timing["stream_parse_ms"] = round(stream_parse_time, 2)
+    first_image_timing["multipart_parse_ms"] = 0  # Using streaming instead
+    first_image_timing["json_parse_ms"] = 0
+    first_image_timing["serialization_ms"] = 0
+    first_image_timing["request_total_ms"] = round(total_time, 2)
+
+    logger.info(
+        f"[TIMING] Request complete (streaming): stream_parse={stream_parse_time:.1f}ms, total={total_time:.1f}ms"
+    )
+
+    return {
+        "session_id": session_id,
+        "images": all_results,
         "debug": {
             "timing": first_image_timing,
             "total_ms": round(total_time, 2)

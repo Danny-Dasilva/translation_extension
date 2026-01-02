@@ -16,6 +16,7 @@ from app.utils.image_processing import (
     detect_font_colors,
     extract_text_region_background
 )
+from app.utils.text_region_extractor import extract_text_bounds, calculate_inset_region
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -143,13 +144,22 @@ async def process_single_image(
 
         # Semaphore released - GPU slot available for other images
 
-        # Use bubble bboxes as text regions (entire bubble will be masked)
-        all_text_regions = [[{
-            'minX': bubble['minX'],
-            'minY': bubble['minY'],
-            'maxX': bubble['maxX'],
-            'maxY': bubble['maxY']
-        }] for bubble in bubbles]
+        # Extract tight text bounds from each crop (1-2ms per bubble)
+        all_text_regions = []
+        for crop, bubble in zip(crops, bubbles):
+            text_bounds = extract_text_bounds(crop, method='morphological')
+            if text_bounds:
+                # Convert crop-relative coords to image-absolute coords
+                rel_x1, rel_y1, rel_x2, rel_y2 = text_bounds
+                all_text_regions.append([{
+                    'minX': bubble['minX'] + rel_x1,
+                    'minY': bubble['minY'] + rel_y1,
+                    'maxX': bubble['minX'] + rel_x2,
+                    'maxY': bubble['minY'] + rel_y2
+                }])
+            else:
+                # Fallback: 15% inset from bubble bounds
+                all_text_regions.append([calculate_inset_region(bubble, inset_percent=0.15)])
 
         # Step 6: Build response
         text_boxes = []
