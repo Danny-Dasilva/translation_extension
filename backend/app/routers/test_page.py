@@ -21,7 +21,7 @@ from app.models.request import TranslateRequest
 from app.models.response import TranslateResponse, TextBox, TextRegion
 from app.services.detector_service import DetectorService
 from app.services.manga_ocr_service import MangaOCRService
-from app.services.local_translation_service import LocalTranslationService, LocalTranslationPool, _translation_gpu_semaphore
+from app.services.local_translation_service import LocalTranslationService, LocalTranslationPool
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -501,31 +501,40 @@ async def _test_translate_parallel(
     if not texts:
         return [], []
 
+    logger.info(f"[DEBUG] Starting parallel translation of {len(texts)} texts")
+
     async def translate_with_timing(idx: int, text: str) -> Tuple[int, str, float]:
+        logger.info(f"[DEBUG] Translation task {idx} starting: '{text[:30]}...'")
         try:
             if translation_pool:
                 # Use pool for parallel translation
                 instance_id = idx % translation_pool.num_instances
-                # Use global GPU semaphore to prevent contention
-                async with _translation_gpu_semaphore:
-                    start = time.time()  # Start timer AFTER acquiring semaphore
-                    # Run sync function in thread pool to avoid blocking event loop
+                logger.info(f"[DEBUG] Task {idx} using instance {instance_id}")
+                start = time.time()
+                # Per-instance semaphore: prevents concurrent calls to same llama instance
+                async with translation_pool.semaphores[instance_id]:
+                    logger.info(f"[DEBUG] Task {idx} acquired semaphore, entering asyncio.to_thread")
                     trans = await asyncio.to_thread(
                         translation_pool._translate_sync,
                         translation_pool.instances[instance_id], text, target_language, instance_id, idx
                     )
-                    elapsed = (time.time() - start) * 1000
+                    logger.info(f"[DEBUG] Task {idx} returned from asyncio.to_thread")
+                elapsed = (time.time() - start) * 1000
             else:
                 start = time.time()
                 trans = await translation_service.translate_single(text, target_language)
                 elapsed = (time.time() - start) * 1000
+            logger.info(f"[DEBUG] Task {idx} completed: {elapsed:.1f}ms")
             return (idx, trans, elapsed)
         except Exception as e:
-            logger.warning(f"Translation failed for text {idx+1}: {e}")
+            logger.error(f"[DEBUG] Task {idx} EXCEPTION: {e}", exc_info=True)
             return (idx, "", 0.0)
 
+    logger.info("[DEBUG] Creating translation tasks")
     tasks = [asyncio.create_task(translate_with_timing(i, text)) for i, text in enumerate(texts)]
+    logger.info(f"[DEBUG] Awaiting {len(tasks)} tasks with asyncio.gather")
     results = await asyncio.gather(*tasks)
+    logger.info("[DEBUG] asyncio.gather completed")
 
     # Sort by index
     results = sorted(results, key=lambda x: x[0])

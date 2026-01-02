@@ -112,23 +112,49 @@ async def process_single_image(
             # Step 3: Crop bubble regions
             crops = detector_service.crop_regions(image_np, bubbles)
 
-            # Step 4: Batched OCR (all crops in one model.generate() call)
+            # Step 4 & 5: OCR and Translation
             ocr_start = time.time()
-            ocr_texts = await ocr_service.recognize_text_batch(
-                crops,
-                batch_size=len(crops)  # Process all crops at once
-            )
-            ocr_time = time.time() - ocr_start
-            logger.info(f"Image {idx + 1}: Batched OCR completed in {ocr_time*1000:.1f}ms ({len(crops)} crops)")
 
-            # Step 5: Translation (parallel or sequential)
-            translate_start = time.time()
-            if settings.translation_use_parallel:
-                translations = await _translate_parallel(ocr_texts, target_language)
+            if settings.use_pipeline_overlap and len(crops) > 1 and translation_pool:
+                # PIPELINE OVERLAP: OCR each crop and start translation immediately
+                # This overlaps OCR and translation phases for better throughput
+                async def ocr_and_translate_pipelined():
+                    results = []
+                    for i, crop in enumerate(crops):
+                        # OCR single crop
+                        text = await ocr_service.recognize_single(crop)
+                        # Start translation immediately (non-blocking)
+                        trans_task = asyncio.create_task(
+                            translation_pool.translate_single(text, target_language)
+                        )
+                        results.append((i, text, trans_task))
+
+                    # Await all translation tasks
+                    return [(i, text, await task) for i, text, task in results]
+
+                paired = await ocr_and_translate_pipelined()
+                ocr_texts = [text for _, text, _ in paired]
+                translations = [trans for _, _, trans in paired]
+                ocr_time = time.time() - ocr_start
+                translate_time = 0  # Included in ocr_time due to overlap
+                logger.info(f"Image {idx + 1}: Pipelined OCR+Translation completed in {ocr_time*1000:.1f}ms ({len(crops)} crops)")
             else:
-                translations = await _translate_sequential(ocr_texts, target_language)
-            translate_time = time.time() - translate_start
-            logger.info(f"Image {idx + 1}: Translation completed in {translate_time*1000:.1f}ms ({len(ocr_texts)} texts)")
+                # BATCH MODE: All OCR first, then all translation (original behavior)
+                ocr_texts = await ocr_service.recognize_text_batch(
+                    crops,
+                    batch_size=len(crops)  # Process all crops at once
+                )
+                ocr_time = time.time() - ocr_start
+                logger.info(f"Image {idx + 1}: Batched OCR completed in {ocr_time*1000:.1f}ms ({len(crops)} crops)")
+
+                # Translation (parallel or sequential)
+                translate_start = time.time()
+                if settings.translation_use_parallel:
+                    translations = await _translate_parallel(ocr_texts, target_language)
+                else:
+                    translations = await _translate_sequential(ocr_texts, target_language)
+                translate_time = time.time() - translate_start
+                logger.info(f"Image {idx + 1}: Translation completed in {translate_time*1000:.1f}ms ({len(ocr_texts)} texts)")
 
         # Semaphore released - GPU slot available for other images
 
@@ -185,10 +211,16 @@ async def process_single_image(
             text_boxes.append(text_box)
 
         image_time = time.time() - image_start
-        logger.info(
-            f"Image {idx + 1} completed: {len(text_boxes)} boxes in {image_time*1000:.1f}ms "
-            f"(detect: {detect_time*1000:.1f}ms, ocr: {ocr_time*1000:.1f}ms, translate: {translate_time*1000:.1f}ms)"
-        )
+        if settings.use_pipeline_overlap and len(crops) > 1 and translation_pool:
+            logger.info(
+                f"Image {idx + 1} completed: {len(text_boxes)} boxes in {image_time*1000:.1f}ms "
+                f"(detect: {detect_time*1000:.1f}ms, pipelined ocr+trans: {ocr_time*1000:.1f}ms)"
+            )
+        else:
+            logger.info(
+                f"Image {idx + 1} completed: {len(text_boxes)} boxes in {image_time*1000:.1f}ms "
+                f"(detect: {detect_time*1000:.1f}ms, ocr: {ocr_time*1000:.1f}ms, translate: {translate_time*1000:.1f}ms)"
+            )
 
         return (idx, text_boxes)
 

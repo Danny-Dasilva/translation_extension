@@ -42,7 +42,7 @@ async def lifespan(app: FastAPI):
         ocr_start = time.time()
         dummy_crop = dummy_image[:100, :100]
         await translate.ocr_service.recognize_text_batch([dummy_crop], batch_size=1)
-        logger.info(f"OCR warmup (includes manga-ocr): {(time.time() - ocr_start)*1000:.1f}ms")
+        logger.info(f"OCR warmup (ONNX): {(time.time() - ocr_start)*1000:.1f}ms")
 
         # Warmup translation (HY-MT1.5) - use pool if available
         translate_start = time.time()

@@ -50,6 +50,9 @@ class Settings(BaseSettings):
     translation_use_parallel: bool = True  # Use parallel translation with asyncio.gather
     translation_num_instances: int = 3  # Number of translation model instances
 
+    # Pipeline optimization
+    use_pipeline_overlap: bool = True  # Start translation as each OCR completes (overlap OCR+translation)
+
     class Config:
         env_file = ".env"
         case_sensitive = False
