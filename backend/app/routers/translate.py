@@ -1,175 +1,325 @@
-"""Translation endpoint router"""
+"""Translation endpoint router - Local AI Pipeline"""
+import asyncio
 import logging
 import time
 from fastapi import APIRouter, HTTPException, status
-from typing import List
+from typing import List, Tuple
 import base64
 import io
 from PIL import Image
 import numpy as np
 
 from app.models.request import TranslateRequest
-from app.models.response import TranslateResponse, TextBox
-from app.services.ocr_service import OCRService
-from app.services.translation_service import TranslationService
+from app.models.response import TranslateResponse, TextBox, TextRegion
+from app.services.detector_service import DetectorService
+from app.services.manga_ocr_service import MangaOCRService
+from app.services.local_translation_service import LocalTranslationService, LocalTranslationPool
 from app.utils.image_processing import (
     calculate_font_size,
     detect_font_colors,
     extract_text_region_background
 )
-from app.utils.text_grouping import group_text_boxes
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-# Initialize services
-ocr_service = OCRService()
-translation_service = TranslationService()
+# Semaphore to limit concurrent GPU operations (prevents OOM)
+# With 32GB VRAM (RTX 5090), we can safely run more concurrent operations
+_gpu_semaphore = asyncio.Semaphore(settings.max_parallel_images)
+
+# Initialize local AI services (loaded at startup)
+logger.info("Initializing local AI pipeline...")
+detector_service = DetectorService()
+
+# Initialize OCR service for batched inference (always needed)
+logger.info("Using OCR service with batched inference")
+ocr_service = MangaOCRService()
+ocr_pool = None  # Pool deprecated in favor of batched inference
+
+if settings.translation_num_instances > 1:
+    logger.info(f"Using Translation Pool with {settings.translation_num_instances} instances")
+    translation_pool = LocalTranslationPool()
+    translation_service = None  # Not used when pool is available
+else:
+    logger.info("Using single Translation instance")
+    translation_pool = None
+    translation_service = LocalTranslationService()
+
+logger.info("Local AI pipeline ready")
+
+
+def decode_base64_image(base64_image: str) -> np.ndarray:
+    """Decode a base64 image string to numpy array (RGB)."""
+    image_data = base64_image
+    if ',' in image_data and image_data.startswith('data:image'):
+        image_data = image_data.split(',', 1)[1]
+    image_bytes = base64.b64decode(image_data)
+    image = Image.open(io.BytesIO(image_bytes))
+    if image.mode != 'RGB':
+        image = image.convert('RGB')
+    return np.array(image)
+
+
+async def process_single_image(
+    idx: int,
+    base64_image: str,
+    target_language: str,
+    semaphore: asyncio.Semaphore
+) -> Tuple[int, List[TextBox]]:
+    """
+    Process a single image through the translation pipeline.
+
+    Pipeline stages:
+    1. Detect speech bubbles (YOLOv10n)
+    2. Crop bubble regions
+    3. Batched OCR (PaddleOCR-VL) - all crops in one model.generate() call
+    4. Parallel translation (HY-MT1.5)
+
+    Args:
+        idx: Image index for logging
+        base64_image: Base64 encoded image
+        target_language: Target language for translation
+        semaphore: Semaphore for GPU memory management
+
+    Returns:
+        Tuple of (index, list of TextBox results)
+    """
+    try:
+        image_start = time.time()
+        logger.info(f"Processing image {idx + 1}")
+
+        # GPU-intensive operations inside semaphore (detection + OCR)
+        async with semaphore:
+            # Step 1: Decode image
+            image_np = decode_base64_image(base64_image)
+            logger.debug(f"Image {idx + 1} decoded: {image_np.shape}")
+
+            # Step 2: Detect speech bubbles (YOLOv10n - NMS-free, ~2ms)
+            detect_start = time.time()
+            bubbles = await detector_service.detect_bubbles(
+                image_np,
+                conf=settings.detection_confidence,
+                imgsz=settings.detection_image_size
+            )
+            detect_time = time.time() - detect_start
+            logger.info(f"Image {idx + 1}: Detected {len(bubbles)} bubbles in {detect_time*1000:.1f}ms")
+
+            if not bubbles:
+                logger.warning(f"No speech bubbles detected in image {idx + 1}")
+                return (idx, [])
+
+            # Step 3: Crop bubble regions
+            crops = detector_service.crop_regions(image_np, bubbles)
+
+            # Step 4 & 5: OCR and Translation
+            ocr_start = time.time()
+
+            if settings.use_pipeline_overlap and len(crops) > 1 and translation_pool:
+                # PIPELINE OVERLAP: OCR each crop and start translation immediately
+                # This overlaps OCR and translation phases for better throughput
+                async def ocr_and_translate_pipelined():
+                    results = []
+                    for i, crop in enumerate(crops):
+                        # OCR single crop
+                        text = await ocr_service.recognize_single(crop)
+                        # Start translation immediately (non-blocking)
+                        trans_task = asyncio.create_task(
+                            translation_pool.translate_single(text, target_language)
+                        )
+                        results.append((i, text, trans_task))
+
+                    # Await all translation tasks
+                    return [(i, text, await task) for i, text, task in results]
+
+                paired = await ocr_and_translate_pipelined()
+                ocr_texts = [text for _, text, _ in paired]
+                translations = [trans for _, _, trans in paired]
+                ocr_time = time.time() - ocr_start
+                translate_time = 0  # Included in ocr_time due to overlap
+                logger.info(f"Image {idx + 1}: Pipelined OCR+Translation completed in {ocr_time*1000:.1f}ms ({len(crops)} crops)")
+            else:
+                # BATCH MODE: All OCR first, then all translation (original behavior)
+                ocr_texts = await ocr_service.recognize_text_batch(
+                    crops,
+                    batch_size=len(crops)  # Process all crops at once
+                )
+                ocr_time = time.time() - ocr_start
+                logger.info(f"Image {idx + 1}: Batched OCR completed in {ocr_time*1000:.1f}ms ({len(crops)} crops)")
+
+                # Translation (parallel or sequential)
+                translate_start = time.time()
+                if settings.translation_use_parallel:
+                    translations = await _translate_parallel(ocr_texts, target_language)
+                else:
+                    translations = await _translate_sequential(ocr_texts, target_language)
+                translate_time = time.time() - translate_start
+                logger.info(f"Image {idx + 1}: Translation completed in {translate_time*1000:.1f}ms ({len(ocr_texts)} texts)")
+
+        # Semaphore released - GPU slot available for other images
+
+        # Use bubble bboxes as text regions (entire bubble will be masked)
+        all_text_regions = [[{
+            'minX': bubble['minX'],
+            'minY': bubble['minY'],
+            'maxX': bubble['maxX'],
+            'maxY': bubble['maxY']
+        }] for bubble in bubbles]
+
+        # Step 6: Build response
+        text_boxes = []
+        for bubble, ocr_text, translated_text, text_regions in zip(bubbles, ocr_texts, translations, all_text_regions):
+            # Calculate font size based on bubble dimensions
+            bbox_width = bubble['maxX'] - bubble['minX']
+            bbox_height = bubble['maxY'] - bubble['minY']
+            font_size = calculate_font_size(
+                bbox_width,
+                bbox_height,
+                len(translated_text) if translated_text else 1
+            )
+
+            # Extract background region
+            background = extract_text_region_background(
+                base64_image,
+                bubble['minX'],
+                bubble['minY'],
+                bubble['maxX'],
+                bubble['maxY']
+            )
+
+            # Default font colors
+            font_color = "#000000"
+            stroke_color = "#FFFFFF"
+
+            text_box = TextBox(
+                ocrText=ocr_text,
+                originalLanguage="ja",
+                minX=bubble['minX'],
+                minY=bubble['minY'],
+                maxX=bubble['maxX'],
+                maxY=bubble['maxY'],
+                background=background,
+                fontHeightPx=font_size,
+                fontColor=font_color,
+                fontStrokeColor=stroke_color,
+                zIndex=1,
+                translatedText=translated_text,
+                subtextBoxes=[],
+                textRegions=[TextRegion(**r) for r in text_regions]
+            )
+
+            text_boxes.append(text_box)
+
+        image_time = time.time() - image_start
+        if settings.use_pipeline_overlap and len(crops) > 1 and translation_pool:
+            logger.info(
+                f"Image {idx + 1} completed: {len(text_boxes)} boxes in {image_time*1000:.1f}ms "
+                f"(detect: {detect_time*1000:.1f}ms, pipelined ocr+trans: {ocr_time*1000:.1f}ms)"
+            )
+        else:
+            logger.info(
+                f"Image {idx + 1} completed: {len(text_boxes)} boxes in {image_time*1000:.1f}ms "
+                f"(detect: {detect_time*1000:.1f}ms, ocr: {ocr_time*1000:.1f}ms, translate: {translate_time*1000:.1f}ms)"
+            )
+
+        return (idx, text_boxes)
+
+    except Exception as e:
+        logger.error(f"Error processing image {idx + 1}: {e}", exc_info=True)
+        return (idx, [])
+
+
+async def _translate_sequential(texts: List[str], target_language: str) -> List[str]:
+    """Translate texts sequentially (original behavior)."""
+    translations = []
+    for text in texts:
+        if translation_pool:
+            trans = await translation_pool.translate_single(text, target_language)
+        else:
+            trans = await translation_service.translate_single(text, target_language)
+        translations.append(trans)
+    return translations
+
+
+async def _translate_parallel(texts: List[str], target_language: str) -> List[str]:
+    """
+    OPTIMIZATION 2: Translate all texts in parallel.
+
+    Uses translation pool if available (true parallelism with multiple instances),
+    otherwise falls back to asyncio.gather with single instance.
+    """
+    if not texts:
+        return []
+
+    # Use pool for true parallel translation
+    if translation_pool:
+        return await translation_pool.translate_parallel(texts, target_language)
+
+    # Fallback to single instance with asyncio.gather
+    async def safe_translate(idx: int, text: str) -> Tuple[int, str]:
+        """Wrapper that catches exceptions and returns index for ordering."""
+        try:
+            trans = await translation_service.translate_single(text, target_language)
+            return (idx, trans)
+        except Exception as e:
+            logger.warning(f"Translation failed for text {idx+1}: {e}")
+            return (idx, "")
+
+    tasks = [
+        asyncio.create_task(safe_translate(i, text))
+        for i, text in enumerate(texts)
+    ]
+
+    results = await asyncio.gather(*tasks)
+    results.sort(key=lambda x: x[0])
+    return [trans for _, trans in results]
 
 
 @router.post("/translate", response_model=TranslateResponse)
 async def translate_images(request: TranslateRequest):
     """
-    Translate manga images:
+    Translate manga images using local AI pipeline:
     1. Decode base64 images
-    2. Run OCR to detect Japanese text + bounding boxes
-    3. Translate detected text using Gemini
-    4. Return structured response with translations and metadata
+    2. Detect speech bubbles (YOLOv10n)
+    3. Crop bubble regions
+    4. OCR on crops (PaddleOCR-VL)
+    5. Translate texts (HY-MT1.5)
+    6. Return structured response with translations and metadata
+
+    Supports parallel processing of multiple images for faster throughput.
     """
     start_time = time.time()
     try:
-        logger.info(f"Processing {len(request.base64Images)} images")
-        
-        all_results = []
-        
-        for idx, base64_image in enumerate(request.base64Images):
-            try:
-                logger.info(f"Processing image {idx + 1}/{len(request.base64Images)}")
-                
-                # Step 1: Run OCR to detect text (PaddleOCR handles detection + recognition)
-                ocr_results = await ocr_service.detect_text(base64_image)
+        num_images = len(request.base64Images)
+        logger.info(f"Processing {num_images} images (parallel={settings.parallel_image_processing})")
 
-                if not ocr_results:
-                    logger.warning(f"No text detected in image {idx + 1}")
-                    all_results.append([])
-                    continue
+        # Create semaphore for GPU memory management
+        semaphore = asyncio.Semaphore(settings.max_parallel_images)
 
-                # Step 2: Group nearby text boxes into logical paragraphs for manga translation
-                # This combines vertical text columns and speech bubbles into cohesive units
-                grouped_boxes = group_text_boxes(ocr_results, distance_threshold=80.0, y_overlap_threshold=0.5)
-                logger.info(f"Grouped {len(ocr_results)} OCR boxes into {len(grouped_boxes)} logical text groups")
+        if settings.parallel_image_processing and num_images > 1:
+            # Parallel processing: process all images concurrently
+            tasks = [
+                process_single_image(idx, base64_image, request.targetLanguage, semaphore)
+                for idx, base64_image in enumerate(request.base64Images)
+            ]
+            results = await asyncio.gather(*tasks)
 
-                # Step 3: Extract grouped texts for translation
-                texts_to_translate = [box['text'] for box in grouped_boxes]
-
-                # Step 4: Translate all texts in batch
-                translations = await translation_service.translate_batch(
-                    texts_to_translate,
-                    request.targetLanguage
+            # Sort results by index to maintain order
+            results.sort(key=lambda x: x[0])
+            all_results = [r[1] for r in results]
+        else:
+            # Sequential processing (for single image or if disabled)
+            all_results = []
+            for idx, base64_image in enumerate(request.base64Images):
+                _, text_boxes = await process_single_image(
+                    idx, base64_image, request.targetLanguage, semaphore
                 )
-
-                # Step 5: Combine grouped boxes with translations
-                text_boxes = []
-                translated_boxes = []  # For debug visualization
-
-                for grouped_box, translated_text in zip(grouped_boxes, translations):
-                    # Calculate font size based on grouped box dimensions
-                    bbox_width = grouped_box['maxX'] - grouped_box['minX']
-                    bbox_height = grouped_box['maxY'] - grouped_box['minY']
-                    font_size = calculate_font_size(
-                        bbox_width,
-                        bbox_height,
-                        len(translated_text)
-                    )
-
-                    # Extract background region from grouped box
-                    background = extract_text_region_background(
-                        base64_image,
-                        grouped_box['minX'],
-                        grouped_box['minY'],
-                        grouped_box['maxX'],
-                        grouped_box['maxY']
-                    )
-
-                    # Detect font colors (using a simple default for now)
-                    font_color = "#000000"
-                    stroke_color = "#FFFFFF"
-
-                    # Convert subtextBoxes to TextBox format (if any)
-                    subtext_boxes = []
-                    if 'subtextBoxes' in grouped_box and len(grouped_box['subtextBoxes']) > 1:
-                        # Only include subtextBoxes if there were multiple boxes grouped
-                        for sub_box in grouped_box['subtextBoxes']:
-                            sub_text_box = TextBox(
-                                ocrText=sub_box['text'],
-                                originalLanguage="",
-                                minX=sub_box['minX'],
-                                minY=sub_box['minY'],
-                                maxX=sub_box['maxX'],
-                                maxY=sub_box['maxY'],
-                                background="",  # Don't need background for sub-boxes
-                                fontHeightPx=font_size,
-                                fontColor=font_color,
-                                fontStrokeColor=stroke_color,
-                                zIndex=1,
-                                translatedText="",  # Sub-boxes don't have individual translations
-                                subtextBoxes=[]
-                            )
-                            subtext_boxes.append(sub_text_box)
-
-                    # Create TextBox with grouped text and translation
-                    text_box = TextBox(
-                        ocrText=grouped_box['text'],  # Combined text from all boxes in group
-                        originalLanguage="",
-                        minX=grouped_box['minX'],
-                        minY=grouped_box['minY'],
-                        maxX=grouped_box['maxX'],
-                        maxY=grouped_box['maxY'],
-                        background=background,
-                        fontHeightPx=font_size,
-                        fontColor=font_color,
-                        fontStrokeColor=stroke_color,
-                        zIndex=1,
-                        translatedText=translated_text,
-                        subtextBoxes=subtext_boxes  # Original boxes that were grouped together
-                    )
-
-                    text_boxes.append(text_box)
-
-                    # For debug visualization (use grouped box)
-                    translated_boxes.append({
-                        **grouped_box,
-                        'translation': translated_text
-                    })
-
-                # DEBUG: Visualize translated text on image
-                try:
-                    # Decode image for visualization
-                    image_data = base64_image
-                    if ',' in image_data and image_data.startswith('data:image'):
-                        image_data = image_data.split(',', 1)[1]
-                    image_bytes = base64.b64decode(image_data)
-                    image = Image.open(io.BytesIO(image_bytes))
-                    if image.mode != 'RGB':
-                        image = image.convert('RGB')
-                    image_np = np.array(image)
-
-                    ocr_service.visualize_translated_text(image_np, translated_boxes)
-                except Exception as viz_error:
-                    logger.warning(f"Failed to create translation visualization: {viz_error}")
-
                 all_results.append(text_boxes)
-                logger.info(f"Successfully processed image {idx + 1} with {len(text_boxes)} text boxes")
-
-            except Exception as e:
-                logger.error(f"Error processing image {idx + 1}: {e}")
-                # Return empty result for this image
-                all_results.append([])
 
         elapsed_time = time.time() - start_time
         logger.info(f"Translation request completed in {elapsed_time:.2f} seconds")
         return TranslateResponse(images=all_results)
-    
+
     except Exception as e:
         elapsed_time = time.time() - start_time
         logger.error(f"Translation request failed after {elapsed_time:.2f} seconds: {e}")

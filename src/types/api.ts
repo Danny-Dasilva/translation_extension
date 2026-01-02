@@ -8,6 +8,13 @@ export interface TranslateRequest {
   targetLanguage: string;
 }
 
+export interface TextRegion {
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+}
+
 export interface TextBox {
   ocrText: string;
   originalLanguage: string;
@@ -22,6 +29,7 @@ export interface TextBox {
   zIndex: number;
   translatedText: string;
   subtextBoxes: TextBox[];
+  textRegions?: TextRegion[]; // Precise text regions for targeted masking
 }
 
 export interface TranslateResponse {
