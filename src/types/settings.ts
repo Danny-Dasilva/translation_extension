@@ -1,6 +1,7 @@
 /**
  * Settings and configuration types
  */
+import { CONFIG } from '@/config/constants';
 
 export interface ExtensionSettings {
   // API Configuration
@@ -38,7 +39,7 @@ export type FontName =
   | 'CC Wild Words';
 
 export const DEFAULT_SETTINGS: ExtensionSettings = {
-  apiEndpoint: 'http://100.97.223.100:8000',
+  apiEndpoint: CONFIG.DEFAULT_API_ENDPOINT,
   targetLanguage: 'English',
   autoTranslate: false,
   activeUrls: [],
