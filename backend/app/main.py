@@ -32,13 +32,14 @@ async def lifespan(app: FastAPI):
     warmup_start = time.time()
 
     try:
-        # Create dummy image for warmup (640x640 RGB)
-        dummy_image = np.zeros((640, 640, 3), dtype=np.uint8)
+        # Create dummy image for warmup
+        dummy_size = settings.ctd_input_size
+        dummy_image = np.zeros((dummy_size, dummy_size, 3), dtype=np.uint8)
 
-        # Warmup detector (YOLOv10n)
+        # Warmup detector (CTD)
         detector_start = time.time()
-        await translate.detector_service.detect_bubbles(dummy_image)
-        logger.info(f"Detector warmup: {(time.time() - detector_start)*1000:.1f}ms")
+        await translate.ctd_service.detect(dummy_image)
+        logger.info(f"CTD warmup: {(time.time() - detector_start)*1000:.1f}ms")
 
         # Warmup OCR (manga-ocr) with small crop
         ocr_start = time.time()

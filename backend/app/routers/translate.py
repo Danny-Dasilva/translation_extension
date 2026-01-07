@@ -7,16 +7,15 @@ from typing import List, Tuple
 
 from app.models.request import TranslateRequest
 from app.models.response import TranslateResponse, TextBox, TextRegion
-from app.services.detector_service import DetectorService
+from app.services.detector_factory import create_detector
 from app.services.manga_ocr_service import MangaOCRService
 from app.services.local_translation_service import LocalTranslationService, LocalTranslationPool
 from app.utils.image_processing import (
     calculate_font_size,
     decode_base64_to_numpy,
-    detect_font_colors,
     extract_text_region_background
 )
-from app.utils.text_region_extractor import extract_text_bounds, calculate_inset_region
+from app.utils.ctd_utils import build_text_regions
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -28,7 +27,7 @@ _gpu_semaphore = asyncio.Semaphore(settings.max_parallel_images)
 
 # Initialize local AI services (loaded at startup)
 logger.info("Initializing local AI pipeline...")
-detector_service = DetectorService()
+detector_service = create_detector()
 
 # Initialize OCR service for batched inference (always needed)
 logger.info("Using OCR service with batched inference")
@@ -57,8 +56,8 @@ async def process_single_image(
     Process a single image through the translation pipeline.
 
     Pipeline stages:
-    1. Detect speech bubbles (YOLOv10n)
-    2. Crop bubble regions
+    1. Detect text blocks (CTD)
+    2. Crop block regions
     3. Batched OCR (PaddleOCR-VL) - all crops in one model.generate() call
     4. Parallel translation (HY-MT1.5)
 
@@ -81,22 +80,25 @@ async def process_single_image(
             image_np = decode_base64_to_numpy(base64_image)
             logger.debug(f"Image {idx + 1} decoded: {image_np.shape}")
 
-            # Step 2: Detect speech bubbles (YOLOv10n - NMS-free, ~2ms)
+            # Step 2: Detect text blocks (CTD)
             detect_start = time.time()
-            bubbles = await detector_service.detect_bubbles(
-                image_np,
-                conf=settings.detection_confidence,
-                imgsz=settings.detection_image_size
-            )
+            ctd_result = await detector_service.detect(image_np)
             detect_time = time.time() - detect_start
-            logger.info(f"Image {idx + 1}: Detected {len(bubbles)} bubbles in {detect_time*1000:.1f}ms")
 
-            if not bubbles:
-                logger.warning(f"No speech bubbles detected in image {idx + 1}")
+            blocks = ctd_result["blocks"]
+            text_lines = ctd_result["text_lines"]
+
+            logger.info(
+                f"Image {idx + 1}: Detected {len(blocks)} blocks, "
+                f"{len(text_lines)} text lines in {detect_time*1000:.1f}ms"
+            )
+
+            if not blocks:
+                logger.warning(f"No text blocks detected in image {idx + 1}")
                 return (idx, [])
 
-            # Step 3: Crop bubble regions
-            crops = detector_service.crop_regions(image_np, bubbles)
+            # Step 3: Crop block regions
+            crops = detector_service.crop_regions(image_np, blocks)
 
             # Step 4 & 5: OCR and Translation
             ocr_start = time.time()
@@ -122,7 +124,7 @@ async def process_single_image(
                 ocr_texts = [text for _, text, _ in paired]
                 translations = [trans for _, _, trans in paired]
                 ocr_time = time.time() - ocr_start
-                translate_time = 0  # Included in ocr_time due to overlap
+                translate_time = ocr_time  # Combined time for pipelined mode
                 logger.info(f"Image {idx + 1}: Pipelined OCR+Translation completed in {ocr_time*1000:.1f}ms ({len(crops)} crops)")
             else:
                 # BATCH MODE: All OCR first, then all translation (original behavior)
@@ -142,31 +144,22 @@ async def process_single_image(
                 translate_time = time.time() - translate_start
                 logger.info(f"Image {idx + 1}: Translation completed in {translate_time*1000:.1f}ms ({len(ocr_texts)} texts)")
 
+            # Calculate per-crop timing (distribute evenly)
+            num_items = len(crops) if crops else 1
+            ocr_time_per_crop = (ocr_time * 1000) / num_items
+            translate_time_per_text = (translate_time * 1000) / num_items
+
         # Semaphore released - GPU slot available for other images
 
-        # Extract tight text bounds from each crop (1-2ms per bubble)
-        all_text_regions = []
-        for crop, bubble in zip(crops, bubbles):
-            text_bounds = extract_text_bounds(crop, method='morphological')
-            if text_bounds:
-                # Convert crop-relative coords to image-absolute coords
-                rel_x1, rel_y1, rel_x2, rel_y2 = text_bounds
-                all_text_regions.append([{
-                    'minX': bubble['minX'] + rel_x1,
-                    'minY': bubble['minY'] + rel_y1,
-                    'maxX': bubble['minX'] + rel_x2,
-                    'maxY': bubble['minY'] + rel_y2
-                }])
-            else:
-                # Fallback: 15% inset from bubble bounds
-                all_text_regions.append([calculate_inset_region(bubble, inset_percent=0.15)])
+        # Extract tight text bounds from CTD output
+        all_text_regions = build_text_regions(blocks, text_lines)
 
         # Step 6: Build response
         text_boxes = []
-        for bubble, ocr_text, translated_text, text_regions in zip(bubbles, ocr_texts, translations, all_text_regions):
-            # Calculate font size based on bubble dimensions
-            bbox_width = bubble['maxX'] - bubble['minX']
-            bbox_height = bubble['maxY'] - bubble['minY']
+        for block, ocr_text, translated_text, text_regions in zip(blocks, ocr_texts, translations, all_text_regions):
+            # Calculate font size based on block dimensions
+            bbox_width = block['maxX'] - block['minX']
+            bbox_height = block['maxY'] - block['minY']
             font_size = calculate_font_size(
                 bbox_width,
                 bbox_height,
@@ -176,10 +169,10 @@ async def process_single_image(
             # Extract background region
             background = extract_text_region_background(
                 base64_image,
-                bubble['minX'],
-                bubble['minY'],
-                bubble['maxX'],
-                bubble['maxY']
+                block['minX'],
+                block['minY'],
+                block['maxX'],
+                block['maxY']
             )
 
             # Default font colors
@@ -189,10 +182,10 @@ async def process_single_image(
             text_box = TextBox(
                 ocrText=ocr_text,
                 originalLanguage="ja",
-                minX=bubble['minX'],
-                minY=bubble['minY'],
-                maxX=bubble['maxX'],
-                maxY=bubble['maxY'],
+                minX=block['minX'],
+                minY=block['minY'],
+                maxX=block['maxX'],
+                maxY=block['maxY'],
                 background=background,
                 fontHeightPx=font_size,
                 fontColor=font_color,
@@ -200,7 +193,10 @@ async def process_single_image(
                 zIndex=1,
                 translatedText=translated_text,
                 subtextBoxes=[],
-                textRegions=[TextRegion(**r) for r in text_regions]
+                textRegions=[TextRegion(**r) for r in text_regions],
+                confidence=block.get('confidence', 0.0),
+                ocrTimeMs=round(ocr_time_per_crop, 2),
+                translateTimeMs=round(translate_time_per_text, 2),
             )
 
             text_boxes.append(text_box)
@@ -275,8 +271,8 @@ async def translate_images(request: TranslateRequest):
     """
     Translate manga images using local AI pipeline:
     1. Decode base64 images
-    2. Detect speech bubbles (YOLOv10n)
-    3. Crop bubble regions
+    2. Detect text blocks (CTD)
+    3. Crop block regions
     4. OCR on crops (PaddleOCR-VL)
     5. Translate texts (HY-MT1.5)
     6. Return structured response with translations and metadata
