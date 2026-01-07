@@ -36,7 +36,7 @@ DEBUG_DIR.mkdir(exist_ok=True)
 
 # Reuse services from translate router (they're singletons)
 from app.routers.translate import (
-    ctd_service,
+    detector_service,
     ocr_service,
     translation_service,
     translation_pool,
@@ -98,7 +98,7 @@ async def test_translate(request: Request):
 
             # Step 1: Detect text blocks
             detect_start = time.time()
-            ctd_result = await ctd_service.detect(image_np)
+            ctd_result = await detector_service.detect(image_np)
             detect_time = (time.time() - detect_start) * 1000
             bubbles = ctd_result["blocks"]
             text_lines = ctd_result["text_lines"]
@@ -118,7 +118,7 @@ async def test_translate(request: Request):
 
             # Step 2: Crop regions
             crop_start = time.time()
-            crops = ctd_service.crop_regions(image_np, bubbles)
+            crops = detector_service.crop_regions(image_np, bubbles)
             crop_time = (time.time() - crop_start) * 1000
 
             # Step 3: OCR - manga-ocr is fast (~20-100ms per crop)
@@ -330,7 +330,7 @@ async def test_translate_multipart(
 
             # Step 1: Detect text blocks
             detect_start = time.time()
-            ctd_result = await ctd_service.detect(image_np)
+            ctd_result = await detector_service.detect(image_np)
             detect_time = (time.time() - detect_start) * 1000
             bubbles = ctd_result["blocks"]
             text_lines = ctd_result["text_lines"]
@@ -350,7 +350,7 @@ async def test_translate_multipart(
 
             # Step 2: Crop regions
             crop_start = time.time()
-            crops = ctd_service.crop_regions(image_np, bubbles)
+            crops = detector_service.crop_regions(image_np, bubbles)
             crop_time = (time.time() - crop_start) * 1000
 
             # Step 3: OCR
@@ -548,7 +548,7 @@ async def test_translate_binary(
 
         # Step 1: Detect text blocks
         detect_start = time.time()
-        ctd_result = await ctd_service.detect(image_np, input_is_bgr=True)
+        ctd_result = await detector_service.detect(image_np, input_is_bgr=True)
         detect_time = (time.time() - detect_start) * 1000
         bubbles = ctd_result["blocks"]
         text_lines = ctd_result["text_lines"]
@@ -567,7 +567,7 @@ async def test_translate_binary(
         else:
             # Step 2: Crop regions
             crop_start = time.time()
-            crops = ctd_service.crop_regions(image_np, bubbles)
+            crops = detector_service.crop_regions(image_np, bubbles)
             crop_time = (time.time() - crop_start) * 1000
 
             # Step 3: OCR
@@ -753,7 +753,7 @@ async def test_translate_streaming(request: Request):
 
         # Step 1: Detect text blocks
         detect_start = time.time()
-        ctd_result = await ctd_service.detect(image_np, input_is_bgr=True)
+        ctd_result = await detector_service.detect(image_np, input_is_bgr=True)
         detect_time = (time.time() - detect_start) * 1000
         bubbles = ctd_result["blocks"]
         text_lines = ctd_result["text_lines"]
@@ -772,7 +772,7 @@ async def test_translate_streaming(request: Request):
         else:
             # Step 2: Crop regions
             crop_start = time.time()
-            crops = ctd_service.crop_regions(image_np, bubbles)
+            crops = detector_service.crop_regions(image_np, bubbles)
             crop_time = (time.time() - crop_start) * 1000
 
             # Step 3: OCR
@@ -951,7 +951,7 @@ async def benchmark_ocr(request: Request):
 
             # Step 1: Detect text blocks
             detect_start = time.time()
-            ctd_result = await ctd_service.detect(image_np)
+            ctd_result = await detector_service.detect(image_np)
             detect_time = (time.time() - detect_start) * 1000
             bubbles = ctd_result["blocks"]
 
@@ -964,7 +964,7 @@ async def benchmark_ocr(request: Request):
                 continue
 
             # Crop regions
-            crops = ctd_service.crop_regions(image_np, bubbles)
+            crops = detector_service.crop_regions(image_np, bubbles)
 
             # --- manga-ocr benchmark (single approach - already fast) ---
             batched_start = time.time()

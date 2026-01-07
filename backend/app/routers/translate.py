@@ -16,6 +16,8 @@ from app.utils.image_processing import (
     extract_text_region_background
 )
 from app.utils.ctd_utils import build_text_regions
+from app.utils.japanese_text_filter import is_japanese_text, filter_japanese_texts
+from app.utils.zindex_utils import assign_smart_zindex
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -100,6 +102,10 @@ async def process_single_image(
             # Step 3: Crop block regions
             crops = detector_service.crop_regions(image_np, blocks)
 
+            # Build text regions now (before any filtering)
+            all_text_regions = build_text_regions(blocks, text_lines)
+            original_count = len(crops)
+
             # Step 4 & 5: OCR and Translation
             ocr_start = time.time()
 
@@ -111,6 +117,17 @@ async def process_single_image(
                     for i, crop in enumerate(crops):
                         # OCR single crop
                         text = await ocr_service.recognize_single(crop)
+
+                        # Filter non-Japanese before starting translation
+                        if settings.japanese_filter_enabled:
+                            if not is_japanese_text(
+                                text,
+                                settings.japanese_filter_min_ratio,
+                                settings.japanese_filter_katakana_max_length
+                            ):
+                                logger.debug(f"Filtered non-Japanese text at index {i}: '{text[:30]}...'")
+                                continue
+
                         # Start translation immediately (non-blocking)
                         trans_task = asyncio.create_task(
                             translation_pool.translate_single(text, target_language)
@@ -121,19 +138,57 @@ async def process_single_image(
                     return [(i, text, await task) for i, text, task in results]
 
                 paired = await ocr_and_translate_pipelined()
+
+                if not paired:
+                    logger.warning(f"Image {idx + 1}: All text regions filtered as non-Japanese")
+                    return (idx, [])
+
+                # Extract results and filter parallel lists to match kept indices
+                kept_indices = [i for i, _, _ in paired]
                 ocr_texts = [text for _, text, _ in paired]
                 translations = [trans for _, _, trans in paired]
+                blocks = [blocks[i] for i in kept_indices]
+                crops = [crops[i] for i in kept_indices]
+                all_text_regions = [all_text_regions[i] for i in kept_indices]
+
                 ocr_time = time.time() - ocr_start
                 translate_time = ocr_time  # Combined time for pipelined mode
-                logger.info(f"Image {idx + 1}: Pipelined OCR+Translation completed in {ocr_time*1000:.1f}ms ({len(crops)} crops)")
+
+                filtered_count = original_count - len(kept_indices)
+                if filtered_count > 0:
+                    logger.info(f"Image {idx + 1}: Pipelined OCR+Translation completed in {ocr_time*1000:.1f}ms ({len(crops)} kept, {filtered_count} filtered)")
+                else:
+                    logger.info(f"Image {idx + 1}: Pipelined OCR+Translation completed in {ocr_time*1000:.1f}ms ({len(crops)} crops)")
             else:
-                # BATCH MODE: All OCR first, then all translation (original behavior)
+                # BATCH MODE: All OCR first, then filter, then all translation
                 ocr_texts = await ocr_service.recognize_text_batch(
                     crops,
                     batch_size=len(crops)  # Process all crops at once
                 )
                 ocr_time = time.time() - ocr_start
                 logger.info(f"Image {idx + 1}: Batched OCR completed in {ocr_time*1000:.1f}ms ({len(crops)} crops)")
+
+                # Filter non-Japanese OCR results
+                if settings.japanese_filter_enabled:
+                    valid_indices = filter_japanese_texts(
+                        ocr_texts,
+                        settings.japanese_filter_min_ratio,
+                        settings.japanese_filter_katakana_max_length
+                    )
+
+                    filtered_count = len(ocr_texts) - len(valid_indices)
+                    if filtered_count > 0:
+                        logger.info(f"Image {idx + 1}: Filtered {filtered_count} non-Japanese regions")
+
+                    if not valid_indices:
+                        logger.warning(f"Image {idx + 1}: All text regions filtered as non-Japanese")
+                        return (idx, [])
+
+                    # Filter all parallel lists to maintain alignment
+                    ocr_texts = [ocr_texts[i] for i in valid_indices]
+                    blocks = [blocks[i] for i in valid_indices]
+                    crops = [crops[i] for i in valid_indices]
+                    all_text_regions = [all_text_regions[i] for i in valid_indices]
 
                 # Translation (parallel or sequential)
                 translate_start = time.time()
@@ -150,16 +205,16 @@ async def process_single_image(
             translate_time_per_text = (translate_time * 1000) / num_items
 
         # Semaphore released - GPU slot available for other images
-
-        # Extract tight text bounds from CTD output
-        all_text_regions = build_text_regions(blocks, text_lines)
+        # Note: all_text_regions was built and filtered inside the semaphore block
 
         # Step 6: Build response
         text_boxes = []
         for block, ocr_text, translated_text, text_regions in zip(blocks, ocr_texts, translations, all_text_regions):
-            # Calculate font size based on block dimensions
-            bbox_width = block['maxX'] - block['minX']
-            bbox_height = block['maxY'] - block['minY']
+            # Calculate font size based on inset text region (where text will be rendered)
+            # Use the first text region (the inset box) for font sizing
+            region = text_regions[0] if text_regions else block
+            bbox_width = region['maxX'] - region['minX']
+            bbox_height = region['maxY'] - region['minY']
             font_size = calculate_font_size(
                 bbox_width,
                 bbox_height,
@@ -200,6 +255,9 @@ async def process_single_image(
             )
 
             text_boxes.append(text_box)
+
+        # Assign smart zIndex: smaller boxes get higher zIndex (rendered on top)
+        assign_smart_zindex(text_boxes, use_dict=False)
 
         image_time = time.time() - image_start
         if settings.use_pipeline_overlap and len(crops) > 1 and translation_pool:

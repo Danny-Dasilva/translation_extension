@@ -20,7 +20,8 @@ export class OverlayRenderer {
    */
   async createOverlay(
     imageElement: HTMLImageElement | HTMLCanvasElement,
-    textBoxes: TextBox[]
+    textBoxes: TextBox[],
+    showDebug: boolean = false
   ): Promise<void> {
     // Remove existing overlay if any
     this.removeOverlay(imageElement);
@@ -37,7 +38,8 @@ export class OverlayRenderer {
         base64Image,
         textBoxes,
         imageElement,
-        settings.defaultFont
+        settings.defaultFont,
+        showDebug
       );
 
       // Replace original element with rendered canvas/image
@@ -107,7 +109,8 @@ export class OverlayRenderer {
     base64Image: string,
     textBoxes: TextBox[],
     originalElement: HTMLImageElement | HTMLCanvasElement,
-    fontFamily: string
+    fontFamily: string,
+    showDebug: boolean = false
   ): Promise<HTMLCanvasElement> {
     // Load the image
     const image = await this.loadImage(base64Image);
@@ -137,24 +140,32 @@ export class OverlayRenderer {
       return aZ - bZ;
     });
 
-    // Draw each text box
+    // TWO-PASS RENDERING: Prevents overlapping boxes from covering each other's text
+    // Pass 1: Draw ALL white backgrounds first
     for (const textBox of sortedTextBoxes) {
-      await this.drawTextBox(ctx, textBox, fontFamily, naturalWidth, naturalHeight);
+      this.drawTextBoxBackground(ctx, textBox);
+    }
+
+    // Pass 2: Draw ALL text on top of all backgrounds
+    for (const textBox of sortedTextBoxes) {
+      this.drawTextBoxText(ctx, textBox, fontFamily);
+    }
+
+    // Pass 3 (optional): Draw debug overlays
+    if (showDebug) {
+      this.drawDebugOverlay(ctx, sortedTextBoxes);
     }
 
     return canvas;
   }
 
   /**
-   * Draw a single text box on the canvas
+   * Draw ONLY the white background for a text box (Pass 1 of two-pass rendering)
    */
-  private async drawTextBox(
+  private drawTextBoxBackground(
     ctx: CanvasRenderingContext2D,
-    textBox: TextBox,
-    fontFamily: string,
-    imageWidth: number,
-    imageHeight: number
-  ): Promise<void> {
+    textBox: TextBox
+  ): void {
     // Text box coordinates (already in original image coordinates from API)
     const x = textBox.minX;
     const y = textBox.minY;
@@ -173,6 +184,21 @@ export class OverlayRenderer {
       // Fallback: mask entire bubble region
       this.drawRoundedRect(ctx, x, y, width, height, 'white', 8);
     }
+  }
+
+  /**
+   * Draw ONLY the text for a text box (Pass 2 of two-pass rendering)
+   */
+  private drawTextBoxText(
+    ctx: CanvasRenderingContext2D,
+    textBox: TextBox,
+    fontFamily: string
+  ): void {
+    // Text box coordinates
+    const x = textBox.minX;
+    const y = textBox.minY;
+    const width = textBox.maxX - textBox.minX;
+    const height = textBox.maxY - textBox.minY;
 
     // Prepare text rendering
     const text = textBox.translatedText;
@@ -207,6 +233,46 @@ export class OverlayRenderer {
       fontColor,
       strokeColor
     );
+  }
+
+  /**
+   * Draw debug overlay showing detection boxes and text regions
+   */
+  private drawDebugOverlay(
+    ctx: CanvasRenderingContext2D,
+    textBoxes: TextBox[]
+  ): void {
+    for (const textBox of textBoxes) {
+      const x = textBox.minX;
+      const y = textBox.minY;
+      const width = textBox.maxX - textBox.minX;
+      const height = textBox.maxY - textBox.minY;
+
+      // Draw red outline for bubble bounds
+      ctx.strokeStyle = 'rgba(255, 0, 0, 0.8)';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(x, y, width, height);
+
+      // Draw green semi-transparent fill for text regions
+      if (textBox.textRegions && textBox.textRegions.length > 0) {
+        ctx.fillStyle = 'rgba(0, 255, 0, 0.2)';
+        ctx.strokeStyle = 'rgba(0, 255, 0, 0.8)';
+        ctx.lineWidth = 1;
+
+        for (const region of textBox.textRegions) {
+          const rw = region.maxX - region.minX;
+          const rh = region.maxY - region.minY;
+          ctx.fillRect(region.minX, region.minY, rw, rh);
+          ctx.strokeRect(region.minX, region.minY, rw, rh);
+        }
+      }
+
+      // Draw confidence and zIndex labels
+      const label = `z:${textBox.zIndex || 1}${textBox.confidence ? ` c:${(textBox.confidence * 100).toFixed(0)}%` : ''}`;
+      ctx.font = '10px monospace';
+      ctx.fillStyle = 'rgba(255, 0, 0, 0.9)';
+      ctx.fillText(label, x + 2, y - 3);
+    }
   }
 
   /**

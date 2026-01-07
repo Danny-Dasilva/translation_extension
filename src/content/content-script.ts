@@ -161,6 +161,18 @@ class MangaTranslatorContent {
       // Translate batch
       const response = await apiClient.translate(compressedImages, settings.targetLanguage);
 
+      // Log debug timing info if debug mode is enabled
+      if (settings.showDebugInfo && response.debug?.timing) {
+        const t = response.debug.timing;
+        console.log(
+          `[Manga Translator Debug] Timing: ` +
+          `detection=${t.detection_ms?.toFixed(1)}ms, ` +
+          `ocr=${t.ocr_ms?.toFixed(1)}ms, ` +
+          `translation=${t.translation_ms?.toFixed(1)}ms, ` +
+          `total=${t.request_total_ms?.toFixed(1)}ms`
+        );
+      }
+
       // Create overlays
       for (let i = 0; i < batch.length; i++) {
         const { element } = batch[i];
@@ -169,7 +181,8 @@ class MangaTranslatorContent {
         if (textBoxes.length > 0) {
           await this.overlayRenderer.createOverlay(
             element as HTMLImageElement | HTMLCanvasElement,
-            textBoxes
+            textBoxes,
+            settings.showDebugInfo
           );
 
           // Monitor canvas for changes

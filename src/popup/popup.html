@@ -127,11 +127,6 @@
   <button id="toggle-site" class="toggle-enable">Enable for This Site</button>
 
   <div class="setting">
-    <label for="api-endpoint">API Endpoint:</label>
-    <input type="text" id="api-endpoint" placeholder="http://localhost:8000" />
-  </div>
-
-  <div class="setting">
     <label for="target-language">Target Language:</label>
     <select id="target-language">
       <option value="English">English</option>
@@ -161,6 +156,11 @@
   <div class="setting checkbox-setting">
     <input type="checkbox" id="auto-translate" />
     <label for="auto-translate">Auto-translate on page load</label>
+  </div>
+
+  <div class="setting checkbox-setting">
+    <input type="checkbox" id="show-debug" />
+    <label for="show-debug">Show debug info (detection boxes)</label>
   </div>
 
   <button id="save-settings">Save Settings</button>

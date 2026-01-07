@@ -2,9 +2,8 @@
  * API client for manga translation service with retry logic
  */
 import browser from 'webextension-polyfill';
-import { TranslateRequest, TranslateResponse, APIError } from '@/types/api';
+import { TranslateRequest, TranslateResponse } from '@/types/api';
 import { CONFIG } from '@/config/constants';
-import { settingsManager } from './settings-manager';
 
 export class APIClient {
   private static instance: APIClient;
@@ -99,10 +98,7 @@ export class APIClient {
    */
   async healthCheck(): Promise<boolean> {
     try {
-      const settings = await settingsManager.getSettings();
-      const endpoint = settings.apiEndpoint || CONFIG.DEFAULT_API_ENDPOINT;
-
-      const response = await fetch(`${endpoint}/health`, {
+      const response = await fetch(`${CONFIG.DEFAULT_API_ENDPOINT}/health`, {
         method: 'GET',
         signal: AbortSignal.timeout(5000),
       });
