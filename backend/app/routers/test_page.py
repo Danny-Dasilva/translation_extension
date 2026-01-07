@@ -19,14 +19,9 @@ import orjson
 from streaming_form_data import StreamingFormDataParser
 from streaming_form_data.targets import ValueTarget
 
-from app.models.request import TranslateRequest
-from app.models.response import TranslateResponse, TextBox, TextRegion
-from app.services.detector_service import DetectorService
-from app.services.manga_ocr_service import MangaOCRService
-from app.services.local_translation_service import LocalTranslationService, LocalTranslationPool
 from app.config import settings
 from app.utils.image_processing import decode_base64_to_numpy
-from app.utils.text_region_extractor import extract_text_bounds, calculate_inset_region
+from app.utils.ctd_utils import build_text_regions
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/test", tags=["test"])
@@ -41,7 +36,7 @@ DEBUG_DIR.mkdir(exist_ok=True)
 
 # Reuse services from translate router (they're singletons)
 from app.routers.translate import (
-    detector_service,
+    ctd_service,
     ocr_service,
     translation_service,
     translation_pool,
@@ -101,17 +96,15 @@ async def test_translate(request: Request):
             image_np = decode_base64_to_numpy(base64_image)
             preprocess_time = (time.time() - preprocess_start) * 1000
 
-            # Step 1: Detect bubbles
+            # Step 1: Detect text blocks
             detect_start = time.time()
-            bubbles = await detector_service.detect_bubbles(
-                image_np,
-                conf=settings.detection_confidence,
-                imgsz=settings.detection_image_size
-            )
+            ctd_result = await ctd_service.detect(image_np)
             detect_time = (time.time() - detect_start) * 1000
+            bubbles = ctd_result["blocks"]
+            text_lines = ctd_result["text_lines"]
 
             if not bubbles:
-                logger.warning(f"No bubbles detected in image {idx}")
+                logger.warning(f"No text blocks detected in image {idx}")
                 all_results.append([])
                 all_debug.append({
                     "image_index": idx,
@@ -125,7 +118,7 @@ async def test_translate(request: Request):
 
             # Step 2: Crop regions
             crop_start = time.time()
-            crops = detector_service.crop_regions(image_np, bubbles)
+            crops = ctd_service.crop_regions(image_np, bubbles)
             crop_time = (time.time() - crop_start) * 1000
 
             # Step 3: OCR - manga-ocr is fast (~20-100ms per crop)
@@ -142,24 +135,7 @@ async def test_translate(request: Request):
 
             # Step 5: Extract tight text bounds and build response
             text_extract_start = time.time()
-
-            # Extract tight text bounds from each crop (1-2ms per bubble)
-            all_text_regions = []
-            for crop, bubble in zip(crops, bubbles):
-                text_bounds = extract_text_bounds(crop, method='morphological')
-                if text_bounds:
-                    # Convert crop-relative coords to image-absolute coords
-                    rel_x1, rel_y1, rel_x2, rel_y2 = text_bounds
-                    all_text_regions.append([{
-                        'minX': bubble['minX'] + rel_x1,
-                        'minY': bubble['minY'] + rel_y1,
-                        'maxX': bubble['minX'] + rel_x2,
-                        'maxY': bubble['minY'] + rel_y2
-                    }])
-                else:
-                    # Fallback: 15% inset from bubble bounds
-                    all_text_regions.append([calculate_inset_region(bubble, inset_percent=0.15)])
-
+            all_text_regions = build_text_regions(bubbles, text_lines)
             text_extract_time = (time.time() - text_extract_start) * 1000
 
             # Build response - use dicts directly to skip Pydantic serialization overhead
@@ -352,17 +328,15 @@ async def test_translate_multipart(
             image_np = decode_base64_to_numpy(base64_image)
             preprocess_time = (time.time() - preprocess_start) * 1000
 
-            # Step 1: Detect bubbles
+            # Step 1: Detect text blocks
             detect_start = time.time()
-            bubbles = await detector_service.detect_bubbles(
-                image_np,
-                conf=settings.detection_confidence,
-                imgsz=settings.detection_image_size
-            )
+            ctd_result = await ctd_service.detect(image_np)
             detect_time = (time.time() - detect_start) * 1000
+            bubbles = ctd_result["blocks"]
+            text_lines = ctd_result["text_lines"]
 
             if not bubbles:
-                logger.warning(f"No bubbles detected in image {idx}")
+                logger.warning(f"No text blocks detected in image {idx}")
                 all_results.append([])
                 all_debug.append({
                     "image_index": idx,
@@ -376,7 +350,7 @@ async def test_translate_multipart(
 
             # Step 2: Crop regions
             crop_start = time.time()
-            crops = detector_service.crop_regions(image_np, bubbles)
+            crops = ctd_service.crop_regions(image_np, bubbles)
             crop_time = (time.time() - crop_start) * 1000
 
             # Step 3: OCR
@@ -393,21 +367,7 @@ async def test_translate_multipart(
 
             # Step 5: Extract tight text bounds and build response
             text_extract_start = time.time()
-
-            all_text_regions = []
-            for crop, bubble in zip(crops, bubbles):
-                text_bounds = extract_text_bounds(crop, method='morphological')
-                if text_bounds:
-                    rel_x1, rel_y1, rel_x2, rel_y2 = text_bounds
-                    all_text_regions.append([{
-                        'minX': bubble['minX'] + rel_x1,
-                        'minY': bubble['minY'] + rel_y1,
-                        'maxX': bubble['minX'] + rel_x2,
-                        'maxY': bubble['minY'] + rel_y2
-                    }])
-                else:
-                    all_text_regions.append([calculate_inset_region(bubble, inset_percent=0.15)])
-
+            all_text_regions = build_text_regions(bubbles, text_lines)
             text_extract_time = (time.time() - text_extract_start) * 1000
 
             # Build response
@@ -586,17 +546,15 @@ async def test_translate_binary(
             raise HTTPException(status_code=400, detail="Invalid image data - could not decode")
         preprocess_time = (time.time() - preprocess_start) * 1000
 
-        # Step 1: Detect bubbles
+        # Step 1: Detect text blocks
         detect_start = time.time()
-        bubbles = await detector_service.detect_bubbles(
-            image_np,
-            conf=settings.detection_confidence,
-            imgsz=settings.detection_image_size
-        )
+        ctd_result = await ctd_service.detect(image_np, input_is_bgr=True)
         detect_time = (time.time() - detect_start) * 1000
+        bubbles = ctd_result["blocks"]
+        text_lines = ctd_result["text_lines"]
 
         if not bubbles:
-            logger.warning("No bubbles detected in image")
+            logger.warning("No text blocks detected in image")
             all_results.append([])
             all_debug.append({
                 "image_index": 0,
@@ -609,7 +567,7 @@ async def test_translate_binary(
         else:
             # Step 2: Crop regions
             crop_start = time.time()
-            crops = detector_service.crop_regions(image_np, bubbles)
+            crops = ctd_service.crop_regions(image_np, bubbles)
             crop_time = (time.time() - crop_start) * 1000
 
             # Step 3: OCR
@@ -626,19 +584,7 @@ async def test_translate_binary(
 
             # Step 5: Extract tight text bounds
             text_extract_start = time.time()
-            all_text_regions = []
-            for crop, bubble in zip(crops, bubbles):
-                text_bounds = extract_text_bounds(crop, method='morphological')
-                if text_bounds:
-                    rel_x1, rel_y1, rel_x2, rel_y2 = text_bounds
-                    all_text_regions.append([{
-                        'minX': bubble['minX'] + rel_x1,
-                        'minY': bubble['minY'] + rel_y1,
-                        'maxX': bubble['minX'] + rel_x2,
-                        'maxY': bubble['minY'] + rel_y2
-                    }])
-                else:
-                    all_text_regions.append([calculate_inset_region(bubble, inset_percent=0.15)])
+            all_text_regions = build_text_regions(bubbles, text_lines)
             text_extract_time = (time.time() - text_extract_start) * 1000
 
             # Build response
@@ -805,17 +751,15 @@ async def test_translate_streaming(request: Request):
             raise HTTPException(status_code=400, detail="Invalid image data - could not decode")
         preprocess_time = (time.time() - preprocess_start) * 1000
 
-        # Step 1: Detect bubbles
+        # Step 1: Detect text blocks
         detect_start = time.time()
-        bubbles = await detector_service.detect_bubbles(
-            image_np,
-            conf=settings.detection_confidence,
-            imgsz=settings.detection_image_size
-        )
+        ctd_result = await ctd_service.detect(image_np, input_is_bgr=True)
         detect_time = (time.time() - detect_start) * 1000
+        bubbles = ctd_result["blocks"]
+        text_lines = ctd_result["text_lines"]
 
         if not bubbles:
-            logger.warning("No bubbles detected in image")
+            logger.warning("No text blocks detected in image")
             all_results.append([])
             all_debug.append({
                 "image_index": 0,
@@ -828,7 +772,7 @@ async def test_translate_streaming(request: Request):
         else:
             # Step 2: Crop regions
             crop_start = time.time()
-            crops = detector_service.crop_regions(image_np, bubbles)
+            crops = ctd_service.crop_regions(image_np, bubbles)
             crop_time = (time.time() - crop_start) * 1000
 
             # Step 3: OCR
@@ -845,19 +789,7 @@ async def test_translate_streaming(request: Request):
 
             # Step 5: Extract tight text bounds
             text_extract_start = time.time()
-            all_text_regions = []
-            for crop, bubble in zip(crops, bubbles):
-                text_bounds = extract_text_bounds(crop, method='morphological')
-                if text_bounds:
-                    rel_x1, rel_y1, rel_x2, rel_y2 = text_bounds
-                    all_text_regions.append([{
-                        'minX': bubble['minX'] + rel_x1,
-                        'minY': bubble['minY'] + rel_y1,
-                        'maxX': bubble['minX'] + rel_x2,
-                        'maxY': bubble['minY'] + rel_y2
-                    }])
-                else:
-                    all_text_regions.append([calculate_inset_region(bubble, inset_percent=0.15)])
+            all_text_regions = build_text_regions(bubbles, text_lines)
             text_extract_time = (time.time() - text_extract_start) * 1000
 
             # Build response
@@ -1017,25 +949,22 @@ async def benchmark_ocr(request: Request):
             # Decode image
             image_np = decode_base64_to_numpy(base64_image)
 
-            # Step 1: Detect bubbles
+            # Step 1: Detect text blocks
             detect_start = time.time()
-            bubbles = await detector_service.detect_bubbles(
-                image_np,
-                conf=settings.detection_confidence,
-                imgsz=settings.detection_image_size
-            )
+            ctd_result = await ctd_service.detect(image_np)
             detect_time = (time.time() - detect_start) * 1000
+            bubbles = ctd_result["blocks"]
 
             if not bubbles:
                 results.append({
                     "image_index": idx,
                     "bubbles_detected": 0,
-                    "error": "No bubbles detected"
+                    "error": "No text blocks detected"
                 })
                 continue
 
             # Crop regions
-            crops = detector_service.crop_regions(image_np, bubbles)
+            crops = ctd_service.crop_regions(image_np, bubbles)
 
             # --- manga-ocr benchmark (single approach - already fast) ---
             batched_start = time.time()
