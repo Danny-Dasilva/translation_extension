@@ -22,7 +22,8 @@ export interface ExtensionSettings {
   // Feature Flags
   useCache: boolean;
   showLoadingIndicator: boolean;
-  
+  showDebugInfo: boolean; // Show detection boxes and timing info
+
   // Premium/Auth (optional)
   isPremium: boolean;
   authToken?: string;
@@ -37,13 +38,14 @@ export type FontName =
   | 'CC Wild Words';
 
 export const DEFAULT_SETTINGS: ExtensionSettings = {
-  apiEndpoint: 'http://localhost:8000',
+  apiEndpoint: 'http://100.97.223.100:8000',
   targetLanguage: 'English',
   autoTranslate: false,
   activeUrls: [],
   defaultFont: 'Bangers',
   useCache: true,
   showLoadingIndicator: true,
+  showDebugInfo: false,
   isPremium: false,
 };
 

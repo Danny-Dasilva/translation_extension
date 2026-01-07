@@ -20,11 +20,14 @@ export class SettingsManager {
 
   /**
    * Load settings from Chrome storage
+   * Merges with defaults to handle migration for new settings fields
    */
   async loadSettings(): Promise<ExtensionSettings> {
     try {
       const result = await browser.storage.sync.get(CONFIG.STORAGE_KEYS.SETTINGS);
-      this.settings = result[CONFIG.STORAGE_KEYS.SETTINGS] || DEFAULT_SETTINGS;
+      const storedSettings = result[CONFIG.STORAGE_KEYS.SETTINGS];
+      // Merge with defaults to ensure new fields have default values
+      this.settings = { ...DEFAULT_SETTINGS, ...storedSettings };
       return this.settings;
     } catch (error) {
       console.error('Failed to load settings:', error);

@@ -4,7 +4,8 @@
 
 export const CONFIG = {
   // API
-  DEFAULT_API_ENDPOINT: 'http://localhost:8000',
+  DEFAULT_API_ENDPOINT: 'http://100.97.223.100:8000',
+  WS_ENDPOINT: 'ws://100.97.223.100:8000',
   API_TIMEOUT: 30000, // 30 seconds
   MAX_RETRY_ATTEMPTS: 3,
   RETRY_DELAY: 1000, // 1 second

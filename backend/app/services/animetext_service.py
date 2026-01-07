@@ -144,51 +144,55 @@ class AnimeTextDetectorService:
         orig_size: Tuple[int, int]
     ) -> List[Dict]:
         """
-        Parse YOLO12 output format.
+        Parse YOLO12 output format (vectorized for speed).
 
         Input shape: [1, 5, 8400] where 5 = [cx, cy, w, h, conf]
         """
-        blocks: List[Dict] = []
         w, h = orig_size
 
-        # Transpose from [1, 5, 8400] to [8400, 5]
+        # Reshape: [1, 5, 8400] -> [8400, 5]
         if output.ndim == 3:
-            output = output[0]  # Remove batch dim -> [5, 8400]
-
+            output = output[0]  # -> [5, 8400]
         if output.shape[0] == 5:
             output = output.T  # -> [8400, 5]
 
-        for det in output:
-            cx, cy, bw, bh, conf = det[:5]
+        # Extract columns
+        cx, cy, bw, bh, conf = output[:, 0], output[:, 1], output[:, 2], output[:, 3], output[:, 4]
 
-            if conf < self.confidence_threshold:
-                continue
+        # Filter by confidence (vectorized)
+        mask = conf >= self.confidence_threshold
+        if not np.any(mask):
+            return []
 
-            # Convert from center format to corner format
-            x1 = cx - (bw / 2)
-            y1 = cy - (bh / 2)
-            x2 = cx + (bw / 2)
-            y2 = cy + (bh / 2)
+        cx, cy, bw, bh, conf = cx[mask], cy[mask], bw[mask], bh[mask], conf[mask]
 
-            # Scale back to original coordinates
-            min_x = int(max(0, min(x1 / scale, w)))
-            min_y = int(max(0, min(y1 / scale, h)))
-            max_x = int(max(0, min(x2 / scale, w)))
-            max_y = int(max(0, min(y2 / scale, h)))
+        # Convert center to corner format (vectorized)
+        x1 = (cx - bw / 2) / scale
+        y1 = (cy - bh / 2) / scale
+        x2 = (cx + bw / 2) / scale
+        y2 = (cy + bh / 2) / scale
 
-            if max_x <= min_x or max_y <= min_y:
-                continue
+        # Clip to image bounds (vectorized)
+        x1 = np.clip(x1, 0, w).astype(np.int32)
+        y1 = np.clip(y1, 0, h).astype(np.int32)
+        x2 = np.clip(x2, 0, w).astype(np.int32)
+        y2 = np.clip(y2, 0, h).astype(np.int32)
 
-            blocks.append({
-                "minX": min_x,
-                "minY": min_y,
-                "maxX": max_x,
-                "maxY": max_y,
-                "confidence": float(conf),
-            })
+        # Filter invalid boxes (vectorized)
+        valid = (x2 > x1) & (y2 > y1)
+        x1, y1, x2, y2, conf = x1[valid], y1[valid], x2[valid], y2[valid], conf[valid]
+
+        # Build blocks list
+        blocks = [
+            {"minX": int(x1[i]), "minY": int(y1[i]), "maxX": int(x2[i]), "maxY": int(y2[i]), "confidence": float(conf[i])}
+            for i in range(len(conf))
+        ]
 
         # Apply NMS (YOLO12 is not NMS-free like YOLOv10)
         blocks = self._apply_nms(blocks, iou_threshold=0.5)
+
+        # Filter out boxes that fully contain other boxes (keep innermost)
+        blocks = self._filter_contained_boxes(blocks)
 
         # Sort by reading order (right-to-left for manga, then top-to-bottom)
         blocks.sort(key=lambda b: (-b["minX"], b["minY"]))
@@ -232,6 +236,28 @@ class AnimeTextDetectorService:
             ]
 
         return keep
+
+    @staticmethod
+    def _filter_contained_boxes(blocks: List[Dict]) -> List[Dict]:
+        """Remove boxes that fully contain other boxes (keep innermost only)."""
+        if len(blocks) <= 1:
+            return blocks
+
+        # Find boxes that contain other boxes
+        to_remove = set()
+        for i, box_a in enumerate(blocks):
+            for j, box_b in enumerate(blocks):
+                if i == j:
+                    continue
+                # Check if box_a fully contains box_b
+                if (box_a["minX"] <= box_b["minX"] and
+                    box_a["minY"] <= box_b["minY"] and
+                    box_a["maxX"] >= box_b["maxX"] and
+                    box_a["maxY"] >= box_b["maxY"]):
+                    to_remove.add(i)  # Remove the container (outer box)
+                    break  # A contains at least one box, mark for removal
+
+        return [b for i, b in enumerate(blocks) if i not in to_remove]
 
     def crop_regions(
         self,

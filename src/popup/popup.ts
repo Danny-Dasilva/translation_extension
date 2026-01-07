@@ -64,15 +64,15 @@ async function toggleSite() {
 async function loadSettings() {
   const settings = await settingsManager.getSettings();
 
-  const apiEndpointInput = document.getElementById('api-endpoint') as HTMLInputElement;
   const targetLanguageSelect = document.getElementById('target-language') as HTMLSelectElement;
   const defaultFontSelect = document.getElementById('default-font') as HTMLSelectElement;
   const autoTranslateCheckbox = document.getElementById('auto-translate') as HTMLInputElement;
+  const showDebugCheckbox = document.getElementById('show-debug') as HTMLInputElement;
 
-  if (apiEndpointInput) apiEndpointInput.value = settings.apiEndpoint;
   if (targetLanguageSelect) targetLanguageSelect.value = settings.targetLanguage;
   if (defaultFontSelect) defaultFontSelect.value = settings.defaultFont;
   if (autoTranslateCheckbox) autoTranslateCheckbox.checked = settings.autoTranslate;
+  if (showDebugCheckbox) showDebugCheckbox.checked = settings.showDebugInfo;
 
   // Update toggle button
   await updateToggleButton();
@@ -80,16 +80,16 @@ async function loadSettings() {
 
 // Save settings
 async function saveSettings() {
-  const apiEndpointInput = document.getElementById('api-endpoint') as HTMLInputElement;
   const targetLanguageSelect = document.getElementById('target-language') as HTMLSelectElement;
   const defaultFontSelect = document.getElementById('default-font') as HTMLSelectElement;
   const autoTranslateCheckbox = document.getElementById('auto-translate') as HTMLInputElement;
+  const showDebugCheckbox = document.getElementById('show-debug') as HTMLInputElement;
 
   await settingsManager.saveSettings({
-    apiEndpoint: apiEndpointInput.value,
     targetLanguage: targetLanguageSelect.value,
     defaultFont: defaultFontSelect.value as any,
     autoTranslate: autoTranslateCheckbox.checked,
+    showDebugInfo: showDebugCheckbox.checked,
   });
 
   showStatus('saved', 'Settings saved!');
