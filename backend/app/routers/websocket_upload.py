@@ -10,6 +10,8 @@ import cv2
 
 from app.config import settings
 from app.utils.ctd_utils import build_text_regions
+from app.utils.image_processing import calculate_font_size
+from app.utils.zindex_utils import assign_smart_zindex
 
 # Reuse services from translate router (they're singletons)
 from app.routers.translate import (
@@ -208,6 +210,16 @@ async def _process_image(
                 for region in text_regions
             ]
 
+            # Calculate font size based on inset text region (where text will be rendered)
+            region = text_regions[0] if text_regions else bubble
+            bbox_width = region['maxX'] - region['minX']
+            bbox_height = region['maxY'] - region['minY']
+            font_size = calculate_font_size(
+                bbox_width,
+                bbox_height,
+                len(translated_text) if translated_text else 1
+            )
+
             text_box_dict = {
                 "ocrText": ocr_text,
                 "originalLanguage": "ja",
@@ -216,7 +228,7 @@ async def _process_image(
                 "maxX": int(bubble["maxX"]),
                 "maxY": int(bubble["maxY"]),
                 "background": "",
-                "fontHeightPx": 20,
+                "fontHeightPx": font_size,
                 "fontColor": "#000000",
                 "fontStrokeColor": "#FFFFFF",
                 "zIndex": 1,
@@ -226,6 +238,9 @@ async def _process_image(
                 "confidence": float(bubble.get("confidence", 0)),
             }
             text_boxes.append(text_box_dict)
+
+        # Assign smart zIndex: smaller boxes get higher zIndex (rendered on top)
+        assign_smart_zindex(text_boxes, use_dict=True)
 
         # Calculate timing (no receive time for WebSocket - connection is persistent)
         total_time = (time.time() - processing_start) * 1000
