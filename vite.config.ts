@@ -8,6 +8,7 @@ const browser = process.env.BROWSER || 'chrome';
 
 export default defineConfig({
   root: 'src',
+  envDir: __dirname, // Load .env from project root
   plugins: [
     webExtension({
       manifest: browser === 'firefox' ? 'manifest.firefox.json' : 'manifest.chrome.json',
