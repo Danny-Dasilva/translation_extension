@@ -29,7 +29,10 @@ class TextBox(BaseModel):
     translatedText: str
     subtextBoxes: List = []
     textRegions: List[TextRegion] = []
-    
+    confidence: float = 0.0
+    ocrTimeMs: float = 0.0
+    translateTimeMs: float = 0.0
+
     model_config = {
         "json_schema_extra": {
             "examples": [{
