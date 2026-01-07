@@ -2,10 +2,14 @@
  * Global constants and configuration
  */
 
+// API host/port from environment variables (set in .env file)
+const API_HOST = import.meta.env.VITE_API_HOST || 'localhost';
+const API_PORT = import.meta.env.VITE_API_PORT || '8000';
+
 export const CONFIG = {
   // API
-  DEFAULT_API_ENDPOINT: 'http://100.97.223.100:8000',
-  WS_ENDPOINT: 'ws://100.97.223.100:8000',
+  DEFAULT_API_ENDPOINT: `http://${API_HOST}:${API_PORT}`,
+  WS_ENDPOINT: `ws://${API_HOST}:${API_PORT}`,
   API_TIMEOUT: 30000, // 30 seconds
   MAX_RETRY_ATTEMPTS: 3,
   RETRY_DELAY: 1000, // 1 second
