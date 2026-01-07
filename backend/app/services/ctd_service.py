@@ -236,6 +236,28 @@ class ComicTextDetectorService:
 
         return keep
 
+    @staticmethod
+    def _filter_contained_boxes(blocks: List[Dict]) -> List[Dict]:
+        """Remove boxes that fully contain other boxes (keep innermost only)."""
+        if len(blocks) <= 1:
+            return blocks
+
+        # Find boxes that contain other boxes
+        to_remove = set()
+        for i, box_a in enumerate(blocks):
+            for j, box_b in enumerate(blocks):
+                if i == j:
+                    continue
+                # Check if box_a fully contains box_b
+                if (box_a["minX"] <= box_b["minX"] and
+                    box_a["minY"] <= box_b["minY"] and
+                    box_a["maxX"] >= box_b["maxX"] and
+                    box_a["maxY"] >= box_b["maxY"]):
+                    to_remove.add(i)  # Remove the container (outer box)
+                    break  # A contains at least one box, mark for removal
+
+        return [b for i, b in enumerate(blocks) if i not in to_remove]
+
     def _parse_blocks(
         self,
         blks: np.ndarray | None,
@@ -301,6 +323,9 @@ class ComicTextDetectorService:
             blocks = self._apply_nms(blocks, iou_threshold=0.5)
         else:
             logger.debug("Skipping NMS (model uses one-to-one assignment)")
+
+        # Filter out boxes that fully contain other boxes (keep innermost)
+        blocks = self._filter_contained_boxes(blocks)
 
         blocks.sort(key=lambda b: (-b["minX"], b["minY"]))
         return blocks

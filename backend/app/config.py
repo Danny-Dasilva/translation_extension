@@ -75,6 +75,12 @@ class Settings(BaseSettings):
     # Pipeline optimization
     use_pipeline_overlap: bool = True  # Start translation as each OCR completes (overlap OCR+translation)
 
+    # Japanese text filter (post-OCR)
+    # Filters out non-Japanese text that MangaOCR may hallucinate from English
+    japanese_filter_enabled: bool = True
+    japanese_filter_min_ratio: float = 0.5  # Min Japanese char ratio (0.0-1.0)
+    japanese_filter_katakana_max_length: int = 6  # Max length for katakana-only text
+
     class Config:
         env_file = ".env"
         case_sensitive = False

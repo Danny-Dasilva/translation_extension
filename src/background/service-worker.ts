@@ -3,6 +3,9 @@
  */
 import browser from 'webextension-polyfill';
 import { settingsManager } from '@/services/settings-manager';
+import { webSocketClient } from '@/services/websocket-client';
+import { CONFIG } from '@/config/constants';
+import { TranslateResponse } from '@/types/api';
 
 // Create context menu
 async function createContextMenu() {
@@ -133,29 +136,27 @@ async function handleMessage(message: any, sender: browser.Runtime.MessageSender
       }
 
     case 'translateImages':
-      // Make API call to translation service
+      // Try WebSocket first, fall back to HTTP
       try {
-        const settings = await settingsManager.getSettings();
-        const endpoint = settings.apiEndpoint || 'http://localhost:8000';
-
-        const response = await fetch(`${endpoint}/translate`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(settings.apiKey && { 'Authorization': `Bearer ${settings.apiKey}` }),
-          },
-          body: JSON.stringify({
-            base64Images: message.base64Images,
-            targetLanguage: message.targetLanguage,
-          }),
-        });
-
-        if (!response.ok) {
-          const error = await response.json();
-          return { success: false, error: error.detail || `API request failed: ${response.status}` };
+        const wsResult = await translateViaWebSocket(
+          message.base64Images,
+          message.targetLanguage
+        );
+        if (wsResult.success) {
+          return wsResult;
         }
+        // If WebSocket failed, fall back to HTTP
+        console.warn('WebSocket translation failed, falling back to HTTP:', wsResult.error);
+      } catch (wsError) {
+        console.warn('WebSocket translation error, falling back to HTTP:', wsError);
+      }
 
-        const data = await response.json();
+      // HTTP fallback
+      try {
+        const data = await translateViaHttp(
+          message.base64Images,
+          message.targetLanguage
+        );
         return { success: true, data };
       } catch (error) {
         console.error('Translation API call failed:', error);
@@ -224,5 +225,102 @@ browser.action?.onClicked.addListener(async (tab) => {
     action: 'toggle',
   });
 });
+
+/**
+ * Convert base64 data URL to ArrayBuffer
+ */
+function base64ToArrayBuffer(base64: string): ArrayBuffer {
+  // Remove data URL prefix if present
+  const base64Data = base64.includes(',') ? base64.split(',')[1] : base64;
+  const binaryString = atob(base64Data);
+  const bytes = new Uint8Array(binaryString.length);
+  for (let i = 0; i < binaryString.length; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+  return bytes.buffer;
+}
+
+/**
+ * Translate images via WebSocket (binary upload)
+ */
+async function translateViaWebSocket(
+  base64Images: string[],
+  targetLanguage: string
+): Promise<{ success: boolean; data?: TranslateResponse; error?: string }> {
+  try {
+    // Connect to WebSocket
+    await webSocketClient.connect(targetLanguage);
+
+    // Process images one at a time (WebSocket protocol is request-response)
+    const allTextBoxes: any[][] = [];
+    let debugInfo: TranslateResponse['debug'] | undefined;
+
+    for (const base64Image of base64Images) {
+      // Convert base64 to binary
+      const imageBuffer = base64ToArrayBuffer(base64Image);
+
+      // Send via WebSocket
+      const response = await webSocketClient.send(imageBuffer);
+
+      if (response.success === false) {
+        return { success: false, error: (response as any).error || 'Translation failed' };
+      }
+
+      // Collect results
+      if (response.images && response.images.length > 0) {
+        allTextBoxes.push(...response.images);
+      }
+
+      // Keep the last debug info
+      if (response.debug) {
+        debugInfo = response.debug;
+      }
+    }
+
+    const result: TranslateResponse = {
+      success: true,
+      images: allTextBoxes,
+      debug: debugInfo,
+    };
+
+    return { success: true, data: result };
+  } catch (error) {
+    console.error('WebSocket translation error:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'WebSocket translation failed',
+    };
+  }
+}
+
+/**
+ * Translate images via HTTP (base64 upload - fallback)
+ */
+async function translateViaHttp(
+  base64Images: string[],
+  targetLanguage: string
+): Promise<TranslateResponse> {
+  const settings = await settingsManager.getSettings();
+  const endpoint = CONFIG.DEFAULT_API_ENDPOINT;
+
+  const response = await fetch(`${endpoint}/translate`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(settings.apiKey && { Authorization: `Bearer ${settings.apiKey}` }),
+    },
+    body: JSON.stringify({
+      base64Images,
+      targetLanguage,
+    }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || `API request failed: ${response.status}`);
+  }
+
+  return await response.json();
+}
 
 console.log('Manga Translator: Background service worker loaded');
