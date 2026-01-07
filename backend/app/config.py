@@ -29,6 +29,22 @@ class Settings(BaseSettings):
     yolo_model_path: str = "app/models/yolov10n_manga.pt"
     # Note: manga-ocr auto-downloads its model, no path config needed
 
+    # Detector Selection: "animetext" (fast) or "ctd" (full-featured)
+    detector_type: str = "animetext"
+
+    # AnimeText YOLO12s FP16 (3.1x faster than CTD: 414 FPS vs 133 FPS)
+    animetext_model_path: str = "models/animetext_yolo12s_fp16.onnx"
+    animetext_input_size: int = 640
+    animetext_confidence_threshold: float = 0.272  # From model's threshold.json
+
+    # Comic Text Detector (CTD) - includes text_lines and mask
+    ctd_model_path: str = "models/comictextdetector.onnx"
+    ctd_input_size: int = 1024
+    ctd_text_threshold: float = 0.3
+    ctd_block_confidence: float = 0.4
+    ctd_min_text_area: int = 100
+    ctd_nms_free: bool = False  # Enable NMS to filter duplicate overlapping boxes
+
     # Translation model
     translation_model_filename: str = "HY-MT1.5-1.8B-Q8_0.gguf"
 

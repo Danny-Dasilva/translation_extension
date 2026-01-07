@@ -1,0 +1,83 @@
+{
+  "timestamp": "2026-01-07T09:26:25.120613",
+  "device_info": {
+    "cuda_available": true,
+    "torch_version": "2.9.1+cu128",
+    "gpu_name": "NVIDIA GeForce RTX 5090",
+    "gpu_memory_total_mb": 32111,
+    "cuda_version": "12.8"
+  },
+  "config": {
+    "warmup_iterations": 100,
+    "benchmark_iterations": 1000,
+    "input_size": 640
+  },
+  "benchmarks": {
+    "PyTorch (FP32)": {
+      "mean_ms": 5.556006591320038,
+      "median_ms": 5.520687818527222,
+      "std_ms": 0.13621676432374547,
+      "min_ms": 5.405600070953369,
+      "max_ms": 6.9099202156066895,
+      "p50_ms": 5.520687818527222,
+      "p95_ms": 5.8015856504440295,
+      "p99_ms": 6.178462810516358,
+      "cv_percent": 2.4517027128180935,
+      "fps": 179.98538762755723,
+      "iterations": 1000,
+      "peak_memory_mb": 125.97509765625,
+      "model_type": "pytorch",
+      "model_path": "/home/danny/Documents/personal/extension/training/models/animetext/yolo12s_animetext/model.pt"
+    },
+    "ONNX FP32 (CUDA)": {
+      "mean_ms": 3.981981947183609,
+      "median_ms": 3.9771839380264282,
+      "std_ms": 0.17113157876466825,
+      "min_ms": 3.7504000663757324,
+      "max_ms": 6.408224105834961,
+      "p50_ms": 3.9771839380264282,
+      "p95_ms": 4.14849133491516,
+      "p99_ms": 4.505939826965332,
+      "cv_percent": 4.29764828255203,
+      "fps": 251.1312239140822,
+      "iterations": 1000,
+      "peak_memory_mb": 32.0,
+      "model_type": "onnx_runtime_cuda",
+      "model_path": "/home/danny/Documents/personal/extension/training/models/animetext/yolo12s_animetext/model.onnx",
+      "execution_provider": "CUDA"
+    },
+    "ONNX FP16 (CUDA)": {
+      "mean_ms": 2.6910250222682954,
+      "median_ms": 2.6963839530944824,
+      "std_ms": 0.04866489228513501,
+      "min_ms": 2.4200639724731445,
+      "max_ms": 3.205535888671875,
+      "p50_ms": 2.6963839530944824,
+      "p95_ms": 2.726375949382782,
+      "p99_ms": 2.734336540699005,
+      "cv_percent": 1.8084147074973986,
+      "fps": 371.60561188579686,
+      "iterations": 1000,
+      "peak_memory_mb": 32.0,
+      "model_type": "onnx_runtime_cuda",
+      "model_path": "/home/danny/Documents/personal/extension/training/models/animetext/yolo12s_animetext/model_fp16.onnx",
+      "execution_provider": "CUDA"
+    },
+    "TensorRT FP16": {
+      "mean_ms": 2.7644611549377442,
+      "median_ms": 2.746767997741699,
+      "std_ms": 0.06726150160247017,
+      "min_ms": 2.6676480770111084,
+      "max_ms": 3.500511884689331,
+      "p50_ms": 2.746767997741699,
+      "p95_ms": 2.893006467819214,
+      "p99_ms": 3.036279394626617,
+      "cv_percent": 2.433078196173276,
+      "fps": 361.73414779724766,
+      "iterations": 1000,
+      "peak_memory_mb": 42.70751953125,
+      "model_type": "tensorrt_engine",
+      "model_path": "/home/danny/Documents/personal/extension/training/models/animetext/yolo12s_animetext/model.engine"
+    }
+  }
+}

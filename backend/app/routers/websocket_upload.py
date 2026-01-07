@@ -9,7 +9,7 @@ import numpy as np
 import cv2
 
 from app.config import settings
-from app.utils.text_region_extractor import extract_text_bounds, calculate_inset_region
+from app.utils.ctd_utils import build_text_regions
 
 # Reuse services from translate router (they're singletons)
 from app.routers.translate import (
@@ -142,17 +142,15 @@ async def _process_image(
             }
         preprocess_time = (time.time() - preprocess_start) * 1000
 
-        # Step 1: Detect bubbles
+        # Step 1: Detect text blocks
         detect_start = time.time()
-        bubbles = await detector_service.detect_bubbles(
-            image_np,
-            conf=settings.detection_confidence,
-            imgsz=settings.detection_image_size
-        )
+        ctd_result = await detector_service.detect(image_np, input_is_bgr=True)
         detect_time = (time.time() - detect_start) * 1000
+        bubbles = ctd_result["blocks"]
+        text_lines = ctd_result["text_lines"]
 
         if not bubbles:
-            logger.warning(f"[WS:{client_id}] No bubbles detected")
+            logger.warning(f"[WS:{client_id}] No text blocks detected")
             total_time = (time.time() - processing_start) * 1000
             return {
                 "success": True,
@@ -197,19 +195,7 @@ async def _process_image(
 
         # Step 5: Extract tight text bounds
         text_extract_start = time.time()
-        all_text_regions = []
-        for crop, bubble in zip(crops, bubbles):
-            text_bounds = extract_text_bounds(crop, method='morphological')
-            if text_bounds:
-                rel_x1, rel_y1, rel_x2, rel_y2 = text_bounds
-                all_text_regions.append([{
-                    'minX': bubble['minX'] + rel_x1,
-                    'minY': bubble['minY'] + rel_y1,
-                    'maxX': bubble['minX'] + rel_x2,
-                    'maxY': bubble['minY'] + rel_y2
-                }])
-            else:
-                all_text_regions.append([calculate_inset_region(bubble, inset_percent=0.15)])
+        all_text_regions = build_text_regions(bubbles, text_lines)
         text_extract_time = (time.time() - text_extract_start) * 1000
 
         # Build response (compatible with HTTP endpoints)
