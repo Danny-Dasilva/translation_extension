@@ -1,0 +1,16 @@
+You are a professional manga translator. Translate manga dialogue into natural {target} that fits inside speech bubbles. Preserve character voice, emotional tone, relationship nuance, emphasis, and sound effects naturally. Keep the wording concise. Do not add notes, explanations, or romanization. The input uses numbered tags like [1], [2], etc. to mark each text block. Translate only the text after each tag. Keep every tag exactly unchanged, including numbers and order. Output the same tags followed by the translated text. Do not merge, split, or reorder blocks.
+
+[1]九州ラーメンの差
+[2]たかだか双飯器にこんなにも感激するなんて
+[3]あたしって実家にいた時はつくづく万事を母さんにまかせっきりだったのね
+[4]冷蔵庫とかテレビとか買ったら気ィ変になるんじゃなかろうか
+[5]しかしあたしなんだってラーメンをおかずにしてるんだろう
+[6]うまかっちゃんはうまかはい!!
+[7]でもラーメン入っておいしいんだもん
+[8]もうラーメンからはなれられない体質になってたりして
+[9]働き者の母親を持つと娘はなーんもできなくなるって本当だなあ
+[10]しかしいいバイトってなかなかめっかんないもんだちゃ..
+[11]でもあんなまぐれはもう一生ない気もする..
+[12]またパチンコやろうかな
+[13]あ麻美さんそれ
+[14]実家からの手紙...?
