@@ -1,0 +1,29 @@
+{
+  "image": "animetext_1000011.jpg",
+  "detect_ms": 647.0952033996582,
+  "num_blocks": 13,
+  "num_text_lines": 31,
+  "ocr_ms": 16470.17502784729,
+  "inpaint_ms": 30537.993669509888,
+  "translate_ms": 52222.43428230286,
+  "ocr_samples": [
+    "パチェお腹空いたわ",
+    "それにおいが嫌い",
+    "ほら（おす)これで超とスープ二品出来たわ",
+    "そう?",
+    "私は世界一美味しい食べ物だと思うけど",
+    "美齢達まだ帰って来ないの?",
+    "水g日",
+    "まぁ一目今やぐぺ"
+  ],
+  "translations": [
+    "Pachi, I’m hungry.",
+    "And I hate that smell too.",
+    "Look, with this, we can make two dishes of soup.",
+    "Really?",
+    "I think I have the most delicious food in the world.",
+    "Meirin and the others haven’t come back yet?",
+    "Water…",
+    "Well, let’s eat now."
+  ]
+}

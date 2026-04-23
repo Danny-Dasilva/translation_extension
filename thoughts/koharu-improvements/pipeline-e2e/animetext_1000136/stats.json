@@ -1,0 +1,19 @@
+{
+  "image": "animetext_1000136.jpg",
+  "detect_ms": 596.4522361755371,
+  "num_blocks": 3,
+  "num_text_lines": 2,
+  "ocr_ms": 1513.321876525879,
+  "inpaint_ms": 4312.330007553101,
+  "translate_ms": 26565.727472305298,
+  "ocr_samples": [
+    "あやざき",
+    "坂王れ...す・グ・っ...す・す..",
+    "おい"
+  ],
+  "translations": [
+    "Ayazaki",
+    "Sakamoto...sugaku...susu..",
+    "Hey"
+  ]
+}

@@ -1,0 +1,29 @@
+{
+  "image": "animetext_1000072.jpg",
+  "detect_ms": 641.3404941558838,
+  "num_blocks": 8,
+  "num_text_lines": 26,
+  "ocr_ms": 12076.622724533081,
+  "inpaint_ms": 19850.955963134766,
+  "translate_ms": 32268.28908920288,
+  "ocr_samples": [
+    "お..おかしくないかな?",
+    "ちあい・",
+    "ちゃんのッには力力者がんは者よやに力だちツ悩ん一残発おおス開い",
+    "す〜っごく可愛いぞぉお人形さんみたいだ!",
+    "ふ..ひさしぶり..",
+    "協力者?",
+    "ネイサン!カリーナ!お前らがぁ",
+    "斎藤さんってこんなスーツも作れたんスねぇ!"
+  ],
+  "translations": [
+    "Isn’t it strange?",
+    "Chiai…",
+    "For Chann, there are many people who can provide strength and support.",
+    "She’s extremely cute! She looks like a little doll!",
+    "It’s been a long time…",
+    "A collaborator?",
+    "Nathan! Karina! You two…",
+    "Saito-san, you can even create such suits!"
+  ]
+}
