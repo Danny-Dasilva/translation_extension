@@ -546,6 +546,10 @@ async def main():
                     help="Max images when auto-discovering (default: 4).")
     ap.add_argument("--skip-features", action="store_true",
                     help="Skip the per-feature static demos.")
+    ap.add_argument("--final-only", type=Path, default=None,
+                    help="Additionally copy every 11_final_composite.png into "
+                         "this flat folder, named <slug>.png, for a "
+                         "quick single-folder view of just the final output.")
     args = ap.parse_args()
 
     _init_fonts()
@@ -574,6 +578,9 @@ async def main():
         return
     print(f"test images: {[p.name for p in images]}")
 
+    if args.final_only:
+        args.final_only.mkdir(parents=True, exist_ok=True)
+
     summaries: list[dict] = []
     for img in images:
         slug = img.stem.replace(" ", "_")[:40]
@@ -581,6 +588,11 @@ async def main():
             stats = await runner.run(img, out_root / slug)
             stats["slug"] = slug
             summaries.append(stats)
+            if args.final_only:
+                src = out_root / slug / "11_final_composite.png"
+                if src.exists():
+                    dst = args.final_only / f"{slug}.png"
+                    dst.write_bytes(src.read_bytes())
         except Exception as exc:
             print(f"  [{img.name}] FAILED: {exc}")
             summaries.append({"slug": slug, "image": img.name, "error": str(exc)})
