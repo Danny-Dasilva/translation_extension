@@ -1,0 +1,19 @@
+{
+  "image": "animetext_1081878.jpg",
+  "detect_ms": 982.4504852294922,
+  "num_blocks": 3,
+  "num_text_lines": 3,
+  "ocr_ms": 2541.5122509002686,
+  "inpaint_ms": 11377.015590667725,
+  "translate_ms": 55792.1929359436,
+  "ocr_samples": [
+    "でも攻めが若い",
+    "美鉛",
+    "イッッ"
+  ],
+  "translations": [
+    ", the attacker is young.",
+    "Beautiful Lead",
+    "Ahhh"
+  ]
+}

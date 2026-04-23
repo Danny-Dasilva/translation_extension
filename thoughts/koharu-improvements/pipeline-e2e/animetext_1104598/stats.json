@@ -1,0 +1,19 @@
+{
+  "image": "animetext_1104598.jpg",
+  "detect_ms": 971.4579582214355,
+  "num_blocks": 3,
+  "num_text_lines": 3,
+  "ocr_ms": 2566.3321018218994,
+  "inpaint_ms": 10905.48300743103,
+  "translate_ms": 56798.27833175659,
+  "ocr_samples": [
+    "くっ!",
+    "なっ...!?",
+    "っそ!!"
+  ],
+  "translations": [
+    "Ugh!",
+    "What…?",
+    "Damn it!!"
+  ]
+}
