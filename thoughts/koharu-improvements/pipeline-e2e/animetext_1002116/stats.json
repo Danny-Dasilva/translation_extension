@@ -1,0 +1,21 @@
+{
+  "image": "animetext_1002116.jpg",
+  "detect_ms": 605.8118343353271,
+  "num_blocks": 5,
+  "num_text_lines": 23,
+  "ocr_ms": 7871.661901473999,
+  "inpaint_ms": 18926.8581867218,
+  "translate_ms": 47092.549085617065,
+  "ocr_samples": [
+    "第方号機格業階Mirrriiimmrマリーキッンヤジ消滅した第二支部での補バイロットトはあつたが、一部部滅と共に指乗子定だった機体の度法計面中中代わりに先行行して道の進んでい1VVuuokkkn国篇アメリカ州道合傘下のフランス支部道道六デーイイロットとなる",
+    "した武開発のDataを参考に作られた力が殺微能力を優先した武器、使徒において穀傷力力なる電ををててはめるのはいさかか不適切と思うかパイロン内に入るるうななコンパクトな、物でなくにに",
+    "周のパイロン以外他のEVAとの性能差はほんんど無い右腕標準準備の高周波プレードは、日本支部での先行",
+    "ロロr原コで目"
+  ],
+  "translations": [
+    "th model was destroyed, had some backup pilots. However, as some of the aircraft were destroyed, the remaining ones continued to move forward on their own. This led to them becoming part of the French branch under the umbrella of the United States.",
+    "The weapons developed based on military data prioritize lethal capabilities. Using such weapons, especially those that emit electricity, seems inappropriate. It would be better to use more compact weapons that can be easily integrated into the pilot's equipment.",
+    "There isn't much difference in performance between this pilot and other EVA units. The high-frequency propellers used in the right arm are standard equipment in the Japanese branch.",
+    "Original text missing"
+  ]
+}
