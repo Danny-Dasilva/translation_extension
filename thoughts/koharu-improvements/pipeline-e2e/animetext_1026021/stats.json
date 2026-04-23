@@ -1,0 +1,29 @@
+{
+  "image": "animetext_1026021.jpg",
+  "detect_ms": 568.3436393737793,
+  "num_blocks": 14,
+  "num_text_lines": 20,
+  "ocr_ms": 9076.184272766113,
+  "inpaint_ms": 21968.90616416931,
+  "translate_ms": 12478.323459625244,
+  "ocr_samples": [
+    "れーいむ",
+    "そんなところで寝てたらお体にさわりますよ",
+    "そんなところで寝てたらおからだに..",
+    "うーんあと半日..",
+    "はいはい..",
+    "触ったら殺す",
+    "女つけてるでしょ",
+    "あやチュウがとびだしてきた!あ!やせいの"
+  ],
+  "translations": [
+    "れーいむ",
+    "If you sleep in such a place, it will touch your body.",
+    "If you sleep in such a place, it will… touch your body.",
+    "Umm, another half day…",
+    "Okay, okay…",
+    "If you touch me, I’ll kill you.",
+    "You’re wearing a girl’s outfit, aren’t you?",
+    "Ayatu is coming out! Ah! Yasei no…"
+  ]
+}

@@ -1,0 +1,29 @@
+{
+  "image": "animetext_1026037.jpg",
+  "detect_ms": 555.0646781921387,
+  "num_blocks": 17,
+  "num_text_lines": 22,
+  "ocr_ms": 10285.62068939209,
+  "inpaint_ms": 38333.656549453735,
+  "translate_ms": 18221.299171447754,
+  "ocr_samples": [
+    "よおなに持ってんだ",
+    "私のオリジナルと交換してくれよ",
+    "よく考えろわたしのは世界に一つしかないレアものだぜ",
+    "...あれ?",
+    "でもそっちのは世界中に何百万とあるんだぜ",
+    "レティに小遣いもらったのだ",
+    "アホ!誰がそんなもんいるか!",
+    "オッスチルノ!"
+  ],
+  "translations": [
+    "What do you have with you?",
+    "Please exchange it for my original one.",
+    "Think carefully, mine is a rare item that exists only once in the world.",
+    "...Huh?",
+    "But yours exists millions of times around the world.",
+    "I got some money from Reti.",
+    "Idiot! Who would have thought there would be such things!",
+    "OshTirno!"
+  ]
+}
