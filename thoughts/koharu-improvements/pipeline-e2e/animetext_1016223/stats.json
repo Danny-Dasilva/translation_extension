@@ -1,0 +1,17 @@
+{
+  "image": "animetext_1016223.jpg",
+  "detect_ms": 546.4491844177246,
+  "num_blocks": 2,
+  "num_text_lines": 4,
+  "ocr_ms": 1889.3895149230957,
+  "inpaint_ms": 4422.296762466431,
+  "translate_ms": 2637.10618019104,
+  "ocr_samples": [
+    "こわくなるくらい",
+    "それはもう必要以上に"
+  ],
+  "translations": [
+    "It's so scary.",
+    "That's more than necessary."
+  ]
+}

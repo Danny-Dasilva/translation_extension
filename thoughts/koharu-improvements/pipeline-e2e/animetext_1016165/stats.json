@@ -1,0 +1,15 @@
+{
+  "image": "animetext_1016165.jpg",
+  "detect_ms": 602.0300388336182,
+  "num_blocks": 5,
+  "num_text_lines": 11,
+  "ocr_ms": 4301.971197128296,
+  "inpaint_ms": 8876.221418380737,
+  "translate_ms": 8542.875528335571,
+  "ocr_samples": [
+    "塗ロN"
+  ],
+  "translations": [
+    "The painter N"
+  ]
+}
