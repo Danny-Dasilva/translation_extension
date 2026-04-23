@@ -1,6 +1,6 @@
 """Response models for the translation API"""
 from pydantic import BaseModel
-from typing import List
+from typing import List, Optional
 
 
 class TextRegion(BaseModel):
@@ -58,6 +58,7 @@ class TranslateResponse(BaseModel):
     """Response model for /translate endpoint"""
 
     images: List[List[TextBox]]
+    inpainted_image_base64: List[Optional[str]] = []
     
     model_config = {
         "json_schema_extra": {

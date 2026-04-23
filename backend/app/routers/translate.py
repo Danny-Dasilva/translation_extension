@@ -1,9 +1,16 @@
 """Translation endpoint router - Local AI Pipeline"""
 import asyncio
+import base64
+import io
 import logging
 import time
+import uuid
 from fastapi import APIRouter, HTTPException, status
-from typing import List, Tuple
+from typing import List, Optional, Tuple
+
+import cv2
+import numpy as np
+from PIL import Image
 
 from app.models.request import TranslateRequest
 from app.models.response import TranslateResponse, TextBox, TextRegion
@@ -20,6 +27,7 @@ from app.utils.image_processing import (
 from app.utils.ctd_utils import build_text_regions
 from app.utils.japanese_text_filter import is_japanese_text, filter_japanese_texts
 from app.utils.zindex_utils import assign_smart_zindex
+from app.utils.progress_bus import bus as progress_bus
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -51,15 +59,71 @@ else:
     translation_pool = None
     translation_service = LocalTranslationService()
 
+# Lazy-init inpainting. Heavy model; only load if the feature is on.
+inpaint_service = None
+if settings.enable_inpainting:
+    try:
+        from app.services.lama_inpaint_service import LamaInpaintService
+        logger.info("Loading LaMa inpainting (koharu-style erase plate)")
+        inpaint_service = LamaInpaintService(model_path=settings.lama_model_path)
+    except Exception as exc:
+        logger.warning(f"LaMa inpainting unavailable ({exc}); continuing without plate")
+        inpaint_service = None
+
 logger.info("Local AI pipeline ready")
+
+
+def _encode_png_base64(image_rgb: np.ndarray) -> str:
+    """Encode an HxWx3 uint8 RGB ndarray as a data URL."""
+    bgr = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2BGR)
+    ok, buf = cv2.imencode(".png", bgr)
+    if not ok:
+        raise RuntimeError("PNG encode failed")
+    return "data:image/png;base64," + base64.b64encode(buf.tobytes()).decode("ascii")
+
+
+def _build_inpaint_mask(
+    image_shape: Tuple[int, int],
+    blocks: List[dict],
+    text_lines: List[dict],
+    detector_mask: Optional[np.ndarray],
+) -> np.ndarray:
+    """Combine detector mask + line polygons into a binary 0/255 mask suitable
+    for LaMa. Prefers text_lines (tighter) and falls back to block bboxes.
+    """
+    h, w = image_shape[:2]
+    mask = np.zeros((h, w), dtype=np.uint8)
+
+    sources = text_lines if text_lines else blocks
+    for region in sources:
+        x0 = max(0, int(region.get("minX", 0)))
+        y0 = max(0, int(region.get("minY", 0)))
+        x1 = min(w, int(region.get("maxX", 0)))
+        y1 = min(h, int(region.get("maxY", 0)))
+        if x1 > x0 and y1 > y0:
+            cv2.rectangle(mask, (x0, y0), (x1, y1), 255, thickness=-1)
+
+    if detector_mask is not None and detector_mask.size:
+        # Detector mask may be smaller res; resize and OR with bbox-derived mask
+        dm = detector_mask
+        if dm.shape[:2] != (h, w):
+            dm = cv2.resize(dm, (w, h), interpolation=cv2.INTER_NEAREST)
+        _, dm_bin = cv2.threshold(dm, 127, 255, cv2.THRESH_BINARY)
+        mask = np.maximum(mask, dm_bin.astype(np.uint8))
+
+    # Dilate a few pixels so stroke edges are covered
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    mask = cv2.dilate(mask, kernel, iterations=1)
+    return mask
 
 
 async def process_single_image(
     idx: int,
     base64_image: str,
     target_language: str,
-    semaphore: asyncio.Semaphore
-) -> Tuple[int, List[TextBox]]:
+    semaphore: asyncio.Semaphore,
+    job_id: Optional[str] = None,
+) -> Tuple[int, List[TextBox], Optional[str]]:
     """
     Process a single image through the translation pipeline.
 
@@ -78,23 +142,31 @@ async def process_single_image(
     Returns:
         Tuple of (index, list of TextBox results)
     """
+    inpainted_b64: Optional[str] = None
     try:
         image_start = time.time()
         logger.info(f"Processing image {idx + 1}")
 
+        async def emit(stage: str, index: int, total: int, note: Optional[str] = None):
+            if job_id:
+                await progress_bus.emit(job_id, stage, index, total, note=note)
+
         # GPU-intensive operations inside semaphore (detection + OCR)
         async with semaphore:
+            await emit("decode", 0, 5)
             # Step 1: Decode image
             image_np = decode_base64_to_numpy(base64_image)
             logger.debug(f"Image {idx + 1} decoded: {image_np.shape}")
 
             # Step 2: Detect text blocks (CTD)
+            await emit("detect", 1, 5)
             detect_start = time.time()
             ctd_result = await detector_service.detect(image_np)
             detect_time = time.time() - detect_start
 
             blocks = ctd_result["blocks"]
             text_lines = ctd_result["text_lines"]
+            detector_mask = ctd_result.get("mask")
 
             logger.info(
                 f"Image {idx + 1}: Detected {len(blocks)} blocks, "
@@ -103,7 +175,8 @@ async def process_single_image(
 
             if not blocks:
                 logger.warning(f"No text blocks detected in image {idx + 1}")
-                return (idx, [])
+                await emit("done", 5, 5, note="no_blocks")
+                return (idx, [], None)
 
             # Step 3: Crop block regions
             crops = detector_service.crop_regions(image_np, blocks)
@@ -113,6 +186,7 @@ async def process_single_image(
             original_count = len(crops)
 
             # Step 4 & 5: OCR and Translation
+            await emit("ocr", 2, 5, note=f"{len(crops)} crops")
             ocr_start = time.time()
 
             # PARSeq is a single-line STR model. If the detector exposes
@@ -168,7 +242,8 @@ async def process_single_image(
 
                 if not paired:
                     logger.warning(f"Image {idx + 1}: All text regions filtered as non-Japanese")
-                    return (idx, [])
+                    await emit("done", 5, 5, note="all_filtered")
+                    return (idx, [], None)
 
                 # Extract results and filter parallel lists to match kept indices
                 kept_indices = [i for i, _, _ in paired]
@@ -212,7 +287,8 @@ async def process_single_image(
 
                     if not valid_indices:
                         logger.warning(f"Image {idx + 1}: All text regions filtered as non-Japanese")
-                        return (idx, [])
+                        await emit("done", 5, 5, note="all_filtered")
+                        return (idx, [], None)
 
                     # Filter all parallel lists to maintain alignment
                     ocr_texts = [ocr_texts[i] for i in valid_indices]
@@ -220,12 +296,10 @@ async def process_single_image(
                     crops = [crops[i] for i in valid_indices]
                     all_text_regions = [all_text_regions[i] for i in valid_indices]
 
-                # Translation (parallel or sequential)
+                # Translation (batched page-level [N] protocol, or parallel/sequential fallback)
+                await emit("translate", 3, 5, note=f"{len(ocr_texts)} bubbles")
                 translate_start = time.time()
-                if settings.translation_use_parallel:
-                    translations = await _translate_parallel(ocr_texts, target_language)
-                else:
-                    translations = await _translate_sequential(ocr_texts, target_language)
+                translations = await _run_translation(ocr_texts, target_language)
                 translate_time = time.time() - translate_start
                 logger.info(f"Image {idx + 1}: Translation completed in {translate_time*1000:.1f}ms ({len(ocr_texts)} texts)")
 
@@ -233,6 +307,27 @@ async def process_single_image(
             num_items = len(crops) if crops else 1
             ocr_time_per_crop = (ocr_time * 1000) / num_items
             translate_time_per_text = (translate_time * 1000) / num_items
+
+            # Step 5b: LaMa inpaint — produce a clean plate the frontend can
+            # render translated text onto, replacing the white-rect mask.
+            if inpaint_service is not None and settings.enable_inpainting:
+                await emit("inpaint", 4, 5, note=f"{len(blocks)} regions")
+                inpaint_start = time.time()
+                try:
+                    inpaint_mask = _build_inpaint_mask(
+                        image_np.shape, blocks, text_lines, detector_mask
+                    )
+                    inpainted_rgb = await asyncio.to_thread(
+                        inpaint_service.inpaint, image_np, inpaint_mask
+                    )
+                    inpainted_b64 = _encode_png_base64(inpainted_rgb)
+                    logger.info(
+                        f"Image {idx + 1}: LaMa inpaint completed in "
+                        f"{(time.time() - inpaint_start)*1000:.1f}ms"
+                    )
+                except Exception as exc:
+                    logger.warning(f"Image {idx + 1}: inpaint failed ({exc}); continuing without plate")
+                    inpainted_b64 = None
 
         # Semaphore released - GPU slot available for other images
         # Note: all_text_regions was built and filtered inside the semaphore block
@@ -305,11 +400,35 @@ async def process_single_image(
                 f"(detect: {detect_time*1000:.1f}ms, ocr: {ocr_time*1000:.1f}ms, translate: {translate_time*1000:.1f}ms)"
             )
 
-        return (idx, text_boxes)
+        await emit("done", 5, 5)
+        return (idx, text_boxes, inpainted_b64)
 
     except Exception as e:
         logger.error(f"Error processing image {idx + 1}: {e}", exc_info=True)
-        return (idx, [])
+        if job_id:
+            await progress_bus.finish(job_id, status="error")
+        return (idx, [], None)
+
+
+async def _run_translation(texts: List[str], target_language: str) -> List[str]:
+    """Dispatch to batched page-level translation when enabled + worthwhile,
+    falling back to the legacy per-bubble parallel/sequential paths.
+    """
+    if not texts:
+        return []
+    if settings.use_batched_translation and len(texts) > 1:
+        try:
+            tgt = translation_pool or translation_service
+            assert tgt is not None
+            batched = await tgt.translate_batched(texts, target_language)
+            if len(batched) == len(texts) and any(b.strip() for b in batched):
+                return batched
+            logger.warning("Batched translate produced empty/short output; falling back to parallel")
+        except Exception as exc:
+            logger.warning(f"Batched translate raised {exc!r}; falling back to parallel")
+    if settings.translation_use_parallel:
+        return await _translate_parallel(texts, target_language)
+    return await _translate_sequential(texts, target_language)
 
 
 async def _translate_sequential(texts: List[str], target_language: str) -> List[str]:
@@ -376,13 +495,16 @@ async def translate_images(request: TranslateRequest):
         num_images = len(request.base64Images)
         logger.info(f"Processing {num_images} images (parallel={settings.parallel_image_processing})")
 
+        # Job id per request — frontend subscribes to /events/{job_id} for progress.
+        job_id = getattr(request, "job_id", None) or uuid.uuid4().hex
+
         # Create semaphore for GPU memory management
         semaphore = asyncio.Semaphore(settings.max_parallel_images)
 
         if settings.parallel_image_processing and num_images > 1:
             # Parallel processing: process all images concurrently
             tasks = [
-                process_single_image(idx, base64_image, request.targetLanguage, semaphore)
+                process_single_image(idx, base64_image, request.targetLanguage, semaphore, job_id)
                 for idx, base64_image in enumerate(request.base64Images)
             ]
             results = await asyncio.gather(*tasks)
@@ -390,18 +512,23 @@ async def translate_images(request: TranslateRequest):
             # Sort results by index to maintain order
             results.sort(key=lambda x: x[0])
             all_results = [r[1] for r in results]
+            all_inpainted = [r[2] for r in results]
         else:
             # Sequential processing (for single image or if disabled)
             all_results = []
+            all_inpainted = []
             for idx, base64_image in enumerate(request.base64Images):
-                _, text_boxes = await process_single_image(
-                    idx, base64_image, request.targetLanguage, semaphore
+                _, text_boxes, inpainted = await process_single_image(
+                    idx, base64_image, request.targetLanguage, semaphore, job_id
                 )
                 all_results.append(text_boxes)
+                all_inpainted.append(inpainted)
+
+        await progress_bus.finish(job_id, status="ok")
 
         elapsed_time = time.time() - start_time
         logger.info(f"Translation request completed in {elapsed_time:.2f} seconds")
-        return TranslateResponse(images=all_results)
+        return TranslateResponse(images=all_results, inpainted_image_base64=all_inpainted)
 
     except Exception as e:
         elapsed_time = time.time() - start_time

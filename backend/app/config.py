@@ -83,6 +83,14 @@ class Settings(BaseSettings):
     # Pipeline optimization
     use_pipeline_overlap: bool = True  # Start translation as each OCR completes (overlap OCR+translation)
 
+    # Koharu-inspired stages
+    # When enabled, run LaMa inpainting after OCR/translate and return inpainted PNG
+    enable_inpainting: bool = True
+    lama_model_path: str = "models/lama.onnx"
+    # When enabled, use page-level [N]-tagged batched translation (coherence win)
+    # instead of per-bubble parallel calls. Fallback to parallel on failure.
+    use_batched_translation: bool = True
+
     # Japanese text filter (post-OCR)
     # Filters out non-Japanese text that MangaOCR may hallucinate from English
     japanese_filter_enabled: bool = True
