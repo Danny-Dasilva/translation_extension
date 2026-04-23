@@ -1,0 +1,17 @@
+{
+  "image": "animetext_1012040.jpg",
+  "detect_ms": 516.8190002441406,
+  "num_blocks": 2,
+  "num_text_lines": 2,
+  "ocr_ms": 946.4526176452637,
+  "inpaint_ms": 2529.386520385742,
+  "translate_ms": 7827.623128890991,
+  "ocr_samples": [
+    "ーー",
+    "がぶ"
+  ],
+  "translations": [
+    "ーー",
+    "がぶ"
+  ]
+}

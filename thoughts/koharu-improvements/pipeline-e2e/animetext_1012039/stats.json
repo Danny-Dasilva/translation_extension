@@ -1,0 +1,15 @@
+{
+  "image": "animetext_1012039.jpg",
+  "detect_ms": 571.9361305236816,
+  "num_blocks": 2,
+  "num_text_lines": 3,
+  "ocr_ms": 1334.8829746246338,
+  "inpaint_ms": 3914.156198501587,
+  "translate_ms": 7957.028388977051,
+  "ocr_samples": [
+    "例大条38前前日オフのお誘"
+  ],
+  "translations": [
+    "I’m inviting you to a casual gathering on the day before the 38th anniversary."
+  ]
+}

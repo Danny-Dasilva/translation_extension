@@ -1,0 +1,29 @@
+{
+  "image": "animetext_1012046.jpg",
+  "detect_ms": 537.6367568969727,
+  "num_blocks": 14,
+  "num_text_lines": 27,
+  "ocr_ms": 11904.817819595337,
+  "inpaint_ms": 17654.012441635132,
+  "translate_ms": 12663.11502456665,
+  "ocr_samples": [
+    "一応...一応聞いてみるだけ聞いてみよう...だううけけ",
+    "いやいや問題ない幸いオフ会の待ち合わせ時間には2、3時間の余裕がある",
+    "飛行機を予約しなおせば済む話金の問題なら安いものよ",
+    "バスの到着も遅れて飛行機出発時間の",
+    "...すいません..この券ってまだ使えますかね",
+    "無理ですよね..",
+    "父の人",
+    "1月ロ"
+  ],
+  "translations": [
+    "Well... I’ll just try to ask… let’s give it a shot.",
+    "No, no problem at all. Fortunately, there’s about 2-3 hours left before the meeting time for the off-site gathering.",
+    "If I reschedule the flight, it should be fine. It’s just a matter of money. The price is quite reasonable.",
+    "The bus also arrived late, which delayed the flight departure time.",
+    "…Excuse me… can this ticket still be used?",
+    "It’s not possible, right?",
+    "That’s my father’s friend.",
+    "January Ro"
+  ]
+}
