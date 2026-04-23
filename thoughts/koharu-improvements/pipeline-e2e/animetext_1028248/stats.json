@@ -1,0 +1,27 @@
+{
+  "image": "animetext_1028248.jpg",
+  "detect_ms": 536.5121364593506,
+  "num_blocks": 7,
+  "num_text_lines": 14,
+  "ocr_ms": 5849.325656890869,
+  "inpaint_ms": 12887.300491333008,
+  "translate_ms": 9306.505680084229,
+  "ocr_samples": [
+    "飛倉の破片に正体不明の種を植えつけてやるぞ!",
+    "宮本久産休出",
+    "あら?",
+    "封獣ぬえ",
+    "星達船よい",
+    "アリスハウス",
+    "は、裸裸お姉さん達が宙を舞っている!?ダメだ、今日はもう寝よう!"
+  ],
+  "translations": [
+    "I’m going to plant some unknown seeds in the debris of the cargo hold!",
+    "Miyamoto Hisa is on maternity leave.",
+    "Huh?",
+    "The sealed beast can’t be defeated.",
+    "Stars, please protect us.",
+    "Alice House.",
+    "Oh no, those naked girls are flying in the air!? No way, I’ll go to sleep now!"
+  ]
+}
