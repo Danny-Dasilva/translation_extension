@@ -1,0 +1,21 @@
+{
+  "image": "animetext_1006052.jpg",
+  "detect_ms": 608.2870960235596,
+  "num_blocks": 4,
+  "num_text_lines": 7,
+  "ocr_ms": 4696.086645126343,
+  "inpaint_ms": 5446.9499588012695,
+  "translate_ms": 45465.55042266846,
+  "ocr_samples": [
+    "信長なわずい",
+    "おおいにまかせる!",
+    "信長様〜おーはここに〜!!",
+    "ぴこ"
+  ],
+  "translations": [
+    "Shōgun, please hurry up!",
+    "I’ll entrust this to you completely!",
+    "Shōgun-sama〜Oh, here we are〜!!",
+    "Piko"
+  ]
+}

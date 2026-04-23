@@ -1,0 +1,15 @@
+{
+  "image": "animetext_1006016.jpg",
+  "detect_ms": 777.686357498169,
+  "num_blocks": 3,
+  "num_text_lines": 5,
+  "ocr_ms": 2869.9727058410645,
+  "inpaint_ms": 8275.313377380371,
+  "translate_ms": 29108.060359954834,
+  "ocr_samples": [
+    "テキあれが「悪」だ"
+  ],
+  "translations": [
+    "テキあれが「悪」だ"
+  ]
+}

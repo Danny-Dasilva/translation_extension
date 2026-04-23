@@ -1,0 +1,15 @@
+{
+  "image": "animetext_1006070.jpg",
+  "detect_ms": 724.3738174438477,
+  "num_blocks": 1,
+  "num_text_lines": 0,
+  "ocr_ms": 796.3628768920898,
+  "inpaint_ms": 2565.8857822418213,
+  "translate_ms": 29206.092834472656,
+  "ocr_samples": [
+    "えーと・"
+  ],
+  "translations": [
+    "Um..."
+  ]
+}
