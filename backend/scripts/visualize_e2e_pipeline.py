@@ -60,18 +60,28 @@ except Exception:
 # Drawing helpers
 # ---------------------------------------------------------------------------
 
-def load_font(size: int) -> ImageFont.ImageFont:
-    for path in (
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
-        "/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc",
-    ):
-        if Path(path).exists():
-            try:
-                return ImageFont.truetype(path, size)
-            except Exception:
-                continue
-    return ImageFont.load_default()
+_FONT_SEARCH = [
+    BACKEND_DIR / "fonts" / "Anton-Regular.ttf",
+    BACKEND_DIR / "fonts" / "Bangers-Regular.ttf",
+    BACKEND_DIR / "fonts" / "Oswald-Bold.ttf",
+    BACKEND_DIR / "fonts" / "ComicNeue-Bold.ttf",
+    Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"),
+    Path("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"),
+]
+
+
+def load_font(size: int, path: Path | None = None) -> ImageFont.ImageFont:
+    if path is None:
+        for p in _FONT_SEARCH:
+            if p.exists():
+                path = p
+                break
+    if path is None:
+        return ImageFont.load_default()
+    try:
+        return ImageFont.truetype(str(path), size)
+    except Exception:
+        return ImageFont.load_default()
 
 
 FONT_SM = None
@@ -120,61 +130,24 @@ def draw_boxes(img: np.ndarray, boxes, color=(0, 255, 255),
 
 
 def composite_text_on_plate(plate_rgb: np.ndarray, boxes, translations) -> np.ndarray:
-    """Render translated text centered in each bbox on the inpainted plate."""
-    pil = Image.fromarray(plate_rgb).convert("RGB")
-    draw = ImageDraw.Draw(pil)
-    for b, text in zip(boxes, translations):
-        if not text:
-            continue
-        x0, y0, x1, y1 = int(b["minX"]), int(b["minY"]), int(b["maxX"]), int(b["maxY"])
-        w = max(1, x1 - x0)
-        h = max(1, y1 - y0)
-        # Binary-search-ish font fit in [10, 42] — mirror koharu
-        lo, hi = 10, 42
-        best = 10
-        best_lines: list[str] = [text]
-        while lo <= hi:
-            mid = (lo + hi) // 2
-            font = load_font(mid)
-            # naive greedy wrap
-            words = text.split()
-            lines = []
-            cur = ""
-            for word in words:
-                trial = f"{cur} {word}".strip()
-                bx = draw.textbbox((0, 0), trial, font=font)
-                if bx[2] - bx[0] > w and cur:
-                    lines.append(cur)
-                    cur = word
-                else:
-                    cur = trial
-            if cur:
-                lines.append(cur)
-            line_h = mid + 4
-            total_h = len(lines) * line_h
-            max_w = max((draw.textbbox((0, 0), ln, font=font)[2] for ln in lines), default=0)
-            if max_w <= w and total_h <= h:
-                best = mid
-                best_lines = lines
-                lo = mid + 1
-            else:
-                hi = mid - 1
-        font = load_font(best)
-        line_h = best + 4
-        total_h = len(best_lines) * line_h
-        cy = y0 + (h - total_h) // 2
-        for ln in best_lines:
-            bx = draw.textbbox((0, 0), ln, font=font)
-            tw = bx[2] - bx[0]
-            cx = x0 + (w - tw) // 2
-            # white fill + black stroke for legibility
-            for dx in (-2, 0, 2):
-                for dy in (-2, 0, 2):
-                    if dx or dy:
-                        draw.text((cx + dx, cy + dy), ln, fill=(0, 0, 0), font=font)
-            draw.text((cx, cy), ln, fill=(255, 255, 255), font=font)
-            cy += line_h
-    return np.array(pil)
+    """Render translated text centered in each bbox on the inpainted plate.
+
+    Delegates to refit_final_composites.compose_final so the two scripts
+    stay in lock-step — single source of truth for layout semantics.
+    """
+    try:
+        from scripts.refit_final_composites import compose_final  # local dev import
+    except Exception:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "refit_final_composites",
+            SCRIPT_DIR / "refit_final_composites.py",
+        )
+        assert spec and spec.loader
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        compose_final = mod.compose_final
+    return compose_final(plate_rgb, list(boxes), list(translations))
 
 
 # ---------------------------------------------------------------------------
