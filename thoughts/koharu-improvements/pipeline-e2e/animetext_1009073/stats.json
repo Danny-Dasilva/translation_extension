@@ -1,0 +1,19 @@
+{
+  "image": "animetext_1009073.jpg",
+  "detect_ms": 622.748851776123,
+  "num_blocks": 3,
+  "num_text_lines": 4,
+  "ocr_ms": 3055.457830429077,
+  "inpaint_ms": 2509.92751121521,
+  "translate_ms": 55812.92104721069,
+  "ocr_samples": [
+    "清冷丘森",
+    "マットン",
+    "なんだのだありはじめろんじゃひめるらいないんだから!!"
+  ],
+  "translations": [
+    "Qingleng Qiusen",
+    "Matun",
+    "It’s not like that at all!! There’s no such thing!!"
+  ]
+}

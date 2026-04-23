@@ -1,0 +1,29 @@
+{
+  "image": "animetext_1009075.jpg",
+  "detect_ms": 1186.9854927062988,
+  "num_blocks": 8,
+  "num_text_lines": 16,
+  "ocr_ms": 11075.414896011353,
+  "inpaint_ms": 18059.19885635376,
+  "translate_ms": 78224.31945800781,
+  "ocr_samples": [
+    "愛子メ席理少4コマぶっく",
+    "泊まろう管理ツん家に毛",
+    "ねー見てクローパー!",
+    "あっ気にしなくていいよ?そははだ欲しいの許すから",
+    "来る時ーに父立ちゃったー?",
+    "クローバー持ってると幸せになれるんだって!だからこ虚理沙にあげるっ!",
+    "すんろこれ..三つ葉だぞ",
+    "よいにくいんだが"
+  ],
+  "translations": [
+    "Ai-ko, let’s stay at my house for a while.",
+    "Let’s stay overnight at my place.",
+    "Hey, look at that clover!",
+    "Ah, don’t worry about it. I won’t mind it. So, I’ll give it to Risha!",
+    "When will you come? Has your father left already?",
+    "It’s said that having a clover makes you happy! So, I’ll give it to Risha!",
+    "This is a three-leaf clover.",
+    "It’s not easy to handle…"
+  ]
+}

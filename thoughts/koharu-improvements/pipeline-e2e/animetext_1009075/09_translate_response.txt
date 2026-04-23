@@ -1,0 +1,8 @@
+[1] Ai-ko, let’s stay at my house for a while.
+[2] Let’s stay overnight at my place.
+[3] Hey, look at that clover!
+[4] Ah, don’t worry about it. I won’t mind it. So, I’ll give it to Risha!
+[5] When will you come? Has your father left already?
+[6] It’s said that having a clover makes you happy! So, I’ll give it to Risha!
+[7] This is a three-leaf clover.
+[8] It’s not easy to handle…
