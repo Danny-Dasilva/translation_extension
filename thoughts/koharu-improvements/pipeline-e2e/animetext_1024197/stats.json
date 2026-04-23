@@ -1,0 +1,25 @@
+{
+  "image": "animetext_1024197.jpg",
+  "detect_ms": 490.7982349395752,
+  "num_blocks": 7,
+  "num_text_lines": 12,
+  "ocr_ms": 5971.610307693481,
+  "inpaint_ms": 13582.920551300049,
+  "translate_ms": 14638.674974441528,
+  "ocr_samples": [
+    "用事って..",
+    "悪いわねこいし",
+    "こんな時間に呼び出したりして",
+    "それでお姉ちゃん",
+    "ううん",
+    "こんなこと困らせるだけだとしても思うけど.."
+  ],
+  "translations": [
+    "That’s really rude of you..",
+    "It’s not nice of you to call me at such a late hour.",
+    "Even if it’s just to make me feel troubled like this…",
+    "So, sister…",
+    "No, that’s not what I mean.",
+    "Even if it’s just causing me trouble, I still think about it…"
+  ]
+}

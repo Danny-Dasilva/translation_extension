@@ -1,17 +1,17 @@
 # Pipeline e2e gallery — aggregate analysis
 
-**Gallery size:** 139 images
-**Total blocks detected:** 689  (avg 5.0/page)
-**Total text lines:** 1481
+**Gallery size:** 143 images
+**Total blocks detected:** 709  (avg 5.0/page)
+**Total text lines:** 1517
 
 ## Stage latency (ms, CPU-only run)
 
 | Stage | p50 | p95 | mean | n |
 |---|---:|---:|---:|---:|
-| detect | 606 | 1093 | 688 | 139 |
-| ocr | 3055 | 16449 | 5240 | 139 |
-| inpaint | 10892 | 31269 | 12913 | 139 |
-| translate | 27668 | 84487 | 32699 | 127 |
+| detect | 606 | 1092 | 684 | 143 |
+| ocr | 3055 | 16426 | 5204 | 143 |
+| inpaint | 10892 | 31147 | 12846 | 143 |
+| translate | 27279 | 84009 | 31943 | 131 |
 
 ## Block count distribution
 
@@ -23,9 +23,9 @@
 
 | Mode | Count | Rate | Instances |
 |---|---:|---:|---|
-| zero_detect | 7 | 5.0% | animetext_1001097, animetext_1003016, animetext_1007105, animetext_1018203, animetext_1019120 … |
-| raw_jp_fallback | 24 | 17.3% | animetext_1000269, animetext_1000391, animetext_1000413, animetext_1005089, animetext_1006016 … |
-| ocr_stuck | 5 | 3.6% | animetext_1000226, animetext_1003044, animetext_1003114, animetext_1018271, animetext_1178082 |
+| zero_detect | 7 | 4.9% | animetext_1001097, animetext_1003016, animetext_1007105, animetext_1018203, animetext_1019120 … |
+| raw_jp_fallback | 24 | 16.8% | animetext_1000269, animetext_1000391, animetext_1000413, animetext_1005089, animetext_1006016 … |
+| ocr_stuck | 5 | 3.5% | animetext_1000226, animetext_1003044, animetext_1003114, animetext_1018271, animetext_1178082 |
 
 ## Per-image bubble counts
 
@@ -134,6 +134,10 @@
 | animetext_1023044 | 9 |
 | animetext_1023138 | 2 |
 | animetext_1023141 | 6 |
+| animetext_1024066 | 3 |
+| animetext_1024086 | 9 |
+| animetext_1024140 | 1 |
+| animetext_1024197 | 7 |
 | animetext_1036053 | 4 |
 | animetext_1039745 | 4 |
 | animetext_1081878 | 3 |
