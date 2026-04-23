@@ -1,0 +1,15 @@
+{
+  "image": "de.png",
+  "detect_ms": 650.5885124206543,
+  "num_blocks": 3,
+  "num_text_lines": 5,
+  "ocr_ms": 1837.4018669128418,
+  "inpaint_ms": 12700.525045394897,
+  "translate_ms": 12831.550359725952,
+  "ocr_samples": [
+    "タコだ。。"
+  ],
+  "translations": [
+    "It’s a clam…"
+  ]
+}

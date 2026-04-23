@@ -1,0 +1,25 @@
+{
+  "image": "animetext_1148788.jpg",
+  "detect_ms": 565.2508735656738,
+  "num_blocks": 7,
+  "num_text_lines": 9,
+  "ocr_ms": 5010.095119476318,
+  "inpaint_ms": 12977.12779045105,
+  "translate_ms": 28113.203525543213,
+  "ocr_samples": [
+    "薬は",
+    "実は男に戻る為の薬が完成したんだよ",
+    "どこだっ!",
+    "どこだ",
+    "どこだ..",
+    "平崎!"
+  ],
+  "translations": [
+    "The medicine…",
+    "Actually, the medicine to turn back into a man has been completed.",
+    "Where is it?!",
+    "Where exactly?",
+    "Where in the world…?",
+    "Hirazaki!"
+  ]
+}
