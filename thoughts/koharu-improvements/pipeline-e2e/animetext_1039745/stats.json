@@ -1,0 +1,19 @@
+{
+  "image": "animetext_1039745.jpg",
+  "detect_ms": 1078.3414840698242,
+  "num_blocks": 4,
+  "num_text_lines": 8,
+  "ocr_ms": 5141.235113143921,
+  "inpaint_ms": 24870.636701583862,
+  "translate_ms": 55839.20621871948,
+  "ocr_samples": [
+    "なんとなく落もなく見ない大を",
+    "ンジャネルマエタイトチリスナオニアマエりラ",
+    "こうなったら"
+  ],
+  "translations": [
+    "I just casually avoid looking at it.",
+    "I don’t really care about it.",
+    "If this is the case…"
+  ]
+}

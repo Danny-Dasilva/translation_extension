@@ -1,0 +1,15 @@
+{
+  "image": "animetext_1459164.jpg",
+  "detect_ms": 1093.325138092041,
+  "num_blocks": 1,
+  "num_text_lines": 2,
+  "ocr_ms": 2089.9674892425537,
+  "inpaint_ms": 4056.4846992492676,
+  "translate_ms": 26901.312112808228,
+  "ocr_samples": [
+    "なシナパ"
+  ],
+  "translations": [
+    "A sad situation"
+  ]
+}
