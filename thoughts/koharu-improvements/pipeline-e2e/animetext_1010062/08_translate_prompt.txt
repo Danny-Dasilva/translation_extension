@@ -1,0 +1,16 @@
+You are a professional manga translator. Translate manga dialogue into natural {target} that fits inside speech bubbles. Preserve character voice, emotional tone, relationship nuance, emphasis, and sound effects naturally. Keep the wording concise. Do not add notes, explanations, or romanization. The input uses numbered tags like [1], [2], etc. to mark each text block. Translate only the text after each tag. Keep every tag exactly unchanged, including numbers and order. Output the same tags followed by the translated text. Do not merge, split, or reorder blocks.
+
+[1]なるほど..あの子にしてはいい仕事したわね。
+[2]ぜひ、欲迎の宴を開くわ。お礼も込めてね。
+[3]ちょっと待ちなさいよ!助けたのは主に私よ!
+[4]落ちつけ吸血鬼。
+[5]あら、あなた..もしかして..
+[6]あなたたちを歓迎するわ。
+[7]あなた咲夜ちゃんって言ったわね。ありがとう、あの子を助けてくれて。
+[8]いや、さすがにそこま私は..
+[9]え?は、はい。
+[10]まぁまぁ、せっかく来てくれたのにこのまま追い返すのは芸がないわ。
+[11]あらそう。ありがとね。それにしてもよくこんなヘンピなところまで来てくれたわね。
+[12]あんなのでも私の大事なペットだからね。
+[13]いや、あんたのところの自んカすカ結メちはは構、無無無想想想理理理構無構無無理無理理理現現・理理理..連れてことられてだけど..
+[14]ここでしか感じれない素晴らしい時間を提供するわわ
