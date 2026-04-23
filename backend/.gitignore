@@ -1,0 +1,26 @@
+# Large model weights — downloaded via scripts/download_*.py or scripts/export_*.py
+models/*.onnx
+models/*.onnx.data
+models/*.safetensors
+models/*.gguf
+models/*.pt
+# Keep lightweight metadata sidecars tracked
+!models/*.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+*.egg-info/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Environment
+.env
+.env.local

@@ -32,7 +32,14 @@ class ComicTextDetectorService:
         if model_path is None:
             model_path = settings.ctd_model_path
 
+        # Prefer FP16 variant when available (koharu parity - faster inference)
         model_file = Path(model_path)
+        fp16_candidate = model_file.with_name(model_file.stem + ".fp16" + model_file.suffix)
+        if fp16_candidate.exists():
+            logger.info(f"CTD: preferring FP16 model at {fp16_candidate}")
+            model_file = fp16_candidate
+            model_path = str(fp16_candidate)
+
         if not model_file.exists():
             raise FileNotFoundError(
                 f"Comic Text Detector model not found at {model_path}. "
@@ -133,13 +140,17 @@ class ComicTextDetectorService:
 
         blocks = self._parse_blocks(blks, scale, (w, h))
         text_lines = self._extract_text_lines(lines_map, scale, padded_size, (w, h))
-        text_mask = self._process_mask(mask, padded_size, (w, h)) if mask is not None else None
 
         # When block detection is unavailable, derive blocks from text_lines
         # This supports models that only output segmentation + text line maps
         if not blocks and text_lines:
             logger.info("No block detections; deriving blocks from text lines")
             blocks = self._derive_blocks_from_text_lines(text_lines)
+
+        # Expand line bboxes using koharu's font-aware padding (item #6)
+        text_lines = self._expand_text_lines(text_lines, (w, h))
+
+        text_mask = self._process_mask(mask, padded_size, (w, h), blocks) if mask is not None else None
 
         logger.debug(f"CTD detected {len(blocks)} blocks, {len(text_lines)} text lines")
 
@@ -390,9 +401,22 @@ class ComicTextDetectorService:
         self,
         mask: np.ndarray,
         padded_size: Tuple[int, int],
-        orig_size: Tuple[int, int]
+        orig_size: Tuple[int, int],
+        blocks: List[Dict] | None = None,
+        legacy: bool = False,
     ) -> np.ndarray:
-        """Process segmentation mask to original image size."""
+        """Process segmentation mask to original image size.
+
+        Koharu-style refinement (default):
+          1. Threshold + clip to union of expanded per-block bboxes.
+          2. Morphological close (radius ~10) to fill text-stroke gaps.
+          3. L1 dilation radius=2 via two passes of the 3x3 cross kernel.
+          4. Final dilate radius=3 with an ellipse kernel.
+          5. Clip again to expanded block bounds so dilation never escapes.
+
+        If ``legacy=True``, falls back to the pre-koharu behavior (plain
+        threshold without block-aware refinement) for A/B comparisons.
+        """
         if mask.ndim == 4:
             mask = mask[0, 0]
         elif mask.ndim == 3:
@@ -404,99 +428,292 @@ class ComicTextDetectorService:
         w, h = orig_size
         mask = cv2.resize(mask, (w, h), interpolation=cv2.INTER_LINEAR)
 
-        return (mask > self.text_threshold).astype(np.uint8) * 255
+        binary = (mask > self.text_threshold).astype(np.uint8) * 255
 
+        if legacy or not blocks:
+            # Legacy path (or no blocks available to constrain): plain threshold.
+            return binary
+
+        # --- Koharu refine_segmentation_mask (postprocess.rs:25-77) ---
+
+        # Build union of expanded per-block bboxes (item #5).
+        in_bounds = self._build_block_bounds_mask(blocks, (w, h))
+
+        if in_bounds is None:
+            return binary
+
+        # Step 1: clip threshold mask to block bounds.
+        base = cv2.bitwise_and(binary, in_bounds)
+
+        # Step 2: morph close (radius ~10) to connect gaps within a block.
+        close_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (21, 21))
+        closed = cv2.morphologyEx(base, cv2.MORPH_CLOSE, close_kernel)
+        closed = cv2.bitwise_and(closed, in_bounds)
+
+        # Step 3: L1 dilation by radius=2 (two passes of a 3x3 cross kernel
+        # is equivalent to an L1 distance dilation of radius 2).
+        cross3 = cv2.getStructuringElement(cv2.MORPH_CROSS, (3, 3))
+        dilated = cv2.dilate(closed, cross3, iterations=2)
+
+        # Step 4: final dilate radius=3 with an ellipse kernel.
+        ellipse7 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
+        dilated = cv2.dilate(dilated, ellipse7, iterations=1)
+
+        # Step 5: final clip to block bounds so dilation never escapes.
+        refined = cv2.bitwise_and(dilated, in_bounds)
+
+        return refined
+
+    def _build_block_bounds_mask(
+        self,
+        blocks: List[Dict],
+        image_size: Tuple[int, int],
+    ) -> np.ndarray | None:
+        """Rasterize the union of expanded per-block bboxes.
+
+        Ports expanded_text_block_crop_bounds from
+        /tmp/koharu/koharu-ml/src/comic_text_detector/postprocess.rs:107-168.
+        Each block is padded by font_px*0.1 horizontally/vertically (plus a
+        small floor) and the union of those rectangles is rasterized.
+        """
+        if not blocks:
+            return None
+
+        w, h = image_size
+        in_bounds = np.zeros((h, w), dtype=np.uint8)
+
+        for block in blocks:
+            bw = block["maxX"] - block["minX"]
+            bh = block["maxY"] - block["minY"]
+            if bw <= 0 or bh <= 0:
+                continue
+
+            # font size heuristic: use the shorter bbox dimension if the
+            # caller did not pre-compute it.
+            font = block.get("font_size_px") or min(bw, bh)
+            font = max(float(font), 1.0)
+            pad = max(font * 0.1, 2.0)
+
+            x1 = int(max(0, block["minX"] - pad))
+            y1 = int(max(0, block["minY"] - pad))
+            x2 = int(min(w, block["maxX"] + pad))
+            y2 = int(min(h, block["maxY"] + pad))
+            if x2 <= x1 or y2 <= y1:
+                continue
+            in_bounds[y1:y2, x1:x2] = 255
+
+        if in_bounds.max() == 0:
+            return None
+        return in_bounds
+
+    def _expand_text_lines(
+        self,
+        text_lines: List[Dict],
+        image_size: Tuple[int, int],
+    ) -> List[Dict]:
+        """Font-aware line-crop expansion (item #6).
+
+        Ports maybe_expand_ctd_line + expanded_text_block_crop_bounds from
+        /tmp/koharu/koharu-ml/src/comic_text_detector/postprocess.rs:107-262.
+        For each line bbox, the font size is estimated from the shorter of
+        (width, height). We pad horizontally/vertically with the
+        direction-aware ratios from koharu:
+          horizontal text: pad_x=font*0.12, pad_y=font*0.18
+          vertical   text: pad_x=font*0.18, pad_y=font*0.12
+        Direction is inferred from aspect ratio (height > width => vertical).
+        """
+        if not text_lines:
+            return text_lines
+
+        w, h = image_size
+        out: List[Dict] = []
+        for line in text_lines:
+            bw = line["maxX"] - line["minX"]
+            bh = line["maxY"] - line["minY"]
+            if bw <= 0 or bh <= 0:
+                out.append(line)
+                continue
+
+            vertical = bh > bw * 1.2
+            font = min(bw, bh)
+            font = max(float(font), 1.0)
+            base_pad = max(font * 0.08, 2.0)
+            if vertical:
+                pad_x = max(font * 0.18, base_pad)
+                pad_y = max(font * 0.12, base_pad)
+            else:
+                pad_x = max(font * 0.12, base_pad)
+                pad_y = max(font * 0.18, base_pad)
+
+            new_line = dict(line)
+            new_line["minX"] = int(max(0, line["minX"] - pad_x))
+            new_line["minY"] = int(max(0, line["minY"] - pad_y))
+            new_line["maxX"] = int(min(w, line["maxX"] + pad_x))
+            new_line["maxY"] = int(min(h, line["maxY"] + pad_y))
+            new_line["font_size_px"] = float(font)
+            new_line["direction"] = "vertical" if vertical else "horizontal"
+            out.append(new_line)
+
+        return out
+
+
+    @staticmethod
+    def _box_area(box: List[float]) -> float:
+        w = max(0.0, box[2] - box[0])
+        h = max(0.0, box[3] - box[1])
+        return w * h
+
+    @staticmethod
+    def _calc_iou_raw(a: List[float], b: List[float]) -> float:
+        x1 = max(a[0], b[0])
+        y1 = max(a[1], b[1])
+        x2 = min(a[2], b[2])
+        y2 = min(a[3], b[3])
+        if x2 <= x1 or y2 <= y1:
+            return 0.0
+        inter = (x2 - x1) * (y2 - y1)
+        area_a = (a[2] - a[0]) * (a[3] - a[1])
+        area_b = (b[2] - b[0]) * (b[3] - b[1])
+        union = area_a + area_b - inter
+        return inter / union if union > 0 else 0.0
+
+    @classmethod
+    def _contained_ratio(cls, smaller: List[float], larger: List[float]) -> float:
+        """Fraction of ``smaller``'s area that is contained within ``larger``."""
+        x1 = max(smaller[0], larger[0])
+        y1 = max(smaller[1], larger[1])
+        x2 = min(smaller[2], larger[2])
+        y2 = min(smaller[3], larger[3])
+        if x2 <= x1 or y2 <= y1:
+            return 0.0
+        inter = (x2 - x1) * (y2 - y1)
+        sm_area = cls._box_area(smaller)
+        return inter / sm_area if sm_area > 0 else 0.0
+
+    @classmethod
+    def _should_merge_koharu(cls, a: List[float], b: List[float]) -> bool:
+        """Koharu's multi-check merge predicate.
+
+        Ports merge_slice_regions from
+        /tmp/koharu/koharu-ml/src/comic_text_bubble_detector/mod.rs:539-608.
+        Returns True iff the two bboxes should be merged into one block.
+        The merged bbox area must also be <= 3x the larger input area
+        (caller-enforced after the merge).
+        """
+        area_a = cls._box_area(a)
+        area_b = cls._box_area(b)
+        if area_a <= 0 or area_b <= 0:
+            return False
+
+        # Rule 1: IoU >= 0.5 => same region.
+        if cls._calc_iou_raw(a, b) >= 0.5:
+            return True
+
+        # Rule 2: One is >=85% contained inside the other.
+        if area_a < area_b:
+            if cls._contained_ratio(a, b) >= 0.85:
+                return True
+        else:
+            if cls._contained_ratio(b, a) >= 0.85:
+                return True
+
+        # Rule 3: vertical proximity + horizontal alignment + size compat.
+        width_a = max(a[2] - a[0], 1.0)
+        height_a = max(a[3] - a[1], 1.0)
+        width_b = max(b[2] - b[0], 1.0)
+        height_b = max(b[3] - b[1], 1.0)
+        min_height = min(height_a, height_b)
+
+        # Smallest vertical gap between top/bottom edges.
+        y_dist = min(abs(a[1] - b[3]), abs(a[3] - b[1]))
+        x_overlap = max(0.0, min(a[2], b[2]) - max(a[0], b[0]))
+        x_overlap_ratio = x_overlap / min(width_a, width_b)
+        size_ratio = min(area_a, area_b) / max(area_a, area_b)
+
+        edge_tolerance = 0.5 * max(width_a, width_b)
+        horizontal_edge_aligned = (
+            abs(a[0] - b[0]) < edge_tolerance
+            and abs(a[2] - b[2]) < edge_tolerance
+        )
+
+        if (
+            y_dist < min_height * 0.1
+            and x_overlap_ratio > 0.2
+            and size_ratio > 0.3
+            and horizontal_edge_aligned
+        ):
+            return True
+
+        return False
 
     def _derive_blocks_from_text_lines(
         self,
         text_lines: List[Dict],
-        merge_distance: int = 30,
-        min_block_area: int = 500
+        min_block_area: int = 500,
     ) -> List[Dict]:
-        """
-        Derive text blocks from text_lines by merging nearby lines.
-        
-        Uses a simple spatial clustering approach:
-        1. Start with each text_line as a potential block
-        2. Merge lines that are within merge_distance of each other
-        3. Filter by minimum area
-        
-        Args:
-            text_lines: List of text line dicts with minX, minY, maxX, maxY
-            merge_distance: Max distance to merge nearby lines into same block
-            min_block_area: Minimum block area to keep
-            
-        Returns:
-            List of block dicts with minX, minY, maxX, maxY, confidence
+        """Derive blocks from text lines using koharu's multi-check merge.
+
+        Ports merge_slice_regions from
+        /tmp/koharu/koharu-ml/src/comic_text_bubble_detector/mod.rs:518-608.
+        Lines merge iff _should_merge_koharu returns True AND the resulting
+        merged area is <= 3x the larger input area.
         """
         if not text_lines:
             return []
-        
-        # Convert to list of [minX, minY, maxX, maxY]
-        boxes = [[t["minX"], t["minY"], t["maxX"], t["maxY"]] for t in text_lines]
-        
-        # Greedy merge: iteratively merge overlapping/nearby boxes
-        merged = True
-        while merged:
-            merged = False
-            new_boxes = []
-            used = set()
-            
-            for i, box1 in enumerate(boxes):
+
+        boxes: List[List[float]] = [
+            [float(t["minX"]), float(t["minY"]), float(t["maxX"]), float(t["maxY"])]
+            for t in text_lines
+        ]
+
+        merged_any = True
+        while merged_any:
+            merged_any = False
+            used: set = set()
+            new_boxes: List[List[float]] = []
+
+            for i, box_i in enumerate(boxes):
                 if i in used:
                     continue
-                    
-                current = list(box1)
-                for j, box2 in enumerate(boxes):
-                    if j <= i or j in used:
+                current = list(box_i)
+                for j in range(i + 1, len(boxes)):
+                    if j in used:
                         continue
-                    
-                    # Check if boxes are close enough to merge
-                    # Expand box1 by merge_distance and check overlap
-                    expanded = [
-                        current[0] - merge_distance,
-                        current[1] - merge_distance,
-                        current[2] + merge_distance,
-                        current[3] + merge_distance
+                    box_j = boxes[j]
+                    if not self._should_merge_koharu(current, box_j):
+                        continue
+                    # Candidate merge; enforce area cap (<= 3x larger).
+                    merged_box = [
+                        min(current[0], box_j[0]),
+                        min(current[1], box_j[1]),
+                        max(current[2], box_j[2]),
+                        max(current[3], box_j[3]),
                     ]
-                    
-                    # Check if box2 overlaps with expanded box1
-                    if (expanded[0] <= box2[2] and expanded[2] >= box2[0] and
-                        expanded[1] <= box2[3] and expanded[3] >= box2[1]):
-                        # Merge: take union of bounding boxes
-                        current = [
-                            min(current[0], box2[0]),
-                            min(current[1], box2[1]),
-                            max(current[2], box2[2]),
-                            max(current[3], box2[3])
-                        ]
-                        used.add(j)
-                        merged = True
-                
+                    larger_area = max(self._box_area(current), self._box_area(box_j))
+                    if self._box_area(merged_box) > 3.0 * larger_area:
+                        continue
+                    current = merged_box
+                    used.add(j)
+                    merged_any = True
+
                 new_boxes.append(current)
                 used.add(i)
-            
             boxes = new_boxes
-        
-        # Convert to block format and filter by area
-        blocks = []
+
+        blocks: List[Dict] = []
         for box in boxes:
-            width = box[2] - box[0]
-            height = box[3] - box[1]
-            area = width * height
-            
-            if area >= min_block_area:
-                blocks.append({
-                    "minX": box[0],
-                    "minY": box[1],
-                    "maxX": box[2],
-                    "maxY": box[3],
-                    "confidence": 0.9,  # Derived blocks have fixed confidence
-                })
-        
-        # Sort by reading order (right-to-left for manga, then top-to-bottom)
+            if self._box_area(box) < min_block_area:
+                continue
+            blocks.append({
+                "minX": int(box[0]),
+                "minY": int(box[1]),
+                "maxX": int(box[2]),
+                "maxY": int(box[3]),
+                "confidence": 0.9,
+            })
+
+        # Manga reading order: right-to-left, then top-to-bottom.
         blocks.sort(key=lambda b: (-b["minX"], b["minY"]))
-        
         return blocks
 
     def crop_regions(

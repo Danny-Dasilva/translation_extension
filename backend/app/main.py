@@ -10,6 +10,7 @@ from app.config import settings
 from app.routers import translate
 from app.routers import test_page
 from app.routers import websocket_upload
+from app.routers import inpaint
 
 # Configure logging
 logging.basicConfig(
@@ -103,6 +104,7 @@ app.add_middleware(
 app.include_router(translate.router, tags=["translation"])
 app.include_router(test_page.router)
 app.include_router(websocket_upload.router)
+app.include_router(inpaint.router)
 
 
 @app.get("/")

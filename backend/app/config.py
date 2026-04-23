@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     # OCR backend selection: "parseq" (local trained model) or "manga-ocr"
     ocr_backend: str = "parseq"
     parseq_model_path: str = "models/parseq_manga_large_5p16.fp16.onnx"
-    parseq_batch_size: int = 4
+    parseq_batch_size: int = 24
 
     # Detector Selection: "animetext" (fast) or "ctd" (full-featured).
     # CTD is recommended when ocr_backend="parseq" because PARSeq is a

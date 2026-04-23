@@ -1,0 +1,165 @@
+"""Smoke test for the lazy ServiceRegistry.
+
+Exercises:
+    1. fresh registry reports loaded() == []
+    2. get_detector() loads on first call (timed)
+    3. get_ocr() loads on first call (timed)
+    4. get_translation() loads on first call (timed)
+    5. second get_detector() is a cache hit (near-zero time)
+    6. unload_all() clears the cache and reclaims memory
+
+Run from the ``backend/`` directory:
+
+    uv run python scripts/test_lazy_registry.py
+
+Writes a small timing report to
+``thoughts/koharu-improvements/lazy-registry/load_times.txt``.
+"""
+from __future__ import annotations
+
+import asyncio
+import sys
+import time
+from pathlib import Path
+
+# Ensure 'app' is importable whether run from backend/ or repo root.
+BACKEND_DIR = Path(__file__).resolve().parent.parent
+if str(BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(BACKEND_DIR))
+
+# Repo root (for writing the thoughts/ artifact).
+REPO_ROOT = BACKEND_DIR.parent
+OUTPUT_DIR = REPO_ROOT / "thoughts" / "koharu-improvements" / "lazy-registry"
+OUTPUT_FILE = OUTPUT_DIR / "load_times.txt"
+
+try:
+    import psutil  # type: ignore
+    _HAS_PSUTIL = True
+except ImportError:
+    psutil = None  # type: ignore[assignment]
+    _HAS_PSUTIL = False
+
+
+def rss_mb() -> float | None:
+    """Return current process RSS in MB, or None if psutil is missing."""
+    if not _HAS_PSUTIL:
+        return None
+    return psutil.Process().memory_info().rss / (1024 * 1024)
+
+
+async def main() -> int:
+    from app.registry import registry
+
+    rows: list[tuple[str, float, float | None]] = []
+
+    # 1. fresh registry should be empty.
+    assert registry.loaded() == [], (
+        f"expected fresh registry to be empty, got {registry.loaded()!r}"
+    )
+    print(f"[ok] fresh registry loaded() -> {registry.loaded()}")
+
+    baseline = rss_mb()
+    if baseline is not None:
+        print(f"[info] baseline RSS: {baseline:.1f} MB")
+
+    # 2. detector
+    t0 = time.perf_counter()
+    detector = await registry.get_detector()
+    dt = (time.perf_counter() - t0) * 1000
+    rows.append(("detector (first load)", dt, rss_mb()))
+    assert "detector" in registry.loaded()
+    print(f"[ok] detector loaded in {dt:.1f} ms -> {type(detector).__name__}")
+    print(f"[info] loaded(): {registry.loaded()}")
+
+    # cache-hit check
+    t0 = time.perf_counter()
+    _ = await registry.get_detector()
+    dt_hit = (time.perf_counter() - t0) * 1000
+    rows.append(("detector (cache hit)", dt_hit, None))
+    print(f"[ok] detector cache hit in {dt_hit:.3f} ms")
+
+    # 3. ocr
+    t0 = time.perf_counter()
+    ocr = await registry.get_ocr()
+    dt = (time.perf_counter() - t0) * 1000
+    rows.append(("ocr (first load)", dt, rss_mb()))
+    assert "ocr" in registry.loaded()
+    print(f"[ok] ocr loaded in {dt:.1f} ms -> {type(ocr).__name__}")
+    print(f"[info] loaded(): {registry.loaded()}")
+
+    # 4. translation (this is the heavy one — pool of llama instances)
+    t0 = time.perf_counter()
+    translation = await registry.get_translation()
+    dt = (time.perf_counter() - t0) * 1000
+    rows.append(("translation (first load)", dt, rss_mb()))
+    assert "translation" in registry.loaded()
+    print(f"[ok] translation loaded in {dt:.1f} ms -> {type(translation).__name__}")
+    print(f"[info] loaded(): {registry.loaded()}")
+
+    # 5. inpaint — may not exist yet; must not raise.
+    t0 = time.perf_counter()
+    inpaint = await registry.get_inpaint()
+    dt = (time.perf_counter() - t0) * 1000
+    rows.append(("inpaint (first load; may be None)", dt, None))
+    print(
+        f"[ok] inpaint call returned {'instance' if inpaint else 'None'} "
+        f"in {dt:.1f} ms"
+    )
+
+    loaded_before_unload = registry.loaded()
+    mem_before_unload = rss_mb()
+
+    # 6. unload_all
+    t0 = time.perf_counter()
+    await registry.unload_all()
+    dt = (time.perf_counter() - t0) * 1000
+    mem_after_unload = rss_mb()
+    rows.append(("unload_all", dt, mem_after_unload))
+    assert registry.loaded() == [], (
+        f"expected empty after unload_all, got {registry.loaded()!r}"
+    )
+    print(f"[ok] unload_all completed in {dt:.1f} ms")
+    print(f"[info] loaded() after unload_all: {registry.loaded()}")
+
+    if mem_before_unload is not None and mem_after_unload is not None:
+        freed = mem_before_unload - mem_after_unload
+        print(
+            f"[info] freed approximately {freed:.1f} MB "
+            f"({mem_before_unload:.1f} -> {mem_after_unload:.1f} MB RSS)"
+        )
+
+    # Print summary table.
+    print("\n=== load-time summary ===")
+    print(f"{'step':<40} {'ms':>12} {'rss_mb':>12}")
+    print("-" * 66)
+    for name, ms, mb in rows:
+        mb_str = f"{mb:.1f}" if mb is not None else "-"
+        print(f"{name:<40} {ms:>12.2f} {mb_str:>12}")
+
+    # Persist artifact for follow-up work.
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    with OUTPUT_FILE.open("w", encoding="utf-8") as f:
+        f.write("# Lazy registry load times\n")
+        f.write(f"# generated by scripts/test_lazy_registry.py\n")
+        f.write(f"# psutil_available={_HAS_PSUTIL}\n")
+        if loaded_before_unload:
+            f.write(f"# loaded_before_unload_all={loaded_before_unload}\n")
+        if mem_before_unload is not None and mem_after_unload is not None:
+            f.write(
+                f"# rss_before_unload={mem_before_unload:.1f} MB  "
+                f"rss_after_unload={mem_after_unload:.1f} MB  "
+                f"freed={mem_before_unload - mem_after_unload:.1f} MB\n"
+            )
+        f.write("\n")
+        f.write(f"{'step':<40} {'ms':>12} {'rss_mb':>12}\n")
+        f.write("-" * 66 + "\n")
+        for name, ms, mb in rows:
+            mb_str = f"{mb:.1f}" if mb is not None else "-"
+            f.write(f"{name:<40} {ms:>12.2f} {mb_str:>12}\n")
+
+    print(f"\n[ok] wrote timings to {OUTPUT_FILE}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(asyncio.run(main()))
