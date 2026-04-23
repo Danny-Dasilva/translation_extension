@@ -1,0 +1,21 @@
+{
+  "image": "animetext_1021020.jpg",
+  "detect_ms": 587.2950553894043,
+  "num_blocks": 4,
+  "num_text_lines": 4,
+  "ocr_ms": 1835.7045650482178,
+  "inpaint_ms": 7035.04753112793,
+  "translate_ms": 3724.4725227355957,
+  "ocr_samples": [
+    "怒られた",
+    "...うん",
+    "くーぐろ",
+    "第四話"
+  ],
+  "translations": [
+    "I got scolded.",
+    "...Yeah.",
+    "Guguro.",
+    "Episode Four"
+  ]
+}
