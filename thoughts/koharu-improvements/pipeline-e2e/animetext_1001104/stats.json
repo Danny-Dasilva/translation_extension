@@ -1,0 +1,15 @@
+{
+  "image": "animetext_1001104.jpg",
+  "detect_ms": 606.5349578857422,
+  "num_blocks": 1,
+  "num_text_lines": 2,
+  "ocr_ms": 514.549732208252,
+  "inpaint_ms": 4854.845285415649,
+  "translate_ms": 26903.79023551941,
+  "ocr_samples": [
+    "フクン・・ぐいぐすすグすリすすいすすす・すいすすすいすいす・すい...す"
+  ],
+  "translations": [
+    "Fukun... gugisu sugi susuri susu isusu susu isi susi isi isi... susi..."
+  ]
+}

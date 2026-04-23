@@ -1,0 +1,10 @@
+{
+  "image": "animetext_1001097.jpg",
+  "detect_ms": 642.2758102416992,
+  "num_blocks": 0,
+  "num_text_lines": 0,
+  "ocr_ms": 0.011205673217773438,
+  "inpaint_ms": 15640.613555908203,
+  "ocr_samples": [],
+  "translations": []
+}
