@@ -1,0 +1,17 @@
+{
+  "image": "animetext_1015012.jpg",
+  "detect_ms": 580.613374710083,
+  "num_blocks": 2,
+  "num_text_lines": 5,
+  "ocr_ms": 2339.588403701782,
+  "inpaint_ms": 4435.098886489868,
+  "translate_ms": 5128.788232803345,
+  "ocr_samples": [
+    "強いっ",
+    "この街にまだこんな強力な魔女が残っていただなんて..誤算だったわ"
+  ],
+  "translations": [
+    "I’m strong!",
+    "It was a mistake to think that there would still be such a powerful witch left in this city."
+  ]
+}

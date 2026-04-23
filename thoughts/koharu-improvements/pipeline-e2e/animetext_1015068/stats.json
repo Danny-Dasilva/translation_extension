@@ -1,0 +1,29 @@
+{
+  "image": "animetext_1015068.jpg",
+  "detect_ms": 541.4319038391113,
+  "num_blocks": 9,
+  "num_text_lines": 27,
+  "ocr_ms": 12413.92993927002,
+  "inpaint_ms": 16299.117803573608,
+  "translate_ms": 13084.353685379028,
+  "ocr_samples": [
+    "までかなんてポロポロボロポロボ立ッて",
+    "しっかし、「誕生日を祝いたい」って言われた途端にー復なんて、マミさんも現金だねぇ〜",
+    "さいかちゃん!",
+    "ごめんなさいね暁美さん",
+    "思わず言っちゃったからサブライズじゃなくなっちゃったけどね",
+    "ありがと",
+    "もう、からかわないの",
+    "今回は私が勝手に一人でやっちゃったことだから暁美さんは気にしないでいいのよ?だからそんな顔しないでね?"
+  ],
+  "translations": [
+    ", right?",
+    "Really, the moment she said “I want to celebrate my birthday”, everything changed. Even Mommy has to pay in cash now…",
+    "Saka-chan!",
+    "I’m sorry, Asumi-san.",
+    "I just said it without thinking, so it’s not Sublaze anymore.",
+    "Thank you.",
+    "Please don’t tease me anymore.",
+    "This time, it was my own decision to do it alone. So Asumi-san, please don’t worry about it. Don’t make that face, okay?"
+  ]
+}
