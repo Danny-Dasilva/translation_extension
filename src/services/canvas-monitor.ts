@@ -118,6 +118,18 @@ export class CanvasMonitor {
   }
 
   /**
+   * Update the stored hash for a canvas (call after writing translations to prevent
+   * the monitor from detecting our own writes as changes).
+   */
+  updateHash(canvas: HTMLCanvasElement): void {
+    const state = this.canvasStates.get(canvas);
+    if (state) {
+      state.hash = hashCanvas(canvas);
+      state.lastChecked = Date.now();
+    }
+  }
+
+  /**
    * Clear all monitored canvases
    */
   clear(): void {

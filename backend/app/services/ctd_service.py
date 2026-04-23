@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from pathlib import Path
 from typing import Dict, List, Tuple
@@ -126,7 +127,7 @@ class ComicTextDetectorService:
         img_in, scale, padded_size = self._preprocess(img, input_is_bgr)
 
         input_name = self.session.get_inputs()[0].name
-        outputs = self.session.run(None, {input_name: img_in})
+        outputs = await asyncio.to_thread(self.session.run, None, {input_name: img_in})
 
         blks, mask, lines_map = self._assign_outputs(outputs)
 

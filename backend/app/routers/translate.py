@@ -9,10 +9,12 @@ from app.models.request import TranslateRequest
 from app.models.response import TranslateResponse, TextBox, TextRegion
 from app.services.detector_factory import create_detector
 from app.services.manga_ocr_service import MangaOCRService
+from app.services.parseq_ocr_service import ParseqOCRService
 from app.services.local_translation_service import LocalTranslationService, LocalTranslationPool
 from app.utils.image_processing import (
     calculate_font_size,
     decode_base64_to_numpy,
+    decode_base64_to_pil,
     extract_text_region_background
 )
 from app.utils.ctd_utils import build_text_regions
@@ -32,8 +34,12 @@ logger.info("Initializing local AI pipeline...")
 detector_service = create_detector()
 
 # Initialize OCR service for batched inference (always needed)
-logger.info("Using OCR service with batched inference")
-ocr_service = MangaOCRService()
+if settings.ocr_backend == "parseq":
+    logger.info("Using PARSeq-large OCR (ONNX fp16, CUDA)")
+    ocr_service = ParseqOCRService(model_path=settings.parseq_model_path)
+else:
+    logger.info("Using manga-ocr OCR with batched inference")
+    ocr_service = MangaOCRService()
 ocr_pool = None  # Pool deprecated in favor of batched inference
 
 if settings.translation_num_instances > 1:
@@ -109,30 +115,51 @@ async def process_single_image(
             # Step 4 & 5: OCR and Translation
             ocr_start = time.time()
 
+            # PARSeq is a single-line STR model. If the detector exposes
+            # text_lines, precompute per-block OCR by cropping individual lines
+            # and stitching — this is how the model was trained. Fall back to
+            # the per-batch block-crop path otherwise (matches manga-ocr).
+            prefetched_texts: List[str] | None = None
+            if isinstance(ocr_service, ParseqOCRService) and text_lines:
+                prefetched_texts = await ocr_service.recognize_blocks_with_lines(
+                    image_np, blocks, text_lines,
+                    batch_size=settings.parseq_batch_size,
+                )
+
             if settings.use_pipeline_overlap and len(crops) > 1 and translation_pool:
-                # PIPELINE OVERLAP: OCR each crop and start translation immediately
-                # This overlaps OCR and translation phases for better throughput
+                # PIPELINE OVERLAP with mini-batching: OCR crops in batches of 3,
+                # then fire translation tasks immediately for each batch.
+                # This preserves ONNX batching efficiency while overlapping OCR and translation.
+                MINI_BATCH_SIZE = 3
+
                 async def ocr_and_translate_pipelined():
                     results = []
-                    for i, crop in enumerate(crops):
-                        # OCR single crop
-                        text = await ocr_service.recognize_single(crop)
+                    for batch_start in range(0, len(crops), MINI_BATCH_SIZE):
+                        batch_crops = crops[batch_start:batch_start + MINI_BATCH_SIZE]
+                        batch_indices = list(range(batch_start, batch_start + len(batch_crops)))
 
-                        # Filter non-Japanese before starting translation
-                        if settings.japanese_filter_enabled:
-                            if not is_japanese_text(
-                                text,
-                                settings.japanese_filter_min_ratio,
-                                settings.japanese_filter_katakana_max_length
-                            ):
-                                logger.debug(f"Filtered non-Japanese text at index {i}: '{text[:30]}...'")
-                                continue
+                        # OCR mini-batch (or slice of prefetched per-block OCR)
+                        if prefetched_texts is not None:
+                            texts = prefetched_texts[batch_start:batch_start + len(batch_crops)]
+                        else:
+                            texts = await ocr_service.recognize_text_batch(batch_crops)
 
-                        # Start translation immediately (non-blocking)
-                        trans_task = asyncio.create_task(
-                            translation_pool.translate_single(text, target_language)
-                        )
-                        results.append((i, text, trans_task))
+                        for i, text in zip(batch_indices, texts):
+                            # Filter non-Japanese before starting translation
+                            if settings.japanese_filter_enabled:
+                                if not is_japanese_text(
+                                    text,
+                                    settings.japanese_filter_min_ratio,
+                                    settings.japanese_filter_katakana_max_length
+                                ):
+                                    logger.debug(f"Filtered non-Japanese text at index {i}: '{text[:30]}...'")
+                                    continue
+
+                            # Start translation immediately (non-blocking)
+                            trans_task = asyncio.create_task(
+                                translation_pool.translate_single(text, target_language)
+                            )
+                            results.append((i, text, trans_task))
 
                     # Await all translation tasks
                     return [(i, text, await task) for i, text, task in results]
@@ -161,10 +188,13 @@ async def process_single_image(
                     logger.info(f"Image {idx + 1}: Pipelined OCR+Translation completed in {ocr_time*1000:.1f}ms ({len(crops)} crops)")
             else:
                 # BATCH MODE: All OCR first, then filter, then all translation
-                ocr_texts = await ocr_service.recognize_text_batch(
-                    crops,
-                    batch_size=len(crops)  # Process all crops at once
-                )
+                if prefetched_texts is not None:
+                    ocr_texts = prefetched_texts
+                else:
+                    ocr_texts = await ocr_service.recognize_text_batch(
+                        crops,
+                        batch_size=len(crops)  # Process all crops at once
+                    )
                 ocr_time = time.time() - ocr_start
                 logger.info(f"Image {idx + 1}: Batched OCR completed in {ocr_time*1000:.1f}ms ({len(crops)} crops)")
 
@@ -207,6 +237,9 @@ async def process_single_image(
         # Semaphore released - GPU slot available for other images
         # Note: all_text_regions was built and filtered inside the semaphore block
 
+        # Decode image once for all background extractions (avoids N base64 decodes)
+        pil_image = decode_base64_to_pil(base64_image)
+
         # Step 6: Build response
         text_boxes = []
         for block, ocr_text, translated_text, text_regions in zip(blocks, ocr_texts, translations, all_text_regions):
@@ -221,13 +254,14 @@ async def process_single_image(
                 len(translated_text) if translated_text else 1
             )
 
-            # Extract background region
+            # Extract background region (uses pre-decoded PIL image)
             background = extract_text_region_background(
                 base64_image,
                 block['minX'],
                 block['minY'],
                 block['maxX'],
-                block['maxY']
+                block['maxY'],
+                preloaded_image=pil_image,
             )
 
             # Default font colors

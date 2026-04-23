@@ -36,10 +36,10 @@ async def lifespan(app: FastAPI):
         dummy_size = settings.ctd_input_size
         dummy_image = np.zeros((dummy_size, dummy_size, 3), dtype=np.uint8)
 
-        # Warmup detector (CTD)
+        # Warmup detector
         detector_start = time.time()
-        await translate.ctd_service.detect(dummy_image)
-        logger.info(f"CTD warmup: {(time.time() - detector_start)*1000:.1f}ms")
+        await translate.detector_service.detect(dummy_image)
+        logger.info(f"Detector warmup: {(time.time() - detector_start)*1000:.1f}ms")
 
         # Warmup OCR (manga-ocr) with small crop
         ocr_start = time.time()

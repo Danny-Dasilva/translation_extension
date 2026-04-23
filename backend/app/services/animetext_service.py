@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from pathlib import Path
 from typing import Dict, List, Tuple
@@ -125,7 +126,7 @@ class AnimeTextDetectorService:
         img_in, scale, padded_size = self._preprocess(img, input_is_bgr)
 
         input_name = self.session.get_inputs()[0].name
-        outputs = self.session.run(None, {input_name: img_in})
+        outputs = await asyncio.to_thread(self.session.run, None, {input_name: img_in})
 
         blocks = self._parse_yolo_output(outputs[0], scale, (w, h))
 

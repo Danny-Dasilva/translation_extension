@@ -15,7 +15,9 @@ class MangaTranslatorContent {
   private overlayRenderer: OverlayRenderer;
   private resizeObserver: ResizeObserver | null = null;
   private intersectionObserver: IntersectionObserver | null = null;
+  private mutationObserver: MutationObserver | null = null;
   private isEnabled: boolean = false;
+  private translatingCanvases: Set<HTMLCanvasElement> = new Set();
 
   constructor() {
     this.imageDetector = new ImageDetector();
@@ -37,6 +39,23 @@ class MangaTranslatorContent {
     const hostname = window.location.hostname;
     this.isEnabled = await settingsManager.isEnabledForHostname(hostname);
 
+    // Always listen for settings changes (even when disabled, so we can auto-enable)
+    settingsManager.onSettingsChanged(async (settings) => {
+      const enabled = await settingsManager.isEnabledForHostname(hostname);
+      if (enabled !== this.isEnabled) {
+        this.isEnabled = enabled;
+        if (enabled) {
+          this.setupResizeObserver();
+          this.setupIntersectionObserver();
+          this.setupCanvasMonitor();
+          this.setupMutationObserver();
+          this.start();
+        } else {
+          this.stop();
+        }
+      }
+    });
+
     if (!this.isEnabled) {
       console.log(`Manga Translator: Disabled for ${hostname}`);
       return;
@@ -48,19 +67,7 @@ class MangaTranslatorContent {
     this.setupResizeObserver();
     this.setupIntersectionObserver();
     this.setupCanvasMonitor();
-
-    // Listen for settings changes
-    settingsManager.onSettingsChanged(async (settings) => {
-      const enabled = await settingsManager.isEnabledForHostname(hostname);
-      if (enabled !== this.isEnabled) {
-        this.isEnabled = enabled;
-        if (enabled) {
-          this.start();
-        } else {
-          this.stop();
-        }
-      }
-    });
+    this.setupMutationObserver();
 
     // Start processing
     this.start();
@@ -106,11 +113,17 @@ class MangaTranslatorContent {
       const detectedImages = await this.imageDetector.detectImages();
       console.log(`Found ${detectedImages.length} translatable images`);
 
-      // Process images in batches
+      // Process images in batches (up to 2 batches in parallel)
       const batchSize = CONFIG.MAX_IMAGES_PER_REQUEST;
+      const batches: Array<typeof detectedImages> = [];
       for (let i = 0; i < detectedImages.length; i += batchSize) {
-        const batch = detectedImages.slice(i, i + batchSize);
-        await this.processBatch(batch);
+        batches.push(detectedImages.slice(i, i + batchSize));
+      }
+
+      const PARALLEL_BATCHES = 2;
+      for (let i = 0; i < batches.length; i += PARALLEL_BATCHES) {
+        const concurrent = batches.slice(i, i + PARALLEL_BATCHES);
+        await Promise.all(concurrent.map((batch) => this.processBatch(batch)));
       }
     } catch (error) {
       console.error('Failed to process page:', error);
@@ -179,15 +192,22 @@ class MangaTranslatorContent {
         const textBoxes = response.images[i] || [];
 
         if (textBoxes.length > 0) {
+          const isCanvas = element instanceof HTMLCanvasElement;
+
+          // Guard: mark canvas as translating to prevent monitor from triggering re-translate
+          if (isCanvas) this.translatingCanvases.add(element as HTMLCanvasElement);
+
           await this.overlayRenderer.createOverlay(
             element as HTMLImageElement | HTMLCanvasElement,
             textBoxes,
             settings.showDebugInfo
           );
 
-          // Monitor canvas for changes
-          if (element instanceof HTMLCanvasElement) {
-            canvasMonitor.addCanvas(element);
+          // Update hash baseline and remove guard after writing
+          if (isCanvas) {
+            canvasMonitor.updateHash(element as HTMLCanvasElement);
+            this.translatingCanvases.delete(element as HTMLCanvasElement);
+            canvasMonitor.addCanvas(element as HTMLCanvasElement);
           }
         }
       }
@@ -249,14 +269,45 @@ class MangaTranslatorContent {
    */
   private setupCanvasMonitor(): void {
     canvasMonitor.onChange(async (canvas) => {
+      // Skip if we're currently writing translations to this canvas
+      if (this.translatingCanvases.has(canvas)) return;
+
       // Re-process canvas when content changes
       if (this.imageDetector.isProcessed(canvas)) {
         console.log('Canvas changed, re-translating...');
+        this.imageDetector.reset(); // Allow re-processing
         this.overlayRenderer.removeOverlay(canvas);
-        
+
         // Re-process
         await this.processVisibleElement(canvas);
       }
+    });
+  }
+
+  /**
+   * Setup MutationObserver to detect dynamically added images
+   */
+  private setupMutationObserver(): void {
+    this.mutationObserver = new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        for (const node of Array.from(mutation.addedNodes)) {
+          if (!(node instanceof HTMLElement)) continue;
+
+          // Check if the added node itself is an image/canvas
+          if (node instanceof HTMLImageElement || node instanceof HTMLCanvasElement) {
+            this.intersectionObserver?.observe(node);
+          }
+
+          // Check for image/canvas descendants
+          const images = node.querySelectorAll?.('img, canvas');
+          images?.forEach((el) => this.intersectionObserver?.observe(el));
+        }
+      }
+    });
+
+    this.mutationObserver.observe(document.body, {
+      childList: true,
+      subtree: true,
     });
   }
 
@@ -267,8 +318,29 @@ class MangaTranslatorContent {
     if (!this.isEnabled) return;
     if (this.imageDetector.isProcessed(element)) return;
 
-    // Process single element
-    // Implementation would be similar to processBatch but for one element
+    try {
+      let result: { element: HTMLElement; imageData: string; imageUrl?: string } | null = null;
+
+      if (element instanceof HTMLImageElement) {
+        if (!element.complete || element.naturalWidth <= 100 || element.naturalHeight <= 100) return;
+        const base64 = await import('@/utils/image-utils').then(m => m.elementToBase64(element));
+        const imageData = base64 || element.src;
+        this.imageDetector.markAsProcessed(element);
+        result = { element, imageData, imageUrl: element.src };
+      } else if (element instanceof HTMLCanvasElement) {
+        if (element.width <= 100 || element.height <= 100) return;
+        const base64 = await import('@/utils/image-utils').then(m => m.elementToBase64(element));
+        if (!base64) return;
+        this.imageDetector.markAsProcessed(element);
+        result = { element, imageData: base64 };
+      }
+
+      if (result) {
+        await this.processBatch([result]);
+      }
+    } catch (error) {
+      console.error('Failed to process visible element:', error);
+    }
   }
 
   /**
@@ -287,6 +359,8 @@ class MangaTranslatorContent {
 
       case 'clear':
         this.overlayRenderer.clearAll();
+        this.imageDetector.reset();
+        canvasMonitor.clear();
         sendResponse({ success: true });
         break;
 
@@ -312,6 +386,7 @@ class MangaTranslatorContent {
     this.stop();
     this.resizeObserver?.disconnect();
     this.intersectionObserver?.disconnect();
+    this.mutationObserver?.disconnect();
     canvasMonitor.reset();
   }
 }

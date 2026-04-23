@@ -3,6 +3,12 @@
   "name": "Manga Translator",
   "version": "1.0.0",
   "description": "Translate manga and comics in your browser using AI-powered OCR",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "manga-translator@extension",
+      "strict_min_version": "109.0"
+    }
+  },
   "permissions": [
     "storage",
     "activeTab",

@@ -926,7 +926,8 @@ export default defineConfig({
 - [ ] Test with real manga websites
 - [ ] Handle edge cases (large images, errors)
 
-**Day 9: Optimization**
+**Day 9: Optimizat
+ion**
 - [ ] Image compression before upload
 - [ ] Caching translated images
 - [ ] Reduce API calls (batch processing)

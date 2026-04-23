@@ -9,8 +9,8 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 
-def decode_base64_to_numpy(base64_image: str) -> np.ndarray:
-    """Decode base64 image string (with optional data URI prefix) to RGB numpy array."""
+def decode_base64_to_pil(base64_image: str) -> Image.Image:
+    """Decode base64 image string (with optional data URI prefix) to PIL Image."""
     image_data = base64_image
     if ',' in image_data and image_data.startswith('data:image'):
         image_data = image_data.split(',', 1)[1]
@@ -18,7 +18,12 @@ def decode_base64_to_numpy(base64_image: str) -> np.ndarray:
     image = Image.open(io.BytesIO(image_bytes))
     if image.mode != 'RGB':
         image = image.convert('RGB')
-    return np.array(image)
+    return image
+
+
+def decode_base64_to_numpy(base64_image: str) -> np.ndarray:
+    """Decode base64 image string (with optional data URI prefix) to RGB numpy array."""
+    return np.array(decode_base64_to_pil(base64_image))
 
 
 def calculate_font_size(bbox_width: int, bbox_height: int, text_length: int) -> int:
@@ -78,30 +83,35 @@ def detect_font_colors(image_region: np.ndarray) -> Tuple[str, str]:
 
 
 def extract_text_region_background(
-    base64_image: str, 
-    minX: int, 
-    minY: int, 
-    maxX: int, 
-    maxY: int
+    base64_image: str,
+    minX: int,
+    minY: int,
+    maxX: int,
+    maxY: int,
+    preloaded_image: Image.Image | None = None,
 ) -> str:
     """
     Extract the background image for a text region
-    
+
     Args:
-        base64_image: Full image as base64 string
+        base64_image: Full image as base64 string (ignored if preloaded_image given)
         minX, minY, maxX, maxY: Bounding box coordinates
-    
+        preloaded_image: Pre-decoded PIL Image to avoid repeated base64 decoding
+
     Returns:
         Base64-encoded cropped region
     """
     try:
-        # Decode base64
-        if ',' in base64_image and base64_image.startswith('data:image'):
-            base64_image = base64_image.split(',', 1)[1]
-        
-        image_bytes = base64.b64decode(base64_image)
-        image = Image.open(io.BytesIO(image_bytes))
-        
+        if preloaded_image is not None:
+            image = preloaded_image
+        else:
+            # Decode base64
+            if ',' in base64_image and base64_image.startswith('data:image'):
+                base64_image = base64_image.split(',', 1)[1]
+
+            image_bytes = base64.b64decode(base64_image)
+            image = Image.open(io.BytesIO(image_bytes))
+
         # Crop to bounding box
         cropped = image.crop((minX, minY, maxX, maxY))
         

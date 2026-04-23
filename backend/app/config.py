@@ -29,8 +29,16 @@ class Settings(BaseSettings):
     yolo_model_path: str = "app/models/yolov10n_manga.pt"
     # Note: manga-ocr auto-downloads its model, no path config needed
 
-    # Detector Selection: "animetext" (fast) or "ctd" (full-featured)
-    detector_type: str = "animetext"
+    # OCR backend selection: "parseq" (local trained model) or "manga-ocr"
+    ocr_backend: str = "parseq"
+    parseq_model_path: str = "models/parseq_manga_large_5p16.fp16.onnx"
+    parseq_batch_size: int = 4
+
+    # Detector Selection: "animetext" (fast) or "ctd" (full-featured).
+    # CTD is recommended when ocr_backend="parseq" because PARSeq is a
+    # line-level STR model and needs per-line crops (text_lines) for best
+    # quality; AnimeText only produces block-level bboxes.
+    detector_type: str = "ctd"
 
     # AnimeText YOLO12s FP16 (3.1x faster than CTD: 414 FPS vs 133 FPS)
     animetext_model_path: str = "models/animetext_yolo12s_fp16.onnx"

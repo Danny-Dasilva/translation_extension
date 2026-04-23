@@ -44,24 +44,49 @@ export async function elementToBase64(
 }
 
 /**
- * Calculate hash of canvas content for change detection
+ * FNV-1a hash for a Uint8ClampedArray region
+ */
+function fnv1a(data: Uint8ClampedArray): number {
+  let hash = 0x811c9dc5; // FNV offset basis
+  for (let i = 0; i < data.length; i += 16) { // Sample every 16th byte for speed
+    hash ^= data[i];
+    hash = Math.imul(hash, 0x01000193); // FNV prime
+  }
+  return hash >>> 0; // unsigned
+}
+
+/**
+ * Calculate hash of canvas content for change detection.
+ * Samples 5 regions (corners + center) with FNV-1a for collision resistance.
  */
 export function hashCanvas(canvas: HTMLCanvasElement): string {
   try {
     const ctx = canvas.getContext('2d');
     if (!ctx) return '';
 
-    // Sample pixels from canvas (top-left corner for performance)
-    const imageData = ctx.getImageData(0, 0, Math.min(100, canvas.width), Math.min(100, canvas.height));
-    const data = imageData.data;
+    const w = canvas.width;
+    const h = canvas.height;
+    const size = 50; // Sample 50x50 regions
 
-    // Simple hash: sum of pixel values
-    let hash = 0;
-    for (let i = 0; i < data.length; i += 4) {
-      hash += data[i] + data[i + 1] + data[i + 2];
+    // 5 sample regions: top-left, top-right, bottom-left, bottom-right, center
+    const regions = [
+      [0, 0],
+      [Math.max(0, w - size), 0],
+      [0, Math.max(0, h - size)],
+      [Math.max(0, w - size), Math.max(0, h - size)],
+      [Math.max(0, Math.floor(w / 2 - size / 2)), Math.max(0, Math.floor(h / 2 - size / 2))],
+    ];
+
+    let combined = '';
+    for (const [x, y] of regions) {
+      const sw = Math.min(size, w - x);
+      const sh = Math.min(size, h - y);
+      if (sw <= 0 || sh <= 0) continue;
+      const imageData = ctx.getImageData(x, y, sw, sh);
+      combined += fnv1a(imageData.data).toString(36) + '-';
     }
 
-    return hash.toString(36);
+    return combined;
   } catch (error) {
     console.error('Failed to hash canvas:', error);
     return '';

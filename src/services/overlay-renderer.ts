@@ -126,13 +126,6 @@ export class OverlayRenderer {
     // Draw original image
     ctx.drawImage(image, 0, 0, image.width, image.height);
 
-    // Calculate scaling factors
-    // The textBox coordinates are in "original image" coordinates
-    // We need to scale them to match the canvas size
-    const displayedRect = originalElement.getBoundingClientRect();
-    const naturalWidth = image.width;
-    const naturalHeight = image.height;
-
     // Sort text boxes by z-index (lower first, so they're drawn first)
     const sortedTextBoxes = [...textBoxes].sort((a, b) => {
       const aZ = a.zIndex || 1;
@@ -303,7 +296,16 @@ export class OverlayRenderer {
   }
 
   /**
-   * Wrap text to fit within a given width
+   * Check if text contains CJK characters (Chinese, Japanese Kanji, Korean)
+   */
+  private isCJKText(text: string): boolean {
+    return /[\u3000-\u9fff\uac00-\ud7af\uf900-\ufaff]/.test(text);
+  }
+
+  /**
+   * Wrap text to fit within a given width.
+   * Uses character-by-character wrapping for CJK text (no spaces between words),
+   * and space-based wrapping for Latin text.
    */
   private wrapText(
     ctx: CanvasRenderingContext2D,
@@ -314,6 +316,26 @@ export class OverlayRenderer {
   ): string[] {
     ctx.font = `${fontSize}px ${fontFamily}`;
 
+    if (this.isCJKText(text)) {
+      // CJK: character-by-character wrapping
+      const lines: string[] = [];
+      let currentLine = '';
+
+      for (const char of text) {
+        const testLine = currentLine + char;
+        if (ctx.measureText(testLine).width > maxWidth && currentLine) {
+          lines.push(currentLine);
+          currentLine = char;
+        } else {
+          currentLine = testLine;
+        }
+      }
+
+      if (currentLine) lines.push(currentLine);
+      return lines.length > 0 ? lines : [text];
+    }
+
+    // Latin: space-based word wrapping
     const words = text.split(' ');
     const lines: string[] = [];
     let currentLine = '';

@@ -41,8 +41,6 @@ def normalize_japanese_text(text: str) -> str:
 
     return text.strip()
 
-# Global GPU inference semaphore - serializes OCR GPU operations
-_ocr_gpu_semaphore = asyncio.Semaphore(1)
 
 
 class MangaOCRService:
@@ -133,12 +131,11 @@ class MangaOCRService:
         if self.device == "cuda":
             pixel_values = pixel_values.to("cuda")
 
-        # Batched generation with GPU semaphore
-        async with _ocr_gpu_semaphore:
-            generated_ids = await asyncio.to_thread(
-                self.model.generate,
-                pixel_values
-            )
+        # Batched generation (GGML_CUDA_NO_GRAPHS=1 prevents CUDA stream conflicts)
+        generated_ids = await asyncio.to_thread(
+            self.model.generate,
+            pixel_values
+        )
 
         # Batch decode using tokenizer
         texts = self.tokenizer.batch_decode(

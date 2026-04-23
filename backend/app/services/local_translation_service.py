@@ -3,20 +3,20 @@
 import asyncio
 import concurrent.futures
 import logging
+import os
+import re
 import time
 from pathlib import Path
 from typing import List, Tuple, Dict, Any
+
+# Disable CUDA graph capture before importing llama-cpp to prevent conflicts with onnxruntime
+os.environ.setdefault("GGML_CUDA_NO_GRAPHS", "1")
 
 from llama_cpp import Llama
 
 from app.config import settings
 
 logger = logging.getLogger(__name__)
-
-# Global GPU inference semaphore - DISABLED: serializes ALL translation GPU operations
-# Prevents GPU contention that causes slowdown when multiple inferences run simultaneously
-# This was defeating the purpose of having multiple instances - now each instance can run in parallel
-# _translation_gpu_semaphore = asyncio.Semaphore(1)
 
 
 class LocalTranslationService:
@@ -45,8 +45,10 @@ class LocalTranslationService:
         if translation.startswith("Assistant:"):
             translation = translation[len("Assistant:"):].strip()
 
-        # Strip any special end tokens that may have leaked through
-        for token in ["<|im_end|>", "<|im_end>", "</s>", "<|eot_id|>"]:
+        # Strip any special tokens that may have leaked through
+        # Use regex to catch all variants (e.g. <|im_end|>, <|im_end+], <|im_end/>, etc.)
+        translation = re.sub(r'<\|im_\w*[^>]*[>\]|/]+', '', translation)
+        for token in ["</s>", "<|eot_id|>"]:
             translation = translation.replace(token, "")
 
         return translation.strip()
@@ -101,15 +103,12 @@ class LocalTranslationService:
         # Format prompt directly (bypass create_chat_completion overhead)
         prompt = f"<|im_start|>user\nTranslate the following segment into {target_language}, without additional explanation.\n\n{text}<|im_end|>\n<|im_start|>assistant\n"
 
-        # Run synchronously - llama-cpp GPU offload means most time is GPU-bound anyway
-        # Avoiding asyncio.to_thread eliminates thread pool overhead and lock contention
-        # that was causing progressive slowdown (31ms → 315ms over 6 translations)
         response = self.llm.create_completion(
             prompt=prompt,
             max_tokens=256,
-            temperature=0.7,
+            temperature=0.3,
             top_k=20,
-            top_p=0.6,
+            top_p=0.9,
             repeat_penalty=1.05,
             stop=["<|im_end|>"]
         )
@@ -180,6 +179,8 @@ class LocalTranslationPool:
         results.sort(key=lambda x: x[0])
         self.instances = [llm for _, llm in results]
         self.semaphores = [asyncio.Semaphore(1) for _ in self.instances]
+
+        self._next_instance = 0  # Round-robin counter for translate_single()
 
         load_time = (time.perf_counter() - load_start) * 1000
         logger.info(f"Translation Pool ready: {num_instances} instances loaded in {load_time:.0f}ms")
@@ -252,13 +253,13 @@ class LocalTranslationPool:
         # Format prompt
         prompt = f"<|im_start|>user\nTranslate the following segment into {target_language}, without additional explanation.\n\n{text}<|im_end|>\n<|im_start|>assistant\n"
 
-        # Inference
+        # Inference — lower temperature for more consistent translation output
         response = llm.create_completion(
             prompt=prompt,
             max_tokens=settings.translation_max_tokens,
-            temperature=0.7,
+            temperature=0.3,
             top_k=20,
-            top_p=0.6,
+            top_p=0.9,
             repeat_penalty=1.05,
             stop=["<|im_end|>"]
         )
@@ -328,10 +329,10 @@ class LocalTranslationPool:
         target_language: str = "English"
     ) -> str:
         """
-        Translate a single text using instance 0 with semaphore protection.
+        Translate a single text using round-robin instance selection.
 
         For backward compatibility with code expecting single translate calls.
-        Uses semaphore to prevent concurrent access to the same Llama instance.
+        Round-robins across instances to avoid bottleneck on instance 0.
 
         Args:
             text: Text to translate
@@ -340,10 +341,13 @@ class LocalTranslationPool:
         Returns:
             Translated text
         """
-        # Use instance 0 with semaphore protection (llama-cpp is NOT thread-safe)
-        async with self.semaphores[0]:
+        # Round-robin across instances to avoid bottleneck on instance 0
+        instance_id = self._next_instance % self.num_instances
+        self._next_instance += 1
+
+        async with self.semaphores[instance_id]:
             return await asyncio.to_thread(
-                self._translate_sync, self.instances[0], text, target_language, 0, 0
+                self._translate_sync, self.instances[instance_id], text, target_language, instance_id, 0
             )
 
     async def translate_streaming(
