@@ -1,0 +1,17 @@
+{
+  "image": "animetext_1327736.jpg",
+  "detect_ms": 772.1946239471436,
+  "num_blocks": 2,
+  "num_text_lines": 2,
+  "ocr_ms": 1513.8325691223145,
+  "inpaint_ms": 2237.938404083252,
+  "translate_ms": 27023.390531539917,
+  "ocr_samples": [
+    "ははは・・",
+    "入イるくるのの"
+  ],
+  "translations": [
+    "Hahaha...",
+    "I’m going in."
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "image": "animetext_1257125.jpg",
+  "detect_ms": 743.0784702301025,
+  "num_blocks": 5,
+  "num_text_lines": 13,
+  "ocr_ms": 6264.882802963257,
+  "inpaint_ms": 11436.046123504639,
+  "translate_ms": 33234.795570373535,
+  "ocr_samples": [
+    "だいたいドジっ娘だったら私の方が上だしっ",
+    "畜生風情がドジっ娘を気取るだと?",
+    "転移門にジャンプ入門してキリト君とぶつかって",
+    "はっ",
+    "胸まで探まれた私に死はないわっ!"
+  ],
+  "translations": [
+    "If I were the more clumsy girl, I’d be better off, right?",
+    "How dare he act like he’s a clumsy girl?",
+    "He jumped into the teleportation gate and bumped into Kitaro-kun.",
+    "Hah!",
+    "With my chest exposed like this, I can’t die!"
+  ]
+}
