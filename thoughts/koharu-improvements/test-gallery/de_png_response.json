@@ -1,0 +1,32 @@
+{
+  "images": [
+    [
+      {
+        "ocrText": "タコだ。。",
+        "originalLanguage": "ja",
+        "minX": 257,
+        "minY": 133,
+        "maxX": 434,
+        "maxY": 209,
+        "background": "<data-url stripped, 6359 chars>",
+        "fontHeightPx": 50,
+        "fontColor": "#000000",
+        "fontStrokeColor": "#FFFFFF",
+        "zIndex": 1,
+        "translatedText": "It’s a crab…",
+        "subtextBoxes": [],
+        "textRegions": [
+          {
+            "minX": 258,
+            "minY": 133,
+            "maxX": 433,
+            "maxY": 209
+          }
+        ],
+        "confidence": 0.6370725631713867,
+        "ocrTimeMs": 2550.06,
+        "translateTimeMs": 2550.06
+      }
+    ]
+  ]
+}

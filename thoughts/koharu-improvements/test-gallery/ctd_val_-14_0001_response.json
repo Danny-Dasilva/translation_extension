@@ -1,0 +1,110 @@
+{
+  "images": [
+    [
+      {
+        "ocrText": "...3和H社しせ認めら山城凶脚争半出..",
+        "originalLanguage": "ja",
+        "minX": 304,
+        "minY": 322,
+        "maxX": 404,
+        "maxY": 414,
+        "background": "<data-url stripped, 5671 chars>",
+        "fontHeightPx": 12,
+        "fontColor": "#000000",
+        "fontStrokeColor": "#FFFFFF",
+        "zIndex": 1,
+        "translatedText": "…3 and H company are recognized as having participated in this battle.",
+        "subtextBoxes": [],
+        "textRegions": [
+          {
+            "minX": 305,
+            "minY": 322,
+            "maxX": 403,
+            "maxY": 414
+          }
+        ],
+        "confidence": 0.8184478282928467,
+        "ocrTimeMs": 1783.11,
+        "translateTimeMs": 1783.11
+      },
+      {
+        "ocrText": "日だレトAHエレ屈",
+        "originalLanguage": "ja",
+        "minX": 284,
+        "minY": 152,
+        "maxX": 320,
+        "maxY": 200,
+        "background": "<data-url stripped, 2127 chars>",
+        "fontHeightPx": 12,
+        "fontColor": "#000000",
+        "fontStrokeColor": "#FFFFFF",
+        "zIndex": 2,
+        "translatedText": "It’s a day of celebration.",
+        "subtextBoxes": [],
+        "textRegions": [
+          {
+            "minX": 284,
+            "minY": 152,
+            "maxX": 320,
+            "maxY": 200
+          }
+        ],
+        "confidence": 0.9570519924163818,
+        "ocrTimeMs": 1783.11,
+        "translateTimeMs": 1783.11
+      },
+      {
+        "ocrText": "[間里]",
+        "originalLanguage": "ja",
+        "minX": 210,
+        "minY": 292,
+        "maxX": 228,
+        "maxY": 322,
+        "background": "<data-url stripped, 1439 chars>",
+        "fontHeightPx": 12,
+        "fontColor": "#000000",
+        "fontStrokeColor": "#FFFFFF",
+        "zIndex": 3,
+        "translatedText": "[Interior]",
+        "subtextBoxes": [],
+        "textRegions": [
+          {
+            "minX": 210,
+            "minY": 292,
+            "maxX": 228,
+            "maxY": 322
+          }
+        ],
+        "confidence": 0.7613468170166016,
+        "ocrTimeMs": 1783.11,
+        "translateTimeMs": 1783.11
+      },
+      {
+        "ocrText": "カキン",
+        "originalLanguage": "ja",
+        "minX": 140,
+        "minY": 186,
+        "maxX": 155,
+        "maxY": 211,
+        "background": "<data-url stripped, 1231 chars>",
+        "fontHeightPx": 12,
+        "fontColor": "#000000",
+        "fontStrokeColor": "#FFFFFF",
+        "zIndex": 4,
+        "translatedText": "Kakkin",
+        "subtextBoxes": [],
+        "textRegions": [
+          {
+            "minX": 140,
+            "minY": 186,
+            "maxX": 155,
+            "maxY": 211
+          }
+        ],
+        "confidence": 0.5822350978851318,
+        "ocrTimeMs": 1783.11,
+        "translateTimeMs": 1783.11
+      }
+    ]
+  ]
+}

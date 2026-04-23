@@ -6,6 +6,10 @@ dist-firefox
 *.pyc
 *.png
 *.jpg
+# Allow validation galleries + koharu-improvement artefacts to be tracked
+!thoughts/**/*.png
+!thoughts/**/*.jpg
+!thoughts/**/*.jpeg
 # Continuous Claude cache (local only)
 .claude/cache/
 

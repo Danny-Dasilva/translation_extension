@@ -1,0 +1,29 @@
+========================================================================
+CTD FP32 vs FP16 Benchmark
+========================================================================
+fp32 model : models/comictextdetector.onnx  (94.7 MB)
+fp16 model : models/comictextdetector.fp16.onnx  (47.4 MB)
+image      : ../de.png
+runs       : 50  (warmup 5)
+ort        : 1.23.2
+available  : ['AzureExecutionProvider', 'CPUExecutionProvider']
+
+input shape: (1, 3, 1024, 1024) dtype=float32
+
+[warn] Requested CUDA but got CPUExecutionProvider for comictextdetector.onnx
+[note] CUDA unavailable during bench. (Running on CPU.)
+[ep] using CPU for both models
+
+-- Parity (fp32 vs fp16 on real image) --
+  out[blk] shape=(1, 64512, 7)  max_abs=1.87625  mean_abs=0.03367  max_rel=0.179
+  out[seg] shape=(1, 1, 1024, 1024)  max_abs=0.00711  mean_abs=0.00001  max_rel=0.389
+  out[det] shape=(1, 2, 1024, 1024)  max_abs=0.01631  mean_abs=0.00032  max_rel=0.314
+[ok] sigmoid-output max abs diff 0.0163 <= 0.05
+
+-- Latency (50 runs, 5 warmup) --
+  fp32  mean= 500.19 ms  p50= 415.24  p99=1199.29  min= 321.08  max=1199.29
+  fp16  mean= 412.56 ms  p50= 362.97  p99= 862.93  min= 309.58  max= 862.93
+
+fp16 speedup (mean): 1.21x
+
+========================================================================

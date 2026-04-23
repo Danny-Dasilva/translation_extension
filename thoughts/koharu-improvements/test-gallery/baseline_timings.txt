@@ -1,0 +1,6 @@
+# Koharu baseline wall-clock timings (ms)
+
+de_png                            3266.3 ms  status=ok  boxes=1
+aisazu_003                       37801.0 ms  status=ok  boxes=14
+block_detection_test             23730.4 ms  status=ok  boxes=11
+ctd_val_-14_0001                  7765.6 ms  status=ok  boxes=4

@@ -1,0 +1,292 @@
+{
+  "images": [
+    [
+      {
+        "ocrText": "九州ラーメンの家",
+        "originalLanguage": "ja",
+        "minX": 899,
+        "minY": 630,
+        "maxX": 920,
+        "maxY": 714,
+        "background": "<data-url stripped, 2175 chars>",
+        "fontHeightPx": 12,
+        "fontColor": "#000000",
+        "fontStrokeColor": "#FFFFFF",
+        "zIndex": 11,
+        "translatedText": "Kyushu Ramen’s home",
+        "subtextBoxes": [],
+        "textRegions": [
+          {
+            "minX": 899,
+            "minY": 630,
+            "maxX": 920,
+            "maxY": 714
+          }
+        ],
+        "confidence": 0.6643896102905273,
+        "ocrTimeMs": 2103.89,
+        "translateTimeMs": 2103.89
+      },
+      {
+        "ocrText": "おかふわダぶン識にこんなにもな誠だん激激すすななて",
+        "originalLanguage": "ja",
+        "minX": 898,
+        "minY": 420,
+        "maxX": 959,
+        "maxY": 509,
+        "background": "<data-url stripped, 4675 chars>",
+        "fontHeightPx": 12,
+        "fontColor": "#000000",
+        "fontStrokeColor": "#FFFFFF",
+        "zIndex": 4,
+        "translatedText": "It’s so sincere and passionate that it’s hard to describe in words.",
+        "subtextBoxes": [],
+        "textRegions": [
+          {
+            "minX": 898,
+            "minY": 420,
+            "maxX": 959,
+            "maxY": 509
+          }
+        ],
+        "confidence": 0.9136161804199219,
+        "ocrTimeMs": 2103.89,
+        "translateTimeMs": 2103.89
+      },
+      {
+        "ocrText": "30の9家殺たり上上家会いた時ず連く強さんに",
+        "originalLanguage": "ja",
+        "minX": 877,
+        "minY": 191,
+        "maxX": 984,
+        "maxY": 281,
+        "background": "<data-url stripped, 7571 chars>",
+        "fontHeightPx": 12,
+        "fontColor": "#000000",
+        "fontStrokeColor": "#FFFFFF",
+        "zIndex": 1,
+        "translatedText": "When I met with those 30 people who committed those murders… they were all extremely strong and powerful.",
+        "subtextBoxes": [],
+        "textRegions": [
+          {
+            "minX": 878,
+            "minY": 191,
+            "maxX": 983,
+            "maxY": 281
+          }
+        ],
+        "confidence": 0.8347129821777344,
+        "ocrTimeMs": 2103.89,
+        "translateTimeMs": 2103.89
+      },
+      {
+        "ocrText": "冷蔵庫とかテレビとか一人か買買っら気...変になるんじゃなかろうななるろ",
+        "originalLanguage": "ja",
+        "minX": 781,
+        "minY": 471,
+        "maxX": 849,
+        "maxY": 566,
+        "background": "<data-url stripped, 4891 chars>",
+        "fontHeightPx": 12,
+        "fontColor": "#000000",
+        "fontStrokeColor": "#FFFFFF",
+        "zIndex": 3,
+        "translatedText": "I really want to buy a refrigerator or a TV for myself… It seems like it might become something strange if I do that.",
+        "subtextBoxes": [],
+        "textRegions": [
+          {
+            "minX": 781,
+            "minY": 471,
+            "maxX": 849,
+            "maxY": 566
+          }
+        ],
+        "confidence": 0.9692530632019043,
+        "ocrTimeMs": 2103.89,
+        "translateTimeMs": 2103.89
+      },
+      {
+        "ocrText": "しかしあたしリーさたのておォウクしてるんだろう",
+        "originalLanguage": "ja",
+        "minX": 694,
+        "minY": 429,
+        "maxX": 753,
+        "maxY": 514,
+        "background": "<data-url stripped, 4823 chars>",
+        "fontHeightPx": 12,
+        "fontColor": "#000000",
+        "fontStrokeColor": "#FFFFFF",
+        "zIndex": 8,
+        "translatedText": "But I’m probably just trying to get along with Lee-sa.",
+        "subtextBoxes": [],
+        "textRegions": [
+          {
+            "minX": 694,
+            "minY": 429,
+            "maxX": 753,
+            "maxY": 514
+          }
+        ],
+        "confidence": 0.9619324207305908,
+        "ocrTimeMs": 2103.89,
+        "translateTimeMs": 2103.89
+      },
+      {
+        "ocrText": "でもラリゃン行スておいしいんだもん",
+        "originalLanguage": "ja",
+        "minX": 575,
+        "minY": 539,
+        "maxX": 625,
+        "maxY": 585,
+        "background": "<data-url stripped, 2479 chars>",
+        "fontHeightPx": 12,
+        "fontColor": "#000000",
+        "fontStrokeColor": "#FFFFFF",
+        "zIndex": 10,
+        "translatedText": "But it’s really delicious when you go to Larián.",
+        "subtextBoxes": [],
+        "textRegions": [
+          {
+            "minX": 575,
+            "minY": 539,
+            "maxX": 625,
+            "maxY": 585
+          }
+        ],
+        "confidence": 0.40775978565216064,
+        "ocrTimeMs": 2103.89,
+        "translateTimeMs": 2103.89
+      },
+      {
+        "ocrText": "もうカ役所か備方る所部ううたたた所はなかいれない体温",
+        "originalLanguage": "ja",
+        "minX": 566,
+        "minY": 427,
+        "maxX": 621,
+        "maxY": 524,
+        "background": "<data-url stripped, 4543 chars>",
+        "fontHeightPx": 12,
+        "fontColor": "#000000",
+        "fontStrokeColor": "#FFFFFF",
+        "zIndex": 5,
+        "translatedText": "It’s not possible to include any information related to the “K-Office” or “Befang”. There’s no way to include such information in the text.",
+        "subtextBoxes": [],
+        "textRegions": [
+          {
+            "minX": 566,
+            "minY": 427,
+            "maxX": 621,
+            "maxY": 524
+          }
+        ],
+        "confidence": 0.7471935749053955,
+        "ocrTimeMs": 2103.89,
+        "translateTimeMs": 2103.89
+      },
+      {
+        "ocrText": "排さ階のヨ気強聞きじルルゃんにおそーんももも..キーリマンをさい以動公わ",
+        "originalLanguage": "ja",
+        "minX": 565,
+        "minY": 194,
+        "maxX": 636,
+        "maxY": 293,
+        "background": "<data-url stripped, 6115 chars>",
+        "fontHeightPx": 12,
+        "fontColor": "#000000",
+        "fontStrokeColor": "#FFFFFF",
+        "zIndex": 2,
+        "translatedText": "The sound of the wind is very strong… It’s too late for anything to happen. The key man has already left.",
+        "subtextBoxes": [],
+        "textRegions": [
+          {
+            "minX": 565,
+            "minY": 194,
+            "maxX": 636,
+            "maxY": 293
+          }
+        ],
+        "confidence": 0.8342254161834717,
+        "ocrTimeMs": 2103.89,
+        "translateTimeMs": 2103.89
+      },
+      {
+        "ocrText": "またカチンコ",
+        "originalLanguage": "ja",
+        "minX": 322,
+        "minY": 200,
+        "maxX": 362,
+        "maxY": 266,
+        "background": "<data-url stripped, 2943 chars>",
+        "fontHeightPx": 12,
+        "fontColor": "#000000",
+        "fontStrokeColor": "#FFFFFF",
+        "zIndex": 9,
+        "translatedText": "Also, the “Kachinoko” symbols…",
+        "subtextBoxes": [],
+        "textRegions": [
+          {
+            "minX": 322,
+            "minY": 200,
+            "maxX": 362,
+            "maxY": 266
+          }
+        ],
+        "confidence": 0.6443896293640137,
+        "ocrTimeMs": 2103.89,
+        "translateTimeMs": 2103.89
+      },
+      {
+        "ocrText": "でもあんなまぐれは千一とう",
+        "originalLanguage": "ja",
+        "minX": 320,
+        "minY": 368,
+        "maxX": 376,
+        "maxY": 462,
+        "background": "<data-url stripped, 4399 chars>",
+        "fontHeightPx": 12,
+        "fontColor": "#000000",
+        "fontStrokeColor": "#FFFFFF",
+        "zIndex": 6,
+        "translatedText": "But such a coincidence is impossible with Qian Yi.",
+        "subtextBoxes": [],
+        "textRegions": [
+          {
+            "minX": 320,
+            "minY": 368,
+            "maxX": 376,
+            "maxY": 462
+          }
+        ],
+        "confidence": 0.8784770965576172,
+        "ocrTimeMs": 2103.89,
+        "translateTimeMs": 2103.89
+      },
+      {
+        "ocrText": "日本橋の出立所それ",
+        "originalLanguage": "ja",
+        "minX": 185,
+        "minY": 191,
+        "maxX": 234,
+        "maxY": 296,
+        "background": "<data-url stripped, 4267 chars>",
+        "fontHeightPx": 12,
+        "fontColor": "#000000",
+        "fontStrokeColor": "#FFFFFF",
+        "zIndex": 7,
+        "translatedText": "The departure point in Nihonbashi…",
+        "subtextBoxes": [],
+        "textRegions": [
+          {
+            "minX": 185,
+            "minY": 192,
+            "maxX": 234,
+            "maxY": 295
+          }
+        ],
+        "confidence": 0.6090774536132812,
+        "ocrTimeMs": 2103.89,
+        "translateTimeMs": 2103.89
+      }
+    ]
+  ]
+}

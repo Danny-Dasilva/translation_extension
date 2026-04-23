@@ -1,0 +1,10 @@
+image: de.png (2718x512)
+ctd_ms: 1175.9
+lama_ms: 7962.5
+device: cpu
+components: 3
+fastpath_hits: 0
+fastpath_rate: 0.000
+forward_calls: 3
+forward_ms: 7938.8
+mask_pixel_frac: 0.0113

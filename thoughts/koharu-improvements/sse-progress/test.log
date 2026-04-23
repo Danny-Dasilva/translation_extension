@@ -1,0 +1,17 @@
+2026-04-22 21:26:49,823 [INFO] === SSE ProgressBus smoke test ===
+2026-04-22 21:26:49,823 [INFO] job_id=test-job-1776907609
+2026-04-22 21:26:49,823 [INFO] producer emitted: stage=detect index=0/4 percent=0.0 seq=1
+2026-04-22 21:26:49,823 [INFO] consumer received: seq=1 stage=detect index=0/4 percent=0.0 note=starting YOLO detection
+2026-04-22 21:26:50,125 [INFO] producer emitted: stage=ocr index=1/4 percent=25.0 seq=2
+2026-04-22 21:26:50,125 [INFO] consumer received: seq=2 stage=ocr index=1/4 percent=25.0 note=running manga-ocr on 12 regions
+2026-04-22 21:26:50,427 [INFO] producer emitted: stage=translate index=2/4 percent=50.0 seq=3
+2026-04-22 21:26:50,427 [INFO] consumer received: seq=3 stage=translate index=2/4 percent=50.0 note=HY-MT1.5 JA->EN
+2026-04-22 21:26:50,728 [INFO] producer emitted: stage=render index=3/4 percent=75.0 seq=4
+2026-04-22 21:26:50,728 [INFO] consumer received: seq=4 stage=render index=3/4 percent=75.0 note=compositing overlay
+2026-04-22 21:26:51,029 [INFO] producer emitted: stage=render index=4/4 percent=100.0 seq=5
+2026-04-22 21:26:51,030 [INFO] consumer received: seq=5 stage=render index=4/4 percent=100.0 note=done
+2026-04-22 21:26:51,330 [INFO] producer finished job=test-job-1776907609
+2026-04-22 21:26:51,332 [INFO] consumer stream closed for job=test-job-1776907609 (got 5 events)
+2026-04-22 21:26:51,332 [INFO] elapsed=1.51s received=5 events
+2026-04-22 21:26:51,332 [INFO] all assertions passed ✓
+2026-04-22 21:26:51,332 [INFO] log written to /home/danny/Documents/personal/extension/thoughts/koharu-improvements/sse-progress/test.log

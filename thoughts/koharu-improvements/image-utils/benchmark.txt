@@ -1,0 +1,18 @@
+Image decode benchmark
+========================================================================
+Iterations per variant: 50
+
+Sample: de.png  (756.7 KB decoded)
+------------------------------------------------------------------------
+  PIL (old decode_base64_to_pil)   mean= 17.394ms  p50= 17.209ms  p99= 19.313ms
+  cv2->PIL (new decode_base64_to_pil) mean= 24.219ms  p50= 24.179ms  p99= 26.236ms
+  cv2 fast (decode_base64_to_numpy_fast) mean= 21.688ms  p50= 21.546ms  p99= 22.802ms
+  -> cv2 fast path is 0.80x faster than PIL-only
+
+Sample: runs/detect/runs/manga_detect_v2/phase2_finetune/val_batch0_pred.jpg  (233.1 KB decoded)
+------------------------------------------------------------------------
+  PIL (old decode_base64_to_pil)   mean=  6.517ms  p50=  6.503ms  p99=  7.413ms
+  cv2->PIL (new decode_base64_to_pil) mean= 26.494ms  p50= 26.518ms  p99= 29.375ms
+  cv2 fast (decode_base64_to_numpy_fast) mean=  4.792ms  p50=  4.679ms  p99=  5.925ms
+  -> cv2 fast path is 1.36x faster than PIL-only
+

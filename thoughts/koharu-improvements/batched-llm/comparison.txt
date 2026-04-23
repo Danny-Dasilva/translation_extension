@@ -1,0 +1,103 @@
+# Batched LLM Translation — Comparison Test
+
+Model: app/weights/HY-MT1.5-1.8B-Q8_0.gguf
+Pool size: 2 instances
+Bubbles: 6
+
+## Timings
+
+  translate_parallel (per-bubble)      6224.3 ms
+  translate_batched (page-level)       8895.6 ms
+
+  speedup (parallel / batched) = 0.70x
+
+## Outputs — side by side
+
+[1] source    : やめろ！来るな！！
+    parallel  : Stop! Don’t come here!!
+    batched   : Stop it! Don’t come here!!
+
+[2] source    : ……大丈夫？
+    parallel  : …Are you okay?
+    batched   : …… Are you okay?
+
+[3] source    : その日、世界は静かに変わった。
+    parallel  : That day, the world changed quietly.
+    batched   : That day, the world changed quietly.
+
+[4] source    : ドォォォン！！
+    parallel  : Doooooooon!!
+    batched   : Doooonnng!!
+
+[5] source    : 先輩、お昼一緒にどうですか？
+    parallel  : Senior, how about having lunch together?
+    batched   : Senior, how about having lunch together?
+
+[6] source    : ふざけるなよ……絶対に許さない
+    parallel  : Don’t act like that… I will never allow it to happen.
+    batched   : Don’t act like that… I will never forgive you.
+
+## Tag-protocol wire format
+
+### System prompt
+```
+You are a professional manga translator. Translate manga dialogue into natural English that fits inside speech bubbles. Preserve character voice, emotional tone, relationship nuance, emphasis, and sound effects naturally. Keep the wording concise. Do not add notes, explanations, or romanization. The input uses numbered tags like [1], [2], etc. to mark each text block. Translate only the text after each tag. Keep every tag exactly unchanged, including numbers and order. Output the same tags followed by the translated text. Do not merge, split, or reorder blocks.
+```
+
+### Input (user message body) — exactly what the model sees
+```
+[1]やめろ！来るな！！
+[2]……大丈夫？
+[3]その日、世界は静かに変わった。
+[4]ドォォォン！！
+[5]先輩、お昼一緒にどうですか？
+[6]ふざけるなよ……絶対に許さない
+```
+
+### Example reconstructed output (one tag per translated bubble)
+```
+[1]Stop it! Don’t come here!!
+[2]…… Are you okay?
+[3]That day, the world changed quietly.
+[4]Doooonnng!!
+[5]Senior, how about having lunch together?
+[6]Don’t act like that… I will never forgive you.
+```
+
+### 10 example [N]…text pairs showing the protocol round-trip
+
+  input : [1]やめろ！来るな！！
+  output: [1]Stop it! Don’t come here!!
+
+  input : [2]……大丈夫？
+  output: [2]…… Are you okay?
+
+  input : [3]その日、世界は静かに変わった。
+  output: [3]That day, the world changed quietly.
+
+  input : [4]ドォォォン！！
+  output: [4]Doooonnng!!
+
+  input : [5]先輩、お昼一緒にどうですか？
+  output: [5]Senior, how about having lunch together?
+
+  input : [6]ふざけるなよ……絶対に許さない
+  output: [6]Don’t act like that… I will never forgive you.
+
+  input : [7]こんにちは
+  output: [7]Hello
+
+  input : [8]さようなら
+  output: [8]Goodbye
+
+  input : [9]まさか……
+  output: [9]No way…
+
+  input : [10]助けて！
+  output: [10]Help!
+
+### Round-trip parse check
+
+  parse_tagged_blocks(output, n=6) = ['Stop it! Don’t come here!!', '…… Are you okay?', 'That day, the world changed quietly.', 'Doooonnng!!', 'Senior, how about having lunch together?', 'Don’t act like that… I will never forgive you.']
+
+  parse ok? yes

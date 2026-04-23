@@ -1,0 +1,370 @@
+{
+  "images": [
+    [
+      {
+        "ocrText": "九州ラーメンの差",
+        "originalLanguage": "ja",
+        "minX": 1453,
+        "minY": 776,
+        "maxX": 1485,
+        "maxY": 909,
+        "background": "<data-url stripped, 3351 chars>",
+        "fontHeightPx": 12,
+        "fontColor": "#000000",
+        "fontStrokeColor": "#FFFFFF",
+        "zIndex": 14,
+        "translatedText": "The difference between Kyushu ramen…",
+        "subtextBoxes": [],
+        "textRegions": [
+          {
+            "minX": 1453,
+            "minY": 777,
+            "maxX": 1485,
+            "maxY": 908
+          }
+        ],
+        "confidence": 0.5954122543334961,
+        "ocrTimeMs": 2651.52,
+        "translateTimeMs": 2651.52
+      },
+      {
+        "ocrText": "たかだか双飯器にこんなにも感激するなんて",
+        "originalLanguage": "ja",
+        "minX": 1451,
+        "minY": 458,
+        "maxX": 1538,
+        "maxY": 578,
+        "background": "<data-url stripped, 7299 chars>",
+        "fontHeightPx": 12,
+        "fontColor": "#000000",
+        "fontStrokeColor": "#FFFFFF",
+        "zIndex": 8,
+        "translatedText": "To be able to feel such emotions just because of something as simple as a pair of rice bowls…",
+        "subtextBoxes": [],
+        "textRegions": [
+          {
+            "minX": 1451,
+            "minY": 459,
+            "maxX": 1538,
+            "maxY": 577
+          }
+        ],
+        "confidence": 0.9648606777191162,
+        "ocrTimeMs": 2651.52,
+        "translateTimeMs": 2651.52
+      },
+      {
+        "ocrText": "あたしって実家にいた時はつくづく万事を母さんにまかせっきりだったのね",
+        "originalLanguage": "ja",
+        "minX": 1414,
+        "minY": 91,
+        "maxX": 1544,
+        "maxY": 211,
+        "background": "<data-url stripped, 11095 chars>",
+        "fontHeightPx": 12,
+        "fontColor": "#000000",
+        "fontStrokeColor": "#FFFFFF",
+        "zIndex": 2,
+        "translatedText": "When I was still living with my parents, I really relied on my mother to take care of everything.",
+        "subtextBoxes": [],
+        "textRegions": [
+          {
+            "minX": 1415,
+            "minY": 92,
+            "maxX": 1543,
+            "maxY": 210
+          }
+        ],
+        "confidence": 0.9721813201904297,
+        "ocrTimeMs": 2651.52,
+        "translateTimeMs": 2651.52
+      },
+      {
+        "ocrText": "冷蔵庫とかテレビとか買ったら気ィ変になるんじゃなかろうか",
+        "originalLanguage": "ja",
+        "minX": 1261,
+        "minY": 520,
+        "maxX": 1370,
+        "maxY": 671,
+        "background": "<data-url stripped, 9251 chars>",
+        "fontHeightPx": 12,
+        "fontColor": "#000000",
+        "fontStrokeColor": "#FFFFFF",
+        "zIndex": 1,
+        "translatedText": "I guess buying a refrigerator or a TV might change my mood somehow, right?",
+        "subtextBoxes": [],
+        "textRegions": [
+          {
+            "minX": 1262,
+            "minY": 521,
+            "maxX": 1369,
+            "maxY": 670
+          }
+        ],
+        "confidence": 0.9614443778991699,
+        "ocrTimeMs": 2651.52,
+        "translateTimeMs": 2651.52
+      },
+      {
+        "ocrText": "しかしあたしなんだってラーメンをおかずにしてるんだろう",
+        "originalLanguage": "ja",
+        "minX": 1123,
+        "minY": 453,
+        "maxX": 1215,
+        "maxY": 590,
+        "background": "<data-url stripped, 8463 chars>",
+        "fontHeightPx": 14,
+        "fontColor": "#000000",
+        "fontStrokeColor": "#FFFFFF",
+        "zIndex": 6,
+        "translatedText": "But I guess they serve the ramen as a side dish, right?",
+        "subtextBoxes": [],
+        "textRegions": [
+          {
+            "minX": 1123,
+            "minY": 454,
+            "maxX": 1215,
+            "maxY": 589
+          }
+        ],
+        "confidence": 0.9668128490447998,
+        "ocrTimeMs": 2651.52,
+        "translateTimeMs": 2651.52
+      },
+      {
+        "ocrText": "うまかっちゃんはうまかはい!!",
+        "originalLanguage": "ja",
+        "minX": 1016,
+        "minY": 950,
+        "maxX": 1061,
+        "maxY": 1081,
+        "background": "<data-url stripped, 5147 chars>",
+        "fontHeightPx": 13,
+        "fontColor": "#000000",
+        "fontStrokeColor": "#FFFFFF",
+        "zIndex": 10,
+        "translatedText": "Umaicha is really good!!",
+        "subtextBoxes": [],
+        "textRegions": [
+          {
+            "minX": 1016,
+            "minY": 951,
+            "maxX": 1061,
+            "maxY": 1080
+          }
+        ],
+        "confidence": 0.9170324802398682,
+        "ocrTimeMs": 2651.52,
+        "translateTimeMs": 2651.52
+      },
+      {
+        "ocrText": "でもラーメン入っておいしいんだもん",
+        "originalLanguage": "ja",
+        "minX": 932,
+        "minY": 630,
+        "maxX": 1007,
+        "maxY": 699,
+        "background": "<data-url stripped, 4183 chars>",
+        "fontHeightPx": 12,
+        "fontColor": "#000000",
+        "fontStrokeColor": "#FFFFFF",
+        "zIndex": 11,
+        "translatedText": "But the ramen is delicious, isn’t it?",
+        "subtextBoxes": [],
+        "textRegions": [
+          {
+            "minX": 932,
+            "minY": 630,
+            "maxX": 1007,
+            "maxY": 699
+          }
+        ],
+        "confidence": 0.8335771560668945,
+        "ocrTimeMs": 2651.52,
+        "translateTimeMs": 2651.52
+      },
+      {
+        "ocrText": "もうラーメンからはなれられない体質になってたりして",
+        "originalLanguage": "ja",
+        "minX": 915,
+        "minY": 454,
+        "maxX": 1001,
+        "maxY": 627,
+        "background": "<data-url stripped, 8715 chars>",
+        "fontHeightPx": 12,
+        "fontColor": "#000000",
+        "fontStrokeColor": "#FFFFFF",
+        "zIndex": 4,
+        "translatedText": "It seems like I’ve become so conditioned that I can no longer get rid of my love for ramen.",
+        "subtextBoxes": [],
+        "textRegions": [
+          {
+            "minX": 915,
+            "minY": 455,
+            "maxX": 1001,
+            "maxY": 626
+          }
+        ],
+        "confidence": 0.9638845920562744,
+        "ocrTimeMs": 2651.52,
+        "translateTimeMs": 2651.52
+      },
+      {
+        "ocrText": "働き者の母親を持つと娘はなーんもできなくなるって本当だなあ",
+        "originalLanguage": "ja",
+        "minX": 910,
+        "minY": 94,
+        "maxX": 1021,
+        "maxY": 230,
+        "background": "<data-url stripped, 9663 chars>",
+        "fontHeightPx": 12,
+        "fontColor": "#000000",
+        "fontStrokeColor": "#FFFFFF",
+        "zIndex": 3,
+        "translatedText": "It’s true that when a daughter has a working mother, she can’t do anything at all.",
+        "subtextBoxes": [],
+        "textRegions": [
+          {
+            "minX": 911,
+            "minY": 95,
+            "maxX": 1020,
+            "maxY": 229
+          }
+        ],
+        "confidence": 0.97998046875,
+        "ocrTimeMs": 2651.52,
+        "translateTimeMs": 2651.52
+      },
+      {
+        "ocrText": "しかしいいバイトってなかなかめっかんないもんだちゃ..",
+        "originalLanguage": "ja",
+        "minX": 626,
+        "minY": 94,
+        "maxX": 736,
+        "maxY": 224,
+        "background": "<data-url stripped, 8923 chars>",
+        "fontHeightPx": 15,
+        "fontColor": "#000000",
+        "fontStrokeColor": "#FFFFFF",
+        "zIndex": 5,
+        "translatedText": "But good part-time jobs are quite hard to find, you know…",
+        "subtextBoxes": [],
+        "textRegions": [
+          {
+            "minX": 627,
+            "minY": 95,
+            "maxX": 735,
+            "maxY": 223
+          }
+        ],
+        "confidence": 0.9648606777191162,
+        "ocrTimeMs": 2651.52,
+        "translateTimeMs": 2651.52
+      },
+      {
+        "ocrText": "でもあんなまぐれはもう一生ない気もする..",
+        "originalLanguage": "ja",
+        "minX": 520,
+        "minY": 368,
+        "maxX": 608,
+        "maxY": 503,
+        "background": "<data-url stripped, 6331 chars>",
+        "fontHeightPx": 12,
+        "fontColor": "#000000",
+        "fontStrokeColor": "#FFFFFF",
+        "zIndex": 7,
+        "translatedText": "But it seems like such a fluke won’t happen again in my lifetime…",
+        "subtextBoxes": [],
+        "textRegions": [
+          {
+            "minX": 520,
+            "minY": 369,
+            "maxX": 608,
+            "maxY": 502
+          }
+        ],
+        "confidence": 0.9716796875,
+        "ocrTimeMs": 2651.52,
+        "translateTimeMs": 2651.52
+      },
+      {
+        "ocrText": "またパチンコやろうかな",
+        "originalLanguage": "ja",
+        "minX": 519,
+        "minY": 92,
+        "maxX": 585,
+        "maxY": 189,
+        "background": "<data-url stripped, 4607 chars>",
+        "fontHeightPx": 12,
+        "fontColor": "#000000",
+        "fontStrokeColor": "#FFFFFF",
+        "zIndex": 9,
+        "translatedText": "Or maybe I should play pinball instead.",
+        "subtextBoxes": [],
+        "textRegions": [
+          {
+            "minX": 519,
+            "minY": 92,
+            "maxX": 585,
+            "maxY": 189
+          }
+        ],
+        "confidence": 0.9648606777191162,
+        "ocrTimeMs": 2651.52,
+        "translateTimeMs": 2651.52
+      },
+      {
+        "ocrText": "あ麻美さんそれ",
+        "originalLanguage": "ja",
+        "minX": 297,
+        "minY": 107,
+        "maxX": 346,
+        "maxY": 212,
+        "background": "<data-url stripped, 3607 chars>",
+        "fontHeightPx": 21,
+        "fontColor": "#000000",
+        "fontStrokeColor": "#FFFFFF",
+        "zIndex": 12,
+        "translatedText": "Ah, Mamie-san.",
+        "subtextBoxes": [],
+        "textRegions": [
+          {
+            "minX": 297,
+            "minY": 108,
+            "maxX": 346,
+            "maxY": 211
+          }
+        ],
+        "confidence": 0.9633965492248535,
+        "ocrTimeMs": 2651.52,
+        "translateTimeMs": 2651.52
+      },
+      {
+        "ocrText": "実家からの手紙...?",
+        "originalLanguage": "ja",
+        "minX": 103,
+        "minY": 123,
+        "maxX": 155,
+        "maxY": 216,
+        "background": "<data-url stripped, 3991 chars>",
+        "fontHeightPx": 12,
+        "fontColor": "#000000",
+        "fontStrokeColor": "#FFFFFF",
+        "zIndex": 13,
+        "translatedText": "Letters from my parents’ home…?",
+        "subtextBoxes": [],
+        "textRegions": [
+          {
+            "minX": 103,
+            "minY": 123,
+            "maxX": 155,
+            "maxY": 216
+          }
+        ],
+        "confidence": 0.9619324207305908,
+        "ocrTimeMs": 2651.52,
+        "translateTimeMs": 2651.52
+      }
+    ]
+  ]
+}
