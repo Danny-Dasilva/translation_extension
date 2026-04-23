@@ -1,0 +1,19 @@
+{
+  "image": "animetext_1003104.jpg",
+  "detect_ms": 581.5608501434326,
+  "num_blocks": 3,
+  "num_text_lines": 6,
+  "ocr_ms": 3127.0058155059814,
+  "inpaint_ms": 6512.4671459198,
+  "translate_ms": 28869.70019340515,
+  "ocr_samples": [
+    "よーむううう!何してるのよっ誰か!誰かー!",
+    "あわわ",
+    "あ...これ癖になっちゃいます.."
+  ],
+  "translations": [
+    "Yomuuu! What are you doing? Someone! Someone!",
+    "Ah, waaah.",
+    "Ah… this becomes a habit for me."
+  ]
+}
