@@ -1,0 +1,25 @@
+{
+  "image": "animetext_1018271.jpg",
+  "detect_ms": 537.5292301177979,
+  "num_blocks": 6,
+  "num_text_lines": 7,
+  "ocr_ms": 3682.4145317077637,
+  "inpaint_ms": 9983.353853225708,
+  "translate_ms": 6546.730279922485,
+  "ocr_samples": [
+    "おあ!?タイミングでそれ言う!?",
+    "ぱくっ",
+    "きだよ",
+    "いいからー",
+    "...一・。...。。。...。...。...。。",
+    "おあ"
+  ],
+  "translations": [
+    "Oh!? Why would you say that at that moment?!",
+    "Puck!",
+    "It’s okay.",
+    "It’s fine.",
+    "……one… …….. …….. ……..",
+    "Oh."
+  ]
+}
