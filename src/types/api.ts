@@ -50,6 +50,13 @@ export interface TranslateResponse {
   success?: boolean;
   session_id?: string;
   images: TextBox[][];
+  /**
+   * Optional per-image inpainted "plate" image (base64 data URL or raw base64 PNG).
+   * When present, the frontend may use it as the background behind translated text
+   * instead of masking the original image with white rectangles.
+   * Index aligns with `images[]`.
+   */
+  inpainted_image_base64?: (string | null)[];
   debug?: {
     timing?: DebugTiming;
     total_ms?: number;
