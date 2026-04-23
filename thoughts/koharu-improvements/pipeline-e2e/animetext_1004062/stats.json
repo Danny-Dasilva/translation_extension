@@ -1,0 +1,27 @@
+{
+  "image": "animetext_1004062.jpg",
+  "detect_ms": 593.886137008667,
+  "num_blocks": 8,
+  "num_text_lines": 13,
+  "ocr_ms": 9891.815423965454,
+  "inpaint_ms": 21901.552200317383,
+  "translate_ms": 60488.23952674866,
+  "ocr_samples": [
+    "下がれ!",
+    "そうですね",
+    "あっちよ",
+    "ひゃぁっ!?",
+    "お姉ちゃんあの人...悪い人なんでしょうか...?",
+    "さあ...なでも何かあった時はアリスを護らなきゃ..",
+    "消えた...・?"
+  ],
+  "translations": [
+    "Get down!",
+    "Yes, sir.",
+    "Over there.",
+    "Ahhh!?",
+    "Sister, is that person... a bad person, maybe?",
+    "Well... but if anything happens, I need to protect Alice.",
+    "It disappeared...・?"
+  ]
+}
