@@ -1,0 +1,17 @@
+{
+  "image": "animetext_1008118.jpg",
+  "detect_ms": 643.1417465209961,
+  "num_blocks": 3,
+  "num_text_lines": 3,
+  "ocr_ms": 1703.885793685913,
+  "inpaint_ms": 2441.6120052337646,
+  "translate_ms": 21113.53349685669,
+  "ocr_samples": [
+    "ザ",
+    "白居町"
+  ],
+  "translations": [
+    "ザ",
+    "白居町"
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "image": "animetext_1008225.jpg",
+  "detect_ms": 567.8796768188477,
+  "num_blocks": 4,
+  "num_text_lines": 12,
+  "ocr_ms": 5104.333162307739,
+  "inpaint_ms": 12662.863492965698,
+  "translate_ms": 58568.58491897583,
+  "ocr_samples": [
+    "ううう..よもや今頃になってあの黒歴史を逆されるとは..",
+    "罰ゲーム!",
+    "こんなのってないよ!",
+    "なら"
+  ],
+  "translations": [
+    "Uuuuuh.. Who would have thought that, at this moment, I would be faced with having to deal with those black memories all over again..",
+    "Punish game!",
+    "There’s no such thing as this!",
+    "Then…"
+  ]
+}
