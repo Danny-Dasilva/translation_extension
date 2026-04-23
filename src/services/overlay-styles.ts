@@ -1,16 +1,39 @@
 /**
- * Inline CSS styles for overlay (Shadow DOM)
- * This avoids issues with loading external CSS files
+ * Inline CSS styles for overlay (Shadow DOM).
+ *
+ * Also contains a lightweight `@import` for two open-license comic-style
+ * Google Fonts (Bangers, Fredoka) so the canvas font-family fallback chain
+ * has real families to resolve. Fonts are also link-injected at runtime
+ * from OverlayRenderer for environments where this stylesheet isn't
+ * reached (e.g., canvas rendering runs before shadow DOM attaches).
+ *
+ *   Bangers:  https://fonts.google.com/specimen/Bangers   (OFL)
+ *   Fredoka:  https://fonts.google.com/specimen/Fredoka   (OFL)
  */
 
 export const OVERLAY_STYLES = `
+/* Pull in open-license comic/display fonts for the canvas fallback chain. */
+@import url('https://fonts.googleapis.com/css2?family=Bangers&family=Fredoka:wght@400;600&display=swap');
+
+/* Local fallback font-face — lets Chrome resolve "Bangers" even if the
+   external stylesheet is blocked. Uses the same Google-hosted font file. */
+@font-face {
+  font-family: 'Bangers';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: local('Bangers'),
+       url('https://fonts.gstatic.com/s/bangers/v24/FeVQS0BTqb0h60ACL5la2bxii28.woff2') format('woff2');
+}
+
 /* Shadow DOM styles for manga translation overlay */
 :host {
   all: initial;
   display: block;
 }
 
-.manga-translator-container {
+.manga-translator-container,
+.manga-translator-overlay {
   position: absolute;
   pointer-events: none;
   z-index: 999999;
@@ -29,15 +52,78 @@ export const OVERLAY_STYLES = `
   padding: 2px;
 }
 
+/* The DOM overlay layer sits over the canvas and hosts per-box affordances. */
+.manga-translator-box-layer {
+  position: absolute;
+  pointer-events: none;
+}
+
+.manga-translator-box {
+  position: absolute;
+  pointer-events: auto;
+  border: 1px dashed transparent;
+  transition: border-color 120ms ease-out, background-color 120ms ease-out;
+  box-sizing: border-box;
+}
+
+.manga-translator-box:hover,
+.manga-translator-box:focus-within {
+  border-color: rgba(74, 144, 226, 0.9);
+  background-color: rgba(74, 144, 226, 0.07);
+}
+
+.manga-translator-box .manga-translator-retry-btn {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 14px;
+  line-height: 22px;
+  text-align: center;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: auto;
+  transition: opacity 120ms ease-out, background-color 120ms ease-out;
+}
+
+.manga-translator-box:hover .manga-translator-retry-btn,
+.manga-translator-box:focus-within .manga-translator-retry-btn {
+  opacity: 1;
+}
+
+.manga-translator-box .manga-translator-retry-btn:hover {
+  background: rgba(74, 144, 226, 0.95);
+}
+
+.manga-translator-edit-textarea {
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  resize: none;
+  border: 2px dashed #4a90e2;
+  background: rgba(255, 255, 255, 0.92);
+  color: #111;
+  padding: 4px;
+  font-family: 'Fredoka', 'Noto Sans', Arial, sans-serif;
+  font-size: 14px;
+}
+
 .manga-translator-text-box-text {
   display: block;
   width: 100%;
-  text-shadow: 
+  text-shadow:
     -1px -1px 0 var(--stroke-color),
     1px -1px 0 var(--stroke-color),
     -1px 1px 0 var(--stroke-color),
     1px 1px 0 var(--stroke-color);
   font-weight: bold;
+  font-family: 'Bangers', 'Fredoka', 'Noto Sans', Arial, sans-serif;
 }
 
 .manga-translator-loading {

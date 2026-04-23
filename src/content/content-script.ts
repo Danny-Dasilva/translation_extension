@@ -16,11 +16,77 @@ class MangaTranslatorContent {
   private resizeObserver: ResizeObserver | null = null;
   private intersectionObserver: IntersectionObserver | null = null;
   private isEnabled: boolean = false;
+  /** True while user is holding Alt (temporary "show original" peek). */
+  private altHeld: boolean = false;
+  /** True when overlay is toggled off via toolbar / hotkey tap (not Alt-held). */
+  private overlayHidden: boolean = false;
 
   constructor() {
     this.imageDetector = new ImageDetector();
     this.overlayRenderer = new OverlayRenderer();
+    this.setupAltPeekHotkey();
+    this.setupEditEventListeners();
     this.initialize();
+  }
+
+  /**
+   * Alt-hold "peek at original" hotkey.
+   * Holding Alt sets overlay opacity to 0 (show original underneath).
+   * Release restores to 0.95. Does not fire when typing in an input
+   * (we only toggle when the event target is not an editable element).
+   */
+  private setupAltPeekHotkey(): void {
+    const isEditable = (t: EventTarget | null): boolean => {
+      if (!(t instanceof HTMLElement)) return false;
+      const tag = t.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
+      if (t.isContentEditable) return true;
+      if (t.classList.contains('manga-translator-edit-textarea')) return true;
+      return false;
+    };
+
+    window.addEventListener('keydown', (e) => {
+      if (e.key !== 'Alt') return;
+      if (this.altHeld) return;
+      if (isEditable(e.target)) return;
+      this.altHeld = true;
+      this.overlayRenderer.setOverlayOpacity(0);
+    }, true);
+
+    window.addEventListener('keyup', (e) => {
+      if (e.key !== 'Alt') return;
+      if (!this.altHeld) return;
+      this.altHeld = false;
+      // Restore to 1.0 unless user has toggled the overlay off separately.
+      this.overlayRenderer.setOverlayOpacity(this.overlayHidden ? 0 : 1);
+    }, true);
+
+    // Safety: if the tab loses focus while Alt is held, restore opacity.
+    window.addEventListener('blur', () => {
+      if (this.altHeld) {
+        this.altHeld = false;
+        this.overlayRenderer.setOverlayOpacity(this.overlayHidden ? 0 : 1);
+      }
+    });
+  }
+
+  /**
+   * Listen for retry/edit events dispatched by per-box DOM overlays.
+   * Currently we only log — full wiring (re-translate via backend) lands
+   * in a future integration step.
+   */
+  private setupEditEventListeners(): void {
+    document.addEventListener('manga-translator:retry-box', (e) => {
+      const detail = (e as CustomEvent).detail;
+      console.log('[Manga Translator] retry-box requested:', detail);
+      // TODO: call apiClient to re-translate just this box, then re-render.
+    });
+
+    document.addEventListener('manga-translator:edit-box', (e) => {
+      const detail = (e as CustomEvent).detail;
+      console.log('[Manga Translator] edit-box committed:', detail);
+      // TODO: patch the rendered canvas locally with the new text.
+    });
   }
 
   /**
@@ -177,12 +243,17 @@ class MangaTranslatorContent {
       for (let i = 0; i < batch.length; i++) {
         const { element } = batch[i];
         const textBoxes = response.images[i] || [];
+        // Optional: per-image inpainted plate from the LaMa service.
+        // Feature-flag is implicit — renderer uses plate only if present.
+        const inpaintedPlate =
+          (response as any).inpainted_image_base64?.[i] ?? null;
 
         if (textBoxes.length > 0) {
           await this.overlayRenderer.createOverlay(
             element as HTMLImageElement | HTMLCanvasElement,
             textBoxes,
-            settings.showDebugInfo
+            settings.showDebugInfo,
+            inpaintedPlate
           );
 
           // Monitor canvas for changes
@@ -298,6 +369,13 @@ class MangaTranslatorContent {
           this.stop();
         }
         sendResponse({ success: true, enabled: this.isEnabled });
+        break;
+
+      case 'toggleOverlay':
+        // Toolbar-driven "show original" toggle (persists until toggled again).
+        this.overlayHidden = !this.overlayHidden;
+        this.overlayRenderer.setOverlayOpacity(this.overlayHidden ? 0 : 1);
+        sendResponse({ success: true, hidden: this.overlayHidden });
         break;
 
       default:
