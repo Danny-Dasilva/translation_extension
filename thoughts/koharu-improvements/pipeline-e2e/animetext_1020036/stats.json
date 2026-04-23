@@ -1,0 +1,19 @@
+{
+  "image": "animetext_1020036.jpg",
+  "detect_ms": 582.3507308959961,
+  "num_blocks": 3,
+  "num_text_lines": 6,
+  "ocr_ms": 2966.632843017578,
+  "inpaint_ms": 6360.166072845459,
+  "translate_ms": 3338.444709777832,
+  "ocr_samples": [
+    "軽吉部",
+    "女ナん土創布誌ンヘミー",
+    "加詠後"
+  ],
+  "translations": [
+    "Karakihe",
+    "Female Nann Tsuchou Shobushin Hehmi",
+    "Added after singing"
+  ]
+}
