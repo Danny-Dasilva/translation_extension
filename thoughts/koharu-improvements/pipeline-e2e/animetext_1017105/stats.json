@@ -1,0 +1,17 @@
+{
+  "image": "animetext_1017105.jpg",
+  "detect_ms": 527.83203125,
+  "num_blocks": 2,
+  "num_text_lines": 8,
+  "ocr_ms": 3304.7029972076416,
+  "inpaint_ms": 10287.710189819336,
+  "translate_ms": 4466.254711151123,
+  "ocr_samples": [
+    "!!その声は・キュウちゃん!!",
+    "それは解化寸前よ!!早く始末しないとまずいわ!!"
+  ],
+  "translations": [
+    "!!That voice is from Kyu-chan!!",
+    "She’s about to explode!! We need to get rid of her before it gets worse!!"
+  ]
+}
