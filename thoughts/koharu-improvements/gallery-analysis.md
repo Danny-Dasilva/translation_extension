@@ -1,196 +1,41 @@
 # Pipeline e2e gallery — aggregate analysis
 
-**Gallery size:** 163 images
-**Total blocks detected:** 829  (avg 5.1/page)
-**Total text lines:** 1769
+**Gallery size:** 8 images
+**Total blocks detected:** 62  (avg 7.8/page)
+**Total text lines:** 199
 
 ## Stage latency (ms, CPU-only run)
 
 | Stage | p50 | p95 | mean | n |
 |---|---:|---:|---:|---:|
-| detect | 598 | 1076 | 669 | 163 |
-| ocr | 3055 | 16426 | 5228 | 163 |
-| inpaint | 10421 | 31703 | 12876 | 163 |
-| translate | 21114 | 82239 | 29177 | 149 |
+| detect | 731 | 1137 | 817 | 8 |
+| ocr | 4257 | 31865 | 10392 | 8 |
+| inpaint | 16736 | 70112 | 26531 | 8 |
+| translate | 28210 | 128629 | 58616 | 7 |
 
 ## Block count distribution
 
 - min: 0
-- median: 3
+- median: 6
 - max: 22
 
 ## Observed failure rates
 
 | Mode | Count | Rate | Instances |
 |---|---:|---:|---|
-| zero_detect | 8 | 4.9% | animetext_1001097, animetext_1003016, animetext_1007105, animetext_1018203, animetext_1019120 … |
-| raw_jp_fallback | 26 | 16.0% | animetext_1000269, animetext_1000391, animetext_1000413, animetext_1005089, animetext_1006016 … |
-| ocr_stuck | 5 | 3.1% | animetext_1000226, animetext_1003044, animetext_1003114, animetext_1018271, animetext_1178082 |
+| zero_detect | 1 | 12.5% | animetext_1104718 |
+| raw_jp_fallback | 1 | 12.5% | animetext_1134971 |
+| ocr_stuck | 1 | 12.5% | animetext_1178082 |
 
 ## Per-image bubble counts
 
 | Image | Blocks |
 |---|---:|
 | AisazuNihaIrarenai-003 | 15 |
-| animetext_1000011 | 13 |
-| animetext_1000072 | 8 |
-| animetext_1000136 | 3 |
-| animetext_1000226 | 2 |
-| animetext_1000269 | 7 |
-| animetext_1000375 | 5 |
-| animetext_1000391 | 5 |
-| animetext_1000413 | 11 |
-| animetext_1000427 | 8 |
-| animetext_1000453 | 11 |
-| animetext_1001097 | 0 |
-| animetext_1001104 | 1 |
-| animetext_1001105 | 2 |
-| animetext_1001150 | 4 |
-| animetext_1002113 | 3 |
-| animetext_1002116 | 5 |
-| animetext_1002204 | 1 |
-| animetext_1002292 | 6 |
-| animetext_1003016 | 0 |
-| animetext_1003044 | 2 |
-| animetext_1003104 | 3 |
-| animetext_1003114 | 7 |
 | animetext_1004023 | 7 |
-| animetext_1004039 | 8 |
-| animetext_1004062 | 8 |
-| animetext_1004065 | 12 |
-| animetext_1005036 | 1 |
-| animetext_1005043 | 3 |
-| animetext_1005053 | 10 |
-| animetext_1005089 | 1 |
-| animetext_1006016 | 3 |
-| animetext_1006041 | 6 |
-| animetext_1006052 | 4 |
-| animetext_1006070 | 1 |
-| animetext_1007105 | 0 |
-| animetext_1007108 | 3 |
-| animetext_1007114 | 1 |
-| animetext_1007196 | 2 |
-| animetext_1008037 | 4 |
-| animetext_1008118 | 3 |
-| animetext_1008223 | 6 |
-| animetext_1008225 | 4 |
-| animetext_1009022 | 12 |
-| animetext_1009073 | 3 |
-| animetext_1009075 | 8 |
-| animetext_1009101 | 2 |
-| animetext_1010002 | 8 |
-| animetext_1010060 | 13 |
-| animetext_1010062 | 14 |
-| animetext_1010179 | 1 |
-| animetext_1011001 | 3 |
-| animetext_1011012 | 4 |
-| animetext_1011056 | 1 |
-| animetext_1011072 | 11 |
-| animetext_1012018 | 1 |
-| animetext_1012039 | 2 |
-| animetext_1012040 | 2 |
-| animetext_1012046 | 14 |
-| animetext_1013095 | 1 |
-| animetext_1013103 | 4 |
-| animetext_1013188 | 5 |
-| animetext_1013203 | 13 |
-| animetext_1014031 | 13 |
-| animetext_1014106 | 1 |
-| animetext_1014160 | 1 |
-| animetext_1014165 | 7 |
-| animetext_1015008 | 2 |
-| animetext_1015012 | 2 |
-| animetext_1015068 | 9 |
-| animetext_1015084 | 8 |
-| animetext_1016165 | 5 |
-| animetext_1016176 | 4 |
-| animetext_1016216 | 2 |
-| animetext_1016223 | 2 |
-| animetext_1017020 | 1 |
-| animetext_1017087 | 2 |
-| animetext_1017100 | 2 |
-| animetext_1017105 | 2 |
-| animetext_1018203 | 0 |
-| animetext_1018216 | 17 |
-| animetext_1018257 | 2 |
-| animetext_1018271 | 6 |
-| animetext_1019019 | 2 |
-| animetext_1019080 | 17 |
-| animetext_1019120 | 0 |
-| animetext_1019155 | 5 |
-| animetext_1020025 | 2 |
-| animetext_1020036 | 3 |
-| animetext_1020065 | 4 |
-| animetext_1020107 | 6 |
-| animetext_1021008 | 3 |
-| animetext_1021020 | 4 |
-| animetext_1021070 | 1 |
-| animetext_1021094 | 0 |
-| animetext_1022093 | 6 |
-| animetext_1022144 | 11 |
-| animetext_1022147 | 9 |
-| animetext_1022149 | 10 |
-| animetext_1023012 | 5 |
-| animetext_1023044 | 9 |
-| animetext_1023138 | 2 |
-| animetext_1023141 | 6 |
-| animetext_1024066 | 3 |
-| animetext_1024086 | 9 |
-| animetext_1024140 | 1 |
-| animetext_1024197 | 7 |
-| animetext_1025002 | 3 |
-| animetext_1025053 | 1 |
-| animetext_1025218 | 1 |
-| animetext_1025226 | 3 |
-| animetext_1026014 | 0 |
-| animetext_1026021 | 14 |
-| animetext_1026037 | 17 |
-| animetext_1026073 | 9 |
-| animetext_1027061 | 3 |
-| animetext_1027099 | 1 |
-| animetext_1027150 | 1 |
-| animetext_1027178 | 2 |
-| animetext_1028088 | 2 |
-| animetext_1028094 | 5 |
-| animetext_1028174 | 6 |
-| animetext_1028248 | 7 |
 | animetext_1029004 | 22 |
-| animetext_1029043 | 8 |
-| animetext_1029109 | 8 |
-| animetext_1029121 | 7 |
-| animetext_1036053 | 4 |
-| animetext_1039745 | 4 |
-| animetext_1081878 | 3 |
-| animetext_1099099 | 3 |
-| animetext_1104598 | 3 |
 | animetext_1104718 | 0 |
-| animetext_1105107 | 1 |
-| animetext_1111191 | 1 |
 | animetext_1134971 | 6 |
-| animetext_1137752 | 3 |
-| animetext_1147215 | 6 |
 | animetext_1148788 | 7 |
-| animetext_1173904 | 13 |
 | animetext_1178082 | 2 |
-| animetext_1189390 | 3 |
-| animetext_1225347 | 6 |
-| animetext_1237113 | 14 |
-| animetext_1251286 | 9 |
-| animetext_1257125 | 5 |
-| animetext_1285388 | 1 |
-| animetext_1318337 | 9 |
-| animetext_1327736 | 2 |
-| animetext_1347000 | 1 |
-| animetext_1349618 | 2 |
-| animetext_1354458 | 2 |
-| animetext_1372777 | 2 |
-| animetext_1395951 | 3 |
-| animetext_1397388 | 8 |
-| animetext_1424183 | 3 |
-| animetext_1427603 | 7 |
-| animetext_1457982 | 3 |
-| animetext_1459164 | 1 |
-| animetext_1465722 | 2 |
 | de | 3 |
-| detection_v3_test | 13 |
-| segmentation_v3_test | 10 |

@@ -1,0 +1,43 @@
+# Large training data directories
+comic-text-detector/data/
+comic-text-detector/runs/
+comic-text-detector/models/
+comic-text-detector/outputs/
+
+# Binary files
+*.pt
+*.onnx
+*.ckpt
+*.zip
+*.tar
+
+# Image datasets  
+*.png
+*.jpg
+*.jpeg
+
+# Caches
+__pycache__
+.ruff_cache
+wandb/
+
+# Additional exclusions
+*.safetensors
+*.bin
+*.h5
+*.pth
+*.npy
+*.npz
+node_modules/
+.git/objects/
+*.log
+
+# ML training artifacts (massive dirs)
+**/runs/
+**/wandb/
+**/checkpoints/
+**/tensorboard/
+*.ckpt.step*
+
+# Huggingface cache
+.cache/huggingface/

@@ -1,0 +1,92 @@
+---
+session: dbnet-v7-training
+date: 2026-01-14
+status: partial
+outcome: PARTIAL_MINUS
+---
+
+goal: Fix DBNet training - V6 model had degenerate shrink map outputs due to wrong hyperparameters
+now: Monitor V7 training (epoch 21/100) - verify shrink map distribution after completion
+
+test: |
+  python scripts/generate_sample_annotation.py \
+    --image data/animetext_val/images/animetext_1000011.jpg \
+    --dbnet-model runs/detection_v7/best.pt \
+    --output outputs/sample_annotation_v7.png
+
+done_this_session:
+  - task: Investigated why V6 model was worse than original
+    files: [src/training/losses.py, src/inference/detector.py]
+  - task: Root cause analysis - V6 shrink map outputs near-zero (mean 0.075 vs V5's 0.35)
+    files: []
+  - task: Added fixed threshold option to inference detector
+    files: [src/inference/detector.py:595-625, src/inference/detector.py:809-815]
+  - task: Added distribution regularization to DBLoss to prevent shrink map collapse
+    files: [src/training/losses.py:216-316]
+  - task: Started V7 training with corrected params (lr=1e-4, workers=16)
+    files: [runs/detection_v7/]
+
+blockers:
+  - V7 training still in progress (epoch 21/100, ~8 hours remaining)
+
+questions:
+  - Will distribution regularization fix the shrink map collapse issue?
+  - Should we try training without --freeze-seg like V5 did?
+
+decisions:
+  - lr_1e-4: V5 used 1e-4, V6 used 1e-3 (10x too high) causing degenerate convergence
+  - workers_16: 24 workers caused RAM to climb to 83%, 16 workers stable at 52%
+  - distribution_reg: Added L1 penalty on shrink map mean deviation from target
+
+findings:
+  - v6_root_cause: |
+      V6 shrink map mean=0.075 vs V5 mean=0.35
+      V6 detected 7.2% pixels vs V5's 0.6% (12x over-detection)
+      Caused by lr=1e-3 being too aggressive, converging to degenerate solution
+  - v5_config: |
+      lr=0.0001, freeze_seg=False, epochs=50 (all completed)
+      Best loss 3.62 but better real-world performance than V6's 1.32
+  - memory_optimal: |
+      batch_size=48, workers=16 keeps RAM at ~52% (98GB/188GB)
+      workers=24 caused RAM to climb to 83% risking crash
+
+worked:
+  - Comparing checkpoint configs to identify training differences
+  - Analyzing raw model outputs (shrink/threshold map distributions)
+  - Using lower learning rate (1e-4 vs 1e-3)
+
+failed:
+  - Fixed threshold hack for V6 - shrink map itself is broken, can't fix at inference
+  - workers=24 with batch_size=48 - memory climbed to 83%
+
+next:
+  - Wait for V7 training to complete (currently epoch 21/100)
+  - After training, test V7 with sample annotation script
+  - Compare V7 shrink map distribution to V5 (should have mean ~0.35 not 0.075)
+  - If V7 still bad, try training without --freeze-seg (like V5)
+
+files:
+  created:
+    - thoughts/shared/handoffs/general/2026-01-14_16-54_dbnet-v7-training.yaml
+  modified:
+    - src/inference/detector.py  # Added use_adaptive_threshold and fixed_threshold params
+    - src/training/losses.py  # Added distribution regularization to DBLoss
+
+code_references:
+  inference_threshold_fix: src/inference/detector.py:595-625,809-815
+  loss_regularization: src/training/losses.py:233-242,299-313
+  v7_training_command: |
+    python scripts/train.py --mode detection --training-phase 2 \
+      --img-dirs data/animetext/images --ann-dirs data/animetext/annotations \
+      --val-img-dirs data/animetext_val/images --val-ann-dirs data/animetext_val/annotations \
+      --unet-weights runs/segmentation_v3/best.pt \
+      --epochs 100 --batch-size 48 --lr 1e-4 --workers 16 \
+      --save-dir runs/detection_v7 --no-wandb
+
+training_status:
+  task_id: b67dac1
+  current_epoch: 21
+  total_epochs: 100
+  loss: 1.49
+  speed: 3.58 it/s
+  eta: ~8 hours

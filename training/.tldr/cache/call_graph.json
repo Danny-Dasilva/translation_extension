@@ -1,0 +1,2996 @@
+{
+  "edges": [
+    {
+      "from_file": "comic-text-detector/scripts/visualize_comparison.py",
+      "from_func": "create_comparison_visualization",
+      "to_file": "comic-text-detector/scripts/visualize_comparison.py",
+      "to_func": "draw_mask_overlay"
+    },
+    {
+      "from_file": "comic-text-detector/inference.py",
+      "from_func": "model2annotations",
+      "to_file": "comic-text-detector/utils/io_utils.py",
+      "to_func": "find_all_imgs"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/compare_models.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/scripts/compare_models.py",
+      "to_func": "extract_blocks_from_reference"
+    },
+    {
+      "from_file": "comic-text-detector/src/training/losses.py",
+      "from_func": "create_loss",
+      "to_file": "comic-text-detector/src/training/losses.py",
+      "to_func": "BlockDetectionLoss"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_pipeline.py",
+      "from_func": "test_pipeline_initialization",
+      "to_file": "comic-text-detector/tests/test_pipeline.py",
+      "to_func": "mock_model"
+    },
+    {
+      "from_file": "comic-text-detector/utils/textblock.py",
+      "from_func": "aspect_ratio",
+      "to_file": "comic-text-detector/utils/textblock.py",
+      "to_func": "min_rect"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_v10_migration.py",
+      "from_func": "test_text_detector_with_all_options",
+      "to_file": "comic-text-detector/src/models/heads.py",
+      "to_func": "TextDetector"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_v10_migration.py",
+      "from_func": "exported_model_path",
+      "to_file": "comic-text-detector/tests/test_v10_migration.py",
+      "to_func": "model"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/export.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/scripts/export.py",
+      "to_func": "export_tensorrt"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_v10_migration.py",
+      "from_func": "test_nms_free_output",
+      "to_file": "comic-text-detector/tests/test_v10_migration.py",
+      "to_func": "model"
+    },
+    {
+      "from_file": "scripts/benchmark_animetext.py",
+      "from_func": "main",
+      "to_file": "scripts/benchmark_animetext.py",
+      "to_func": "generate_report"
+    },
+    {
+      "from_file": "comic-text-detector/src/utils/textblock.py",
+      "from_func": "merge_textlines",
+      "to_file": "comic-text-detector/src/utils/textblock.py",
+      "to_func": "TextBlock"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/export.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/scripts/export.py",
+      "to_func": "export_openvino"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/fast_annotations.py",
+      "from_func": "generate_annotations",
+      "to_file": "comic-text-detector/scripts/fast_annotations.py",
+      "to_func": "FastTextDetector"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/export.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/scripts/export.py",
+      "to_func": "export_onnx_v10"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_v10_migration.py",
+      "from_func": "test_cib_block_efficiency",
+      "to_file": "comic-text-detector/src/models/heads.py",
+      "to_func": "C2f"
+    },
+    {
+      "from_file": "comic-text-detector/src/models/detector.py",
+      "from_func": "get_base_det_models",
+      "to_file": "comic-text-detector/src/models/detector.py",
+      "to_func": "_resolve_backbone_name"
+    },
+    {
+      "from_file": "comic-text-detector/src/models/backbone.py",
+      "from_func": "<module>",
+      "to_file": "comic-text-detector/src/models/backbone.py",
+      "to_func": "create_backbone"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_v10_migration.py",
+      "from_func": "test_scdown_vs_strided_conv",
+      "to_file": "comic-text-detector/src/models/heads.py",
+      "to_func": "SCDown"
+    },
+    {
+      "from_file": "comic-text-detector/src/models/detector.py",
+      "from_func": "_fuse_conv_bn",
+      "to_file": "comic-text-detector/src/models/detector.py",
+      "to_func": "_fuse_conv_bn"
+    },
+    {
+      "from_file": "comic-text-detector/utils/yolov5_utils.py",
+      "from_func": "non_max_suppression",
+      "to_file": "comic-text-detector/utils/yolov5_utils.py",
+      "to_func": "box_iou"
+    },
+    {
+      "from_file": "comic-text-detector/src/utils/textblock.py",
+      "from_func": "group_output",
+      "to_file": "comic-text-detector/src/utils/textblock.py",
+      "to_func": "polygon_to_bbox"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_unified_training.py",
+      "from_func": "test_trainer_phase_transition",
+      "to_file": "comic-text-detector/src/training/losses.py",
+      "to_func": "UnifiedLoss"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_pipeline.py",
+      "from_func": "test_cache_initialization",
+      "to_file": "comic-text-detector/src/inference/output_cache.py",
+      "to_func": "PerceptualHashCache"
+    },
+    {
+      "from_file": "comic-text-detector/db_dataset.py",
+      "from_func": "augment",
+      "to_file": "comic-text-detector/utils/imgproc_utils.py",
+      "to_func": "rotate_polygons"
+    },
+    {
+      "from_file": "comic-text-detector/src/models/backbone.py",
+      "from_func": "create_backbone",
+      "to_file": "comic-text-detector/src/models/backbone.py",
+      "to_func": "YOLOv10BackboneSimple"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/generate_comparison.py",
+      "from_func": "annotate_image",
+      "to_file": "comic-text-detector/scripts/generate_comparison.py",
+      "to_func": "draw_mask"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_pipeline.py",
+      "from_func": "test_engine_config_defaults",
+      "to_file": "comic-text-detector/src/inference/tensorrt_backend.py",
+      "to_func": "TensorRTEngineConfig"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_pipeline.py",
+      "from_func": "<module>",
+      "to_file": "comic-text-detector/tests/test_pipeline.py",
+      "to_func": "_check_tensorrt_available"
+    },
+    {
+      "from_file": "comic-text-detector/db_dataset.py",
+      "from_func": "__init__",
+      "to_file": "comic-text-detector/db_dataset.py",
+      "to_func": "augment"
+    },
+    {
+      "from_file": "comic-text-detector/utils/general.py",
+      "from_func": "<module>",
+      "to_file": "comic-text-detector/utils/general.py",
+      "to_func": "set_logging"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_pipeline.py",
+      "from_func": "test_cache_clear",
+      "to_file": "comic-text-detector/src/inference/output_cache.py",
+      "to_func": "PerceptualHashCache"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/build_tensorrt.py",
+      "from_func": "_create_int8_calibrator",
+      "to_file": "comic-text-detector/scripts/build_tensorrt.py",
+      "to_func": "INT8Calibrator"
+    },
+    {
+      "from_file": "comic-text-detector/inference.py",
+      "from_func": "traverse_by_dict",
+      "to_file": "comic-text-detector/utils/textmask.py",
+      "to_func": "refine_mask"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_v10_migration.py",
+      "from_func": "test_onnx_output_count",
+      "to_file": "comic-text-detector/tests/test_v10_migration.py",
+      "to_func": "exported_model_path"
+    },
+    {
+      "from_file": "comic-text-detector/src/models/heads.py",
+      "from_func": "initialize_block_detector",
+      "to_file": "comic-text-detector/src/models/heads.py",
+      "to_func": "BlockDetector"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/generate_block_annotations.py",
+      "from_func": "<module>",
+      "to_file": "comic-text-detector/scripts/generate_block_annotations.py",
+      "to_func": "main"
+    },
+    {
+      "from_file": "comic-text-detector/utils/textmask.py",
+      "from_func": "get_otsuthresh_masklist",
+      "to_file": "comic-text-detector/utils/textmask.py",
+      "to_func": "minxor_thresh"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/visualize_comparison.py",
+      "from_func": "<module>",
+      "to_file": "comic-text-detector/scripts/visualize_comparison.py",
+      "to_func": "main"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/compare_models.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/scripts/compare_models.py",
+      "to_func": "load_reference_model"
+    },
+    {
+      "from_file": "comic-text-detector/seg_dataset.py",
+      "from_func": "__init__",
+      "to_file": "comic-text-detector/seg_dataset.py",
+      "to_func": "augment"
+    },
+    {
+      "from_file": "comic-text-detector/src/utils/textblock.py",
+      "from_func": "split_textblock",
+      "to_file": "comic-text-detector/src/utils/textblock.py",
+      "to_func": "examine_textblock"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_pipeline.py",
+      "from_func": "test_cache_get_or_compute",
+      "to_file": "comic-text-detector/tests/test_pipeline.py",
+      "to_func": "sample_images"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_v10_migration.py",
+      "from_func": "test_text_detector_with_all_options",
+      "to_file": "comic-text-detector/tests/test_v10_migration.py",
+      "to_func": "backbone"
+    },
+    {
+      "from_file": "comic-text-detector/inference.py",
+      "from_func": "model2annotations",
+      "to_file": "comic-text-detector/utils/imgproc_utils.py",
+      "to_func": "xyxy2yolo"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_pipeline.py",
+      "from_func": "test_cache_miss",
+      "to_file": "comic-text-detector/tests/test_pipeline.py",
+      "to_func": "sample_images"
+    },
+    {
+      "from_file": "comic-text-detector/src/utils/textblock.py",
+      "from_func": "group_output",
+      "to_file": "comic-text-detector/src/utils/textblock.py",
+      "to_func": "TextBlock"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/combined_inference.py",
+      "from_func": "load_combined_model",
+      "to_file": "comic-text-detector/src/models/backbone.py",
+      "to_func": "create_backbone"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/optimize_onnx.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/scripts/optimize_onnx.py",
+      "to_func": "optimize_onnx"
+    },
+    {
+      "from_file": "comic-text-detector/seg_dataset.py",
+      "from_func": "mini_mosaic",
+      "to_file": "comic-text-detector/seg_dataset.py",
+      "to_func": "load_image_mask"
+    },
+    {
+      "from_file": "comic-text-detector/seg_dataset.py",
+      "from_func": "augment",
+      "to_file": "comic-text-detector/utils/imgproc_utils.py",
+      "to_func": "letterbox"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/export.py",
+      "from_func": "load_models_for_export_v10",
+      "to_file": "comic-text-detector/scripts/export.py",
+      "to_func": "_extract_sub_state_dict"
+    },
+    {
+      "from_file": "comic-text-detector/utils/textblock.py",
+      "from_func": "min_rect",
+      "to_file": "comic-text-detector/utils/textblock.py",
+      "to_func": "center"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_pipeline.py",
+      "from_func": "test_cuda_graph_input_validation",
+      "to_file": "comic-text-detector/src/inference/cuda_graphs.py",
+      "to_func": "CUDAGraphInference"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/combined_inference.py",
+      "from_func": "load_combined_model",
+      "to_file": "comic-text-detector/src/models/heads.py",
+      "to_func": "TextDetectorInference"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/visualize_comparison.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/scripts/visualize_comparison.py",
+      "to_func": "draw_lines_overlay"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_v10_migration.py",
+      "from_func": "<module>",
+      "to_file": "comic-text-detector/tests/test_v10_migration.py",
+      "to_func": "_check_onnx_available"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_unified_training.py",
+      "from_func": "test_create_loss_unified_mode",
+      "to_file": "comic-text-detector/src/training/losses.py",
+      "to_func": "create_loss"
+    },
+    {
+      "from_file": "comic-text-detector/inference.py",
+      "from_func": "__init__",
+      "to_file": "comic-text-detector/basemodel.py",
+      "to_func": "TextDetBaseDNN"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_pipeline.py",
+      "from_func": "test_cache_put_and_get",
+      "to_file": "comic-text-detector/tests/test_pipeline.py",
+      "to_func": "sample_images"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_pipeline.py",
+      "from_func": "test_pipeline_with_cache",
+      "to_file": "comic-text-detector/src/inference/async_pipeline.py",
+      "to_func": "AsyncInferencePipeline"
+    },
+    {
+      "from_file": "comic-text-detector/src/training/losses.py",
+      "from_func": "__init__",
+      "to_file": "comic-text-detector/src/training/losses.py",
+      "to_func": "DBLoss"
+    },
+    {
+      "from_file": "scripts/benchmark_animetext.py",
+      "from_func": "main",
+      "to_file": "scripts/benchmark_animetext.py",
+      "to_func": "benchmark_onnx_runtime"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_pipeline.py",
+      "from_func": "mock_model_cuda",
+      "to_file": "comic-text-detector/tests/test_pipeline.py",
+      "to_func": "SimpleMockModel"
+    },
+    {
+      "from_file": "comic-text-detector/text_rendering.py",
+      "from_func": "render_comictext",
+      "to_file": "comic-text-detector/utils/io_utils.py",
+      "to_func": "find_all_imgs"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/combined_inference.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/scripts/combined_inference.py",
+      "to_func": "CombinedDetector"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/optimize_onnx.py",
+      "from_func": "fuse_silu_ops",
+      "to_file": "comic-text-detector/scripts/optimize_onnx.py",
+      "to_func": "find_silu_patterns"
+    },
+    {
+      "from_file": "comic-text-detector/utils/db_utils.py",
+      "from_func": "get_intersection_over_union",
+      "to_file": "comic-text-detector/utils/db_utils.py",
+      "to_func": "get_union"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_pipeline.py",
+      "from_func": "test_cache_clear",
+      "to_file": "comic-text-detector/tests/test_pipeline.py",
+      "to_func": "sample_images"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/benchmark_comparison.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/scripts/benchmark_comparison.py",
+      "to_func": "ComicTextDetector"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_v10_migration.py",
+      "from_func": "test_bifpn_integration",
+      "to_file": "comic-text-detector/src/models/heads.py",
+      "to_func": "EfficientBiFPN"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_pipeline.py",
+      "from_func": "test_cuda_graph_config",
+      "to_file": "comic-text-detector/src/inference/cuda_graphs.py",
+      "to_func": "CUDAGraphConfig"
+    },
+    {
+      "from_file": "comic-text-detector/db_dataset.py",
+      "from_func": "create_dataloader",
+      "to_file": "comic-text-detector/db_dataset.py",
+      "to_func": "LoadImageAndAnnotations"
+    },
+    {
+      "from_file": "comic-text-detector/src/utils/textblock.py",
+      "from_func": "group_output",
+      "to_file": "comic-text-detector/src/utils/textblock.py",
+      "to_func": "detect_language"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/generate_sample_annotation.py",
+      "from_func": "<module>",
+      "to_file": "comic-text-detector/scripts/generate_sample_annotation.py",
+      "to_func": "main"
+    },
+    {
+      "from_file": "scripts/benchmark_animetext.py",
+      "from_func": "benchmark_tensorrt_engine",
+      "to_file": "scripts/benchmark_animetext.py",
+      "to_func": "create_dummy_input"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/verify_pipeline_outputs.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/scripts/verify_pipeline_outputs.py",
+      "to_func": "compute_mask_similarity"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_pipeline.py",
+      "from_func": "test_cache_get_or_compute",
+      "to_file": "comic-text-detector/tests/test_pipeline.py",
+      "to_func": "compute_fn"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_pipeline.py",
+      "from_func": "<module>",
+      "to_file": "comic-text-detector/tests/test_pipeline.py",
+      "to_func": "_check_cuda_available"
+    },
+    {
+      "from_file": "scripts/benchmark_animetext.py",
+      "from_func": "main",
+      "to_file": "scripts/benchmark_animetext.py",
+      "to_func": "benchmark_tensorrt_engine"
+    },
+    {
+      "from_file": "comic-text-detector/utils/loss.py",
+      "from_func": "__init__",
+      "to_file": "comic-text-detector/utils/loss.py",
+      "to_func": "DiceLoss"
+    },
+    {
+      "from_file": "comic-text-detector/src/models/detector.py",
+      "from_func": "get_base_det_models",
+      "to_file": "comic-text-detector/src/models/heads.py",
+      "to_func": "DBHead"
+    },
+    {
+      "from_file": "comic-text-detector/src/utils/textblock.py",
+      "from_func": "group_output",
+      "to_file": "comic-text-detector/src/utils/textblock.py",
+      "to_func": "extract_colors"
+    },
+    {
+      "from_file": "comic-text-detector/src/models/detector.py",
+      "from_func": "get_base_det_models",
+      "to_file": "comic-text-detector/src/models/detector.py",
+      "to_func": "_extract_sub_state_dict"
+    },
+    {
+      "from_file": "scripts/test_all_phases.py",
+      "from_func": "<module>",
+      "to_file": "scripts/test_all_phases.py",
+      "to_func": "main"
+    },
+    {
+      "from_file": "scripts/benchmark_animetext.py",
+      "from_func": "benchmark_pytorch",
+      "to_file": "scripts/benchmark_animetext.py",
+      "to_func": "calculate_statistics"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_v10_migration.py",
+      "from_func": "test_cib_block_efficiency",
+      "to_file": "comic-text-detector/src/models/heads.py",
+      "to_func": "C2fCIB"
+    },
+    {
+      "from_file": "comic-text-detector/db_dataset.py",
+      "from_func": "create_dataloader",
+      "to_file": "comic-text-detector/db_dataset.py",
+      "to_func": "db_val_collate_fn"
+    },
+    {
+      "from_file": "comic-text-detector/src/inference/detector.py",
+      "from_func": "_load_pytorch",
+      "to_file": "comic-text-detector/src/inference/detector.py",
+      "to_func": "strip_compile_prefix"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_v10_migration.py",
+      "from_func": "test_export_no_nms_nodes",
+      "to_file": "comic-text-detector/tests/test_v10_migration.py",
+      "to_func": "model"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_v10_migration.py",
+      "from_func": "model",
+      "to_file": "comic-text-detector/src/models/backbone.py",
+      "to_func": "create_backbone"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/verify_pipeline_outputs.py",
+      "from_func": "visualize_comparison",
+      "to_file": "comic-text-detector/scripts/verify_pipeline_outputs.py",
+      "to_func": "extract_boxes_from_blk"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_pipeline.py",
+      "from_func": "test_create_cache_factory",
+      "to_file": "comic-text-detector/src/inference/output_cache.py",
+      "to_func": "create_cache"
+    },
+    {
+      "from_file": "comic-text-detector/inference.py",
+      "from_func": "__call__",
+      "to_file": "comic-text-detector/inference.py",
+      "to_func": "postprocess_mask"
+    },
+    {
+      "from_file": "comic-text-detector/src/inference/detector.py",
+      "from_func": "_load_dbnet",
+      "to_file": "comic-text-detector/src/models/detector.py",
+      "to_func": "create_text_detector"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_v10_migration.py",
+      "from_func": "model",
+      "to_file": "comic-text-detector/src/models/heads.py",
+      "to_func": "TextDetector"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_pipeline.py",
+      "from_func": "test_cuda_graph_inference",
+      "to_file": "comic-text-detector/src/inference/cuda_graphs.py",
+      "to_func": "CUDAGraphInference"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_v10_migration.py",
+      "from_func": "test_channel_dimensions",
+      "to_file": "comic-text-detector/tests/test_v10_migration.py",
+      "to_func": "backbone"
+    },
+    {
+      "from_file": "comic-text-detector/utils/textblock.py",
+      "from_func": "__init__",
+      "to_file": "comic-text-detector/utils/textblock.py",
+      "to_func": "target_lang"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_pipeline.py",
+      "from_func": "test_pipeline_context_manager",
+      "to_file": "comic-text-detector/tests/test_pipeline.py",
+      "to_func": "mock_model"
+    },
+    {
+      "from_file": "comic-text-detector/db_dataset.py",
+      "from_func": "create_dataloader",
+      "to_file": "comic-text-detector/db_dataset.py",
+      "to_func": "augment"
+    },
+    {
+      "from_file": "comic-text-detector/seg_dataset.py",
+      "from_func": "__getitem__",
+      "to_file": "comic-text-detector/seg_dataset.py",
+      "to_func": "load_image_mask"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/combined_inference.py",
+      "from_func": "<module>",
+      "to_file": "comic-text-detector/scripts/combined_inference.py",
+      "to_func": "main"
+    },
+    {
+      "from_file": "comic-text-detector/src/models/detector.py",
+      "from_func": "create_text_detector",
+      "to_file": "comic-text-detector/src/models/backbone.py",
+      "to_func": "create_backbone"
+    },
+    {
+      "from_file": "comic-text-detector/db_dataset.py",
+      "from_func": "load_image_annotations",
+      "to_file": "comic-text-detector/utils/imgproc_utils.py",
+      "to_func": "resize_keepasp"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/generate_line_annotations.py",
+      "from_func": "<module>",
+      "to_file": "comic-text-detector/scripts/generate_line_annotations.py",
+      "to_func": "main"
+    },
+    {
+      "from_file": "comic-text-detector/train_seg.py",
+      "from_func": "train",
+      "to_file": "comic-text-detector/seg_dataset.py",
+      "to_func": "create_dataloader"
+    },
+    {
+      "from_file": "scripts/benchmark_animetext.py",
+      "from_func": "main",
+      "to_file": "scripts/benchmark_animetext.py",
+      "to_func": "get_device_info"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/export.py",
+      "from_func": "load_models_for_export_v10",
+      "to_file": "comic-text-detector/src/models/backbone.py",
+      "to_func": "create_backbone"
+    },
+    {
+      "from_file": "comic-text-detector/utils/weight_init.py",
+      "from_func": "init_weights",
+      "to_file": "comic-text-detector/utils/weight_init.py",
+      "to_func": "constant_init"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_v10_migration.py",
+      "from_func": "test_block_detector_inference_output",
+      "to_file": "comic-text-detector/src/models/heads.py",
+      "to_func": "BlockDetector"
+    },
+    {
+      "from_file": "comic-text-detector/utils/textblock.py",
+      "from_func": "group_output",
+      "to_file": "comic-text-detector/utils/textblock.py",
+      "to_func": "sort_textblk_list"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/compare_models.py",
+      "from_func": "<module>",
+      "to_file": "comic-text-detector/scripts/compare_models.py",
+      "to_func": "main"
+    },
+    {
+      "from_file": "comic-text-detector/src/inference/tensorrt_backend.py",
+      "from_func": "<module>",
+      "to_file": "comic-text-detector/src/inference/tensorrt_backend.py",
+      "to_func": "_check_tensorrt"
+    },
+    {
+      "from_file": "comic-text-detector/src/training/losses.py",
+      "from_func": "_compute_single_head_loss",
+      "to_file": "comic-text-detector/src/training/losses.py",
+      "to_func": "xywh_to_xyxy"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_unified_training.py",
+      "from_func": "test_trainer_creates_differential_optimizer",
+      "to_file": "comic-text-detector/src/training/losses.py",
+      "to_func": "UnifiedLoss"
+    },
+    {
+      "from_file": "comic-text-detector/utils/textmask.py",
+      "from_func": "refine_mask",
+      "to_file": "comic-text-detector/utils/imgproc_utils.py",
+      "to_func": "expand_textwindow"
+    },
+    {
+      "from_file": "comic-text-detector/utils/yolov5_utils.py",
+      "from_func": "non_max_suppression",
+      "to_file": "comic-text-detector/utils/yolov5_utils.py",
+      "to_func": "xywh2xyxy"
+    },
+    {
+      "from_file": "comic-text-detector/src/inference/detector.py",
+      "from_func": "_process_single",
+      "to_file": "comic-text-detector/utils/textblock.py",
+      "to_func": "group_output"
+    },
+    {
+      "from_file": "comic-text-detector/text_rendering.py",
+      "from_func": "drawtext_one_page",
+      "to_file": "comic-text-detector/text_rendering.py",
+      "to_func": "get_max_var_color"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/quantize.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/scripts/quantize.py",
+      "to_func": "quantize_int8_static"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/export.py",
+      "from_func": "load_models_for_export_v10",
+      "to_file": "comic-text-detector/scripts/export.py",
+      "to_func": "_normalize_state_dict"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_pipeline.py",
+      "from_func": "test_cuda_graph_wrapper",
+      "to_file": "comic-text-detector/src/inference/cuda_graphs.py",
+      "to_func": "CUDAGraphWrapper"
+    },
+    {
+      "from_file": "comic-text-detector/db_dataset.py",
+      "from_func": "<module>",
+      "to_file": "comic-text-detector/db_dataset.py",
+      "to_func": "augment"
+    },
+    {
+      "from_file": "comic-text-detector/train_db.py",
+      "from_func": "train",
+      "to_file": "comic-text-detector/utils/loss.py",
+      "to_func": "DBLoss"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_pipeline.py",
+      "from_func": "test_cache_miss",
+      "to_file": "comic-text-detector/src/inference/output_cache.py",
+      "to_func": "PerceptualHashCache"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_pipeline.py",
+      "from_func": "test_cuda_graph_benchmark",
+      "to_file": "comic-text-detector/tests/test_pipeline.py",
+      "to_func": "mock_model_cuda"
+    },
+    {
+      "from_file": "comic-text-detector/basemodel.py",
+      "from_func": "get_base_det_models",
+      "to_file": "comic-text-detector/basemodel.py",
+      "to_func": "DBHead"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_pipeline.py",
+      "from_func": "test_streaming_pipeline_inheritance",
+      "to_file": "comic-text-detector/src/inference/async_pipeline.py",
+      "to_func": "StreamingInferencePipeline"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/visualize_comparison.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/scripts/visualize_comparison.py",
+      "to_func": "ensure_ctd_model"
+    },
+    {
+      "from_file": "comic-text-detector/src/utils/textblock.py",
+      "from_func": "group_output",
+      "to_file": "comic-text-detector/src/utils/textblock.py",
+      "to_func": "split_textblock"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/generate_comparison.py",
+      "from_func": "<module>",
+      "to_file": "comic-text-detector/scripts/generate_comparison.py",
+      "to_func": "main"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/export.py",
+      "from_func": "load_models_for_export",
+      "to_file": "comic-text-detector/src/models/heads.py",
+      "to_func": "DBHead"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/combined_inference.py",
+      "from_func": "load_combined_model",
+      "to_file": "comic-text-detector/scripts/combined_inference.py",
+      "to_func": "normalize_state_dict"
+    },
+    {
+      "from_file": "comic-text-detector/basemodel.py",
+      "from_func": "fuse",
+      "to_file": "comic-text-detector/utils/yolov5_utils.py",
+      "to_func": "fuse_conv_and_bn"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_v10_migration.py",
+      "from_func": "model",
+      "to_file": "comic-text-detector/tests/test_v10_migration.py",
+      "to_func": "backbone"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_v10_migration.py",
+      "from_func": "test_cib_forward_shape",
+      "to_file": "comic-text-detector/src/models/heads.py",
+      "to_func": "CIB"
+    },
+    {
+      "from_file": "comic-text-detector/seg_dataset.py",
+      "from_func": "<module>",
+      "to_file": "comic-text-detector/seg_dataset.py",
+      "to_func": "augment"
+    },
+    {
+      "from_file": "comic-text-detector/src/inference/cuda_graphs.py",
+      "from_func": "<module>",
+      "to_file": "comic-text-detector/src/inference/cuda_graphs.py",
+      "to_func": "_check_cuda_available"
+    },
+    {
+      "from_file": "comic-text-detector/utils/db_utils.py",
+      "from_func": "draw_border_map",
+      "to_file": "comic-text-detector/utils/db_utils.py",
+      "to_func": "distance"
+    },
+    {
+      "from_file": "comic-text-detector/utils/textblock.py",
+      "from_func": "__init__",
+      "to_file": "comic-text-detector/utils/textblock.py",
+      "to_func": "alignment"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/combined_inference.py",
+      "from_func": "load_combined_model",
+      "to_file": "comic-text-detector/src/models/heads.py",
+      "to_func": "DBHead"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_pipeline.py",
+      "from_func": "test_pipeline_with_cache",
+      "to_file": "comic-text-detector/tests/test_pipeline.py",
+      "to_func": "cached_inference"
+    },
+    {
+      "from_file": "comic-text-detector/src/inference/compiled_model.py",
+      "from_func": "<module>",
+      "to_file": "comic-text-detector/src/inference/compiled_model.py",
+      "to_func": "_check_openvino"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/prepare_animetext.py",
+      "from_func": "process_sample",
+      "to_file": "comic-text-detector/scripts/prepare_animetext.py",
+      "to_func": "get_pil"
+    },
+    {
+      "from_file": "comic-text-detector/text_rendering.py",
+      "from_func": "drawtext_one_page",
+      "to_file": "comic-text-detector/text_rendering.py",
+      "to_func": "lang2cls"
+    },
+    {
+      "from_file": "comic-text-detector/train_db.py",
+      "from_func": "train",
+      "to_file": "comic-text-detector/train_db.py",
+      "to_func": "one_cycle"
+    },
+    {
+      "from_file": "comic-text-detector/db_dataset.py",
+      "from_func": "__init__",
+      "to_file": "comic-text-detector/db_dataset.py",
+      "to_func": "load_image_annotations"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/verify_pipeline_outputs.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/scripts/verify_pipeline_outputs.py",
+      "to_func": "run_original_model"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/visualize_comparison.py",
+      "from_func": "create_comparison_visualization",
+      "to_file": "comic-text-detector/scripts/visualize_comparison.py",
+      "to_func": "draw_boxes"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/visualize_comparison.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/scripts/visualize_comparison.py",
+      "to_func": "postprocess_yolo_boxes"
+    },
+    {
+      "from_file": "comic-text-detector/src/inference/async_pipeline.py",
+      "from_func": "create_pipeline",
+      "to_file": "comic-text-detector/src/inference/async_pipeline.py",
+      "to_func": "StreamingInferencePipeline"
+    },
+    {
+      "from_file": "comic-text-detector/src/models/detector.py",
+      "from_func": "create_text_detector",
+      "to_file": "comic-text-detector/src/models/heads.py",
+      "to_func": "TextDetector"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_pipeline.py",
+      "from_func": "test_cache_get_or_compute",
+      "to_file": "comic-text-detector/src/inference/output_cache.py",
+      "to_func": "PerceptualHashCache"
+    },
+    {
+      "from_file": "comic-text-detector/utils/textmask.py",
+      "from_func": "get_topk_masklist",
+      "to_file": "comic-text-detector/utils/textmask.py",
+      "to_func": "get_topk_color"
+    },
+    {
+      "from_file": "comic-text-detector/basemodel.py",
+      "from_func": "_fuse",
+      "to_file": "comic-text-detector/utils/yolov5_utils.py",
+      "to_func": "fuse_conv_and_bn"
+    },
+    {
+      "from_file": "comic-text-detector/src/models/detector.py",
+      "from_func": "get_base_det_models",
+      "to_file": "comic-text-detector/src/models/detector.py",
+      "to_func": "_normalize_state_dict"
+    },
+    {
+      "from_file": "comic-text-detector/utils/textmask.py",
+      "from_func": "refine_undetected_mask",
+      "to_file": "comic-text-detector/utils/imgproc_utils.py",
+      "to_func": "union_area"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/train.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/scripts/train.py",
+      "to_func": "parse_args"
+    },
+    {
+      "from_file": "comic-text-detector/inference.py",
+      "from_func": "__call__",
+      "to_file": "comic-text-detector/utils/textblock.py",
+      "to_func": "group_output"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/verify_pipeline_outputs.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/scripts/verify_pipeline_outputs.py",
+      "to_func": "run_our_pipeline"
+    },
+    {
+      "from_file": "comic-text-detector/src/inference/async_pipeline.py",
+      "from_func": "create_pipeline",
+      "to_file": "comic-text-detector/src/inference/async_pipeline.py",
+      "to_func": "AsyncInferencePipeline"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/compare_models.py",
+      "from_func": "load_yolo26_model",
+      "to_file": "comic-text-detector/src/inference/detector.py",
+      "to_func": "TextDetector"
+    },
+    {
+      "from_file": "comic-text-detector/models/yolov5/yolo.py",
+      "from_func": "__init__",
+      "to_file": "comic-text-detector/models/yolov5/yolo.py",
+      "to_func": "parse_model"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/test_generation.py",
+      "from_func": "load_model",
+      "to_file": "comic-text-detector/src/models/detector.py",
+      "to_func": "create_text_detector"
+    },
+    {
+      "from_file": "comic-text-detector/inference.py",
+      "from_func": "__call__",
+      "to_file": "comic-text-detector/inference.py",
+      "to_func": "preprocess_img"
+    },
+    {
+      "from_file": "comic-text-detector/src/inference/output_cache.py",
+      "from_func": "put",
+      "to_file": "comic-text-detector/src/inference/output_cache.py",
+      "to_func": "CacheEntry"
+    },
+    {
+      "from_file": "comic-text-detector/src/models/backbone.py",
+      "from_func": "create_backbone",
+      "to_file": "comic-text-detector/src/models/backbone.py",
+      "to_func": "YOLOv10Backbone"
+    },
+    {
+      "from_file": "comic-text-detector/src/training/trainer.py",
+      "from_func": "apply_gradient_checkpointing",
+      "to_file": "comic-text-detector/src/training/trainer.py",
+      "to_func": "GradientCheckpointedModel"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_v10_migration.py",
+      "from_func": "test_block_detector_training_output",
+      "to_file": "comic-text-detector/src/models/heads.py",
+      "to_func": "BlockDetector"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/benchmark.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/scripts/benchmark.py",
+      "to_func": "format_summary"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/verify_pipeline_outputs.py",
+      "from_func": "<module>",
+      "to_file": "comic-text-detector/scripts/verify_pipeline_outputs.py",
+      "to_func": "main"
+    },
+    {
+      "from_file": "comic-text-detector/src/inference/output_cache.py",
+      "from_func": "get_or_compute",
+      "to_file": "comic-text-detector/src/inference/output_cache.py",
+      "to_func": "CacheEntry"
+    },
+    {
+      "from_file": "comic-text-detector/inference.py",
+      "from_func": "__call__",
+      "to_file": "comic-text-detector/utils/textmask.py",
+      "to_func": "refine_mask"
+    },
+    {
+      "from_file": "comic-text-detector/train_db.py",
+      "from_func": "train",
+      "to_file": "comic-text-detector/utils/general.py",
+      "to_func": "Loggers"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/evaluate_vs_gt.py",
+      "from_func": "<module>",
+      "to_file": "comic-text-detector/scripts/evaluate_vs_gt.py",
+      "to_func": "main"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/export.py",
+      "from_func": "<module>",
+      "to_file": "comic-text-detector/scripts/export.py",
+      "to_func": "main"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_pipeline.py",
+      "from_func": "test_cache_put_and_get",
+      "to_file": "comic-text-detector/src/inference/output_cache.py",
+      "to_func": "PerceptualHashCache"
+    },
+    {
+      "from_file": "comic-text-detector/db_dataset.py",
+      "from_func": "__init__",
+      "to_file": "comic-text-detector/utils/db_utils.py",
+      "to_func": "MakeShrinkMap"
+    },
+    {
+      "from_file": "comic-text-detector/src/training/trainer.py",
+      "from_func": "_setup_training_phase",
+      "to_file": "comic-text-detector/src/training/trainer.py",
+      "to_func": "get_backbone"
+    },
+    {
+      "from_file": "comic-text-detector/utils/db_utils.py",
+      "from_func": "unclip",
+      "to_file": "comic-text-detector/utils/db_utils.py",
+      "to_func": "distance"
+    },
+    {
+      "from_file": "comic-text-detector/src/utils/textblock.py",
+      "from_func": "split_textblock",
+      "to_file": "comic-text-detector/src/utils/textblock.py",
+      "to_func": "TextBlock"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/benchmark_comparison.py",
+      "from_func": "run_benchmark",
+      "to_file": "comic-text-detector/scripts/benchmark_comparison.py",
+      "to_func": "BenchmarkResult"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/test_generation.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/scripts/test_generation.py",
+      "to_func": "postprocess_mask"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_v10_migration.py",
+      "from_func": "test_rank_guided_decoder_integration",
+      "to_file": "comic-text-detector/src/models/heads.py",
+      "to_func": "RankGuidedDecoder"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_pipeline.py",
+      "from_func": "test_pipeline_with_cache",
+      "to_file": "comic-text-detector/tests/test_pipeline.py",
+      "to_func": "sample_images"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/visualize_trained.py",
+      "from_func": "<module>",
+      "to_file": "comic-text-detector/scripts/visualize_trained.py",
+      "to_func": "main"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/benchmark_comparison.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/scripts/benchmark_comparison.py",
+      "to_func": "print_comparison_table"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/visualize_comparison.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/scripts/visualize_comparison.py",
+      "to_func": "postprocess_mayocream_blocks"
+    },
+    {
+      "from_file": "comic-text-detector/train_seg.py",
+      "from_func": "train",
+      "to_file": "comic-text-detector/train_seg.py",
+      "to_func": "eval_model"
+    },
+    {
+      "from_file": "comic-text-detector/db_dataset.py",
+      "from_func": "mini_mosaic",
+      "to_file": "comic-text-detector/db_dataset.py",
+      "to_func": "load_image_annotations"
+    },
+    {
+      "from_file": "comic-text-detector/src/utils/textblock.py",
+      "from_func": "examine_textblock",
+      "to_file": "comic-text-detector/src/utils/textblock.py",
+      "to_func": "center"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/generate_sample_annotation.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/scripts/generate_sample_annotation.py",
+      "to_func": "create_3panel_visualization"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/combined_inference.py",
+      "from_func": "load_combined_model",
+      "to_file": "comic-text-detector/src/models/heads.py",
+      "to_func": "BlockDetector"
+    },
+    {
+      "from_file": "comic-text-detector/utils/weight_init.py",
+      "from_func": "init_weights",
+      "to_file": "comic-text-detector/utils/weight_init.py",
+      "to_func": "kaiming_init"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/generate_comparison.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/scripts/generate_comparison.py",
+      "to_func": "annotate_image"
+    },
+    {
+      "from_file": "comic-text-detector/src/models/detector.py",
+      "from_func": "fuse",
+      "to_file": "comic-text-detector/src/models/detector.py",
+      "to_func": "_fuse_conv_bn"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/build_tensorrt.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/scripts/build_tensorrt.py",
+      "to_func": "build_for_multiple_resolutions"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/visualize_comparison.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/scripts/visualize_comparison.py",
+      "to_func": "ensure_animetext_model"
+    },
+    {
+      "from_file": "comic-text-detector/basemodel.py",
+      "from_func": "fuse",
+      "to_file": "comic-text-detector/basemodel.py",
+      "to_func": "_fuse"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/validate.py",
+      "from_func": "<module>",
+      "to_file": "comic-text-detector/scripts/validate.py",
+      "to_func": "main"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/build_tensorrt.py",
+      "from_func": "<module>",
+      "to_file": "comic-text-detector/scripts/build_tensorrt.py",
+      "to_func": "main"
+    },
+    {
+      "from_file": "comic-text-detector/seg_dataset.py",
+      "from_func": "create_dataloader",
+      "to_file": "comic-text-detector/seg_dataset.py",
+      "to_func": "augment"
+    },
+    {
+      "from_file": "comic-text-detector/utils/textmask.py",
+      "from_func": "refine_mask",
+      "to_file": "comic-text-detector/utils/textmask.py",
+      "to_func": "get_topk_masklist"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/evaluate_vs_gt.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/scripts/evaluate_vs_gt.py",
+      "to_func": "load_ground_truth"
+    },
+    {
+      "from_file": "comic-text-detector/inference.py",
+      "from_func": "model2annotations",
+      "to_file": "comic-text-detector/utils/io_utils.py",
+      "to_func": "imwrite"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/benchmark_comparison.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/scripts/benchmark_comparison.py",
+      "to_func": "run_benchmark"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/merge_datasets.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/scripts/merge_datasets.py",
+      "to_func": "verify_annotations"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_pipeline.py",
+      "from_func": "test_content_hash_cache",
+      "to_file": "comic-text-detector/tests/test_pipeline.py",
+      "to_func": "compute_fn"
+    },
+    {
+      "from_file": "comic-text-detector/inference.py",
+      "from_func": "traverse_by_dict",
+      "to_file": "comic-text-detector/utils/textblock.py",
+      "to_func": "visualize_textblocks"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_pipeline.py",
+      "from_func": "test_streaming_pipeline_inheritance",
+      "to_file": "comic-text-detector/tests/test_pipeline.py",
+      "to_func": "mock_model"
+    },
+    {
+      "from_file": "comic-text-detector/utils/textblock.py",
+      "from_func": "group_output",
+      "to_file": "comic-text-detector/utils/imgproc_utils.py",
+      "to_func": "union_area"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/test_generation.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/scripts/test_generation.py",
+      "to_func": "load_model"
+    },
+    {
+      "from_file": "comic-text-detector/src/inference/async_pipeline.py",
+      "from_func": "process_images_direct",
+      "to_file": "comic-text-detector/src/inference/async_pipeline.py",
+      "to_func": "PipelineItem"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/build_tensorrt.py",
+      "from_func": "_create_trt_logger",
+      "to_file": "comic-text-detector/scripts/build_tensorrt.py",
+      "to_func": "TRTLogger"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/optimize_onnx.py",
+      "from_func": "optimize_onnx",
+      "to_file": "comic-text-detector/scripts/optimize_onnx.py",
+      "to_func": "analyze_model"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_pipeline.py",
+      "from_func": "test_compile_modes",
+      "to_file": "comic-text-detector/tests/test_pipeline.py",
+      "to_func": "SimpleMockModel"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/benchmark.py",
+      "from_func": "save_results",
+      "to_file": "comic-text-detector/scripts/benchmark.py",
+      "to_func": "format_results_table"
+    },
+    {
+      "from_file": "comic-text-detector/src/models/detector.py",
+      "from_func": "get_base_det_models",
+      "to_file": "comic-text-detector/src/models/heads.py",
+      "to_func": "UnetHead"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/visualize_trained.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/scripts/visualize_trained.py",
+      "to_func": "visualize_result"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_pipeline.py",
+      "from_func": "test_cuda_graph_pool",
+      "to_file": "comic-text-detector/tests/test_pipeline.py",
+      "to_func": "mock_model_cuda"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_pipeline.py",
+      "from_func": "<module>",
+      "to_file": "comic-text-detector/tests/test_pipeline.py",
+      "to_func": "_check_imagehash_available"
+    },
+    {
+      "from_file": "comic-text-detector/inference.py",
+      "from_func": "__call__",
+      "to_file": "comic-text-detector/utils/textmask.py",
+      "to_func": "refine_undetected_mask"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_unified_training.py",
+      "from_func": "test_create_loss_unified_with_weights",
+      "to_file": "comic-text-detector/src/training/losses.py",
+      "to_func": "create_loss"
+    },
+    {
+      "from_file": "comic-text-detector/basemodel.py",
+      "from_func": "initialize_db",
+      "to_file": "comic-text-detector/basemodel.py",
+      "to_func": "DBHead"
+    },
+    {
+      "from_file": "comic-text-detector/inference.py",
+      "from_func": "<module>",
+      "to_file": "comic-text-detector/inference.py",
+      "to_func": "model2annotations"
+    },
+    {
+      "from_file": "comic-text-detector/src/inference/detector.py",
+      "from_func": "_load_tensorrt",
+      "to_file": "comic-text-detector/src/inference/tensorrt_backend.py",
+      "to_func": "TensorRTEngine"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/generate_sample_annotation.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/scripts/generate_sample_annotation.py",
+      "to_func": "draw_textblocks"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/optimize_onnx.py",
+      "from_func": "optimize_onnx",
+      "to_file": "comic-text-detector/scripts/optimize_onnx.py",
+      "to_func": "print_analysis"
+    },
+    {
+      "from_file": "comic-text-detector/src/inference/detector.py",
+      "from_func": "_load_tensorrt",
+      "to_file": "comic-text-detector/src/inference/tensorrt_backend.py",
+      "to_func": "TensorRTEngineConfig"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/visualize_comparison.py",
+      "from_func": "create_comparison_visualization",
+      "to_file": "comic-text-detector/scripts/visualize_comparison.py",
+      "to_func": "draw_lines_overlay"
+    },
+    {
+      "from_file": "comic-text-detector/src/inference/cuda_graphs.py",
+      "from_func": "__call__",
+      "to_file": "comic-text-detector/src/inference/cuda_graphs.py",
+      "to_func": "CUDAGraphInference"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_pipeline.py",
+      "from_func": "test_cuda_graph_benchmark",
+      "to_file": "comic-text-detector/src/inference/cuda_graphs.py",
+      "to_func": "benchmark_cuda_graphs"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/test_generation.py",
+      "from_func": "<module>",
+      "to_file": "comic-text-detector/scripts/test_generation.py",
+      "to_func": "main"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_unified_training.py",
+      "from_func": "test_unified_loss_returns_loss_dict",
+      "to_file": "comic-text-detector/src/training/losses.py",
+      "to_func": "UnifiedLoss"
+    },
+    {
+      "from_file": "comic-text-detector/src/inference/detector.py",
+      "from_func": "_load_pytorch",
+      "to_file": "comic-text-detector/src/models/detector.py",
+      "to_func": "create_text_detector"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/benchmark.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/scripts/benchmark.py",
+      "to_func": "save_results"
+    },
+    {
+      "from_file": "comic-text-detector/train_db.py",
+      "from_func": "train",
+      "to_file": "comic-text-detector/basemodel.py",
+      "to_func": "TextDetector"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/compare_models.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/scripts/compare_models.py",
+      "to_func": "draw_comparison"
+    },
+    {
+      "from_file": "comic-text-detector/src/inference/tensorrt_backend.py",
+      "from_func": "<module>",
+      "to_file": "comic-text-detector/src/inference/tensorrt_backend.py",
+      "to_func": "_check_torch_cuda"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/evaluate_vs_gt.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/scripts/evaluate_vs_gt.py",
+      "to_func": "draw_evaluation"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/optimize_onnx.py",
+      "from_func": "optimize_onnx",
+      "to_file": "comic-text-detector/scripts/optimize_onnx.py",
+      "to_func": "fuse_silu_ops"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/export.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/scripts/export.py",
+      "to_func": "export_onnx"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/benchmark.py",
+      "from_func": "run_benchmark",
+      "to_file": "comic-text-detector/scripts/benchmark.py",
+      "to_func": "BenchmarkResult"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/compare_models.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/scripts/compare_models.py",
+      "to_func": "match_detections"
+    },
+    {
+      "from_file": "comic-text-detector/db_dataset.py",
+      "from_func": "<module>",
+      "to_file": "comic-text-detector/db_dataset.py",
+      "to_func": "create_dataloader"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_pipeline.py",
+      "from_func": "test_compile_pytorch_model",
+      "to_file": "comic-text-detector/tests/test_pipeline.py",
+      "to_func": "mock_model_cuda"
+    },
+    {
+      "from_file": "comic-text-detector/seg_dataset.py",
+      "from_func": "augment",
+      "to_file": "comic-text-detector/seg_dataset.py",
+      "to_func": "augment_hsv"
+    },
+    {
+      "from_file": "comic-text-detector/src/utils/textblock.py",
+      "from_func": "group_output",
+      "to_file": "comic-text-detector/src/utils/textblock.py",
+      "to_func": "intersection_area"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/export.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/scripts/export.py",
+      "to_func": "load_models_for_export"
+    },
+    {
+      "from_file": "comic-text-detector/seg_dataset.py",
+      "from_func": "<module>",
+      "to_file": "comic-text-detector/seg_dataset.py",
+      "to_func": "create_dataloader"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/generate_comparison.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/scripts/generate_comparison.py",
+      "to_func": "run_tensorrt_inference"
+    },
+    {
+      "from_file": "comic-text-detector/utils/export.py",
+      "from_func": "export_onnx",
+      "to_file": "comic-text-detector/utils/export.py",
+      "to_func": "SiLU"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_v10_migration.py",
+      "from_func": "backbone",
+      "to_file": "comic-text-detector/src/models/backbone.py",
+      "to_func": "create_backbone"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/export.py",
+      "from_func": "load_models_for_export",
+      "to_file": "comic-text-detector/scripts/export.py",
+      "to_func": "_normalize_state_dict"
+    },
+    {
+      "from_file": "comic-text-detector/utils/textblock.py",
+      "from_func": "group_output",
+      "to_file": "comic-text-detector/utils/textblock.py",
+      "to_func": "merge_textlines"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/compare_models.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/scripts/compare_models.py",
+      "to_func": "run_reference_inference"
+    },
+    {
+      "from_file": "comic-text-detector/src/training/losses.py",
+      "from_func": "__init__",
+      "to_file": "comic-text-detector/src/training/losses.py",
+      "to_func": "DualAssignmentLoss"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/export.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/scripts/export.py",
+      "to_func": "ExportableModel"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/prepare_animetext.py",
+      "from_func": "process_sample",
+      "to_file": "comic-text-detector/scripts/prepare_animetext.py",
+      "to_func": "normalized_to_xyxy"
+    },
+    {
+      "from_file": "comic-text-detector/src/training/losses.py",
+      "from_func": "create_loss",
+      "to_file": "comic-text-detector/src/training/losses.py",
+      "to_func": "SegmentationLoss"
+    },
+    {
+      "from_file": "comic-text-detector/text_rendering.py",
+      "from_func": "render_comictext",
+      "to_file": "comic-text-detector/utils/io_utils.py",
+      "to_func": "imwrite"
+    },
+    {
+      "from_file": "comic-text-detector/models/yolov5/yolo.py",
+      "from_func": "load_yolov5_ckpt",
+      "to_file": "comic-text-detector/models/yolov5/yolo.py",
+      "to_func": "Model"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/benchmark_comparison.py",
+      "from_func": "<module>",
+      "to_file": "comic-text-detector/scripts/benchmark_comparison.py",
+      "to_func": "main"
+    },
+    {
+      "from_file": "comic-text-detector/db_dataset.py",
+      "from_func": "augment",
+      "to_file": "comic-text-detector/seg_dataset.py",
+      "to_func": "augment_hsv"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_v10_migration.py",
+      "from_func": "test_onnx_output_count",
+      "to_file": "comic-text-detector/tests/test_v10_migration.py",
+      "to_func": "model"
+    },
+    {
+      "from_file": "comic-text-detector/db_dataset.py",
+      "from_func": "__getitem__",
+      "to_file": "comic-text-detector/db_dataset.py",
+      "to_func": "load_image_annotations"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_pipeline.py",
+      "from_func": "test_pipeline_with_cache",
+      "to_file": "comic-text-detector/src/inference/output_cache.py",
+      "to_func": "PerceptualHashCache"
+    },
+    {
+      "from_file": "comic-text-detector/basemodel.py",
+      "from_func": "get_base_det_models",
+      "to_file": "comic-text-detector/basemodel.py",
+      "to_func": "UnetHead"
+    },
+    {
+      "from_file": "comic-text-detector/models/yolov5/yolo.py",
+      "from_func": "load_yolov5_ckpt",
+      "to_file": "comic-text-detector/models/yolov5/yolo.py",
+      "to_func": "fuse"
+    },
+    {
+      "from_file": "comic-text-detector/inference.py",
+      "from_func": "__call__",
+      "to_file": "comic-text-detector/inference.py",
+      "to_func": "postprocess_yolo"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_v10_migration.py",
+      "from_func": "test_large_kernel_conv",
+      "to_file": "comic-text-detector/src/models/heads.py",
+      "to_func": "LargeKernelConv"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/export.py",
+      "from_func": "load_models_for_export",
+      "to_file": "comic-text-detector/src/models/heads.py",
+      "to_func": "UnetHead"
+    },
+    {
+      "from_file": "comic-text-detector/utils/textblock.py",
+      "from_func": "visualize_textblocks",
+      "to_file": "comic-text-detector/utils/textblock.py",
+      "to_func": "center"
+    },
+    {
+      "from_file": "comic-text-detector/utils/textmask.py",
+      "from_func": "refine_undetected_mask",
+      "to_file": "comic-text-detector/utils/textblock.py",
+      "to_func": "TextBlock"
+    },
+    {
+      "from_file": "comic-text-detector/inference.py",
+      "from_func": "postprocess_yolo",
+      "to_file": "comic-text-detector/utils/yolov5_utils.py",
+      "to_func": "non_max_suppression"
+    },
+    {
+      "from_file": "comic-text-detector/utils/textblock.py",
+      "from_func": "group_output",
+      "to_file": "comic-text-detector/utils/textblock.py",
+      "to_func": "split_textblk"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/build_tensorrt.py",
+      "from_func": "<module>",
+      "to_file": "comic-text-detector/scripts/build_tensorrt.py",
+      "to_func": "_check_tensorrt"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/test_generation.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/scripts/test_generation.py",
+      "to_func": "preprocess_image"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_pipeline.py",
+      "from_func": "test_pipeline_initialization",
+      "to_file": "comic-text-detector/src/inference/async_pipeline.py",
+      "to_func": "AsyncInferencePipeline"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_v10_migration.py",
+      "from_func": "test_psa_forward_shape",
+      "to_file": "comic-text-detector/src/models/heads.py",
+      "to_func": "PSA"
+    },
+    {
+      "from_file": "comic-text-detector/utils/loss.py",
+      "from_func": "__init__",
+      "to_file": "comic-text-detector/utils/loss.py",
+      "to_func": "MaskL1Loss"
+    },
+    {
+      "from_file": "comic-text-detector/seg_dataset.py",
+      "from_func": "create_dataloader",
+      "to_file": "comic-text-detector/seg_dataset.py",
+      "to_func": "LoadImageAndMask"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/build_tensorrt.py",
+      "from_func": "build_for_multiple_resolutions",
+      "to_file": "comic-text-detector/scripts/build_tensorrt.py",
+      "to_func": "TensorRTBuilder"
+    },
+    {
+      "from_file": "comic-text-detector/src/inference/detector.py",
+      "from_func": "__init__",
+      "to_file": "comic-text-detector/src/inference/detector.py",
+      "to_func": "TextDetector"
+    },
+    {
+      "from_file": "comic-text-detector/src/training/trainer.py",
+      "from_func": "switch_phase",
+      "to_file": "comic-text-detector/src/training/trainer.py",
+      "to_func": "EMA"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_pipeline.py",
+      "from_func": "test_tensorrt_engine_with_onnx",
+      "to_file": "comic-text-detector/src/inference/tensorrt_backend.py",
+      "to_func": "TensorRTEngine"
+    },
+    {
+      "from_file": "comic-text-detector/utils/loss.py",
+      "from_func": "__init__",
+      "to_file": "comic-text-detector/utils/loss.py",
+      "to_func": "BalanceCrossEntropyLoss"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/quantize.py",
+      "from_func": "quantize_int8_static",
+      "to_file": "comic-text-detector/scripts/quantize.py",
+      "to_func": "ImageCalibrationReader"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_pipeline.py",
+      "from_func": "test_cuda_graph_pool",
+      "to_file": "comic-text-detector/src/inference/cuda_graphs.py",
+      "to_func": "CUDAGraphPool"
+    },
+    {
+      "from_file": "comic-text-detector/seg_dataset.py",
+      "from_func": "__getitem__",
+      "to_file": "comic-text-detector/utils/imgproc_utils.py",
+      "to_func": "letterbox"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/export.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/scripts/export.py",
+      "to_func": "parse_args"
+    },
+    {
+      "from_file": "comic-text-detector/inference.py",
+      "from_func": "__init__",
+      "to_file": "comic-text-detector/basemodel.py",
+      "to_func": "TextDetBase"
+    },
+    {
+      "from_file": "comic-text-detector/train_db.py",
+      "from_func": "train",
+      "to_file": "comic-text-detector/utils/db_utils.py",
+      "to_func": "SegDetectorRepresenter"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/generate_block_annotations.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/scripts/generate_block_annotations.py",
+      "to_func": "nms"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/export.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/scripts/export.py",
+      "to_func": "ExportableModelV10"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/inference.py",
+      "from_func": "<module>",
+      "to_file": "comic-text-detector/scripts/inference.py",
+      "to_func": "main"
+    },
+    {
+      "from_file": "comic-text-detector/train_db.py",
+      "from_func": "train",
+      "to_file": "comic-text-detector/db_dataset.py",
+      "to_func": "create_dataloader"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/quantize.py",
+      "from_func": "<module>",
+      "to_file": "comic-text-detector/scripts/quantize.py",
+      "to_func": "main"
+    },
+    {
+      "from_file": "comic-text-detector/src/inference/cuda_graphs.py",
+      "from_func": "__init__",
+      "to_file": "comic-text-detector/src/inference/cuda_graphs.py",
+      "to_func": "CUDAGraphConfig"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/generate_sample_annotation.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/src/inference/detector.py",
+      "to_func": "CombinedTextDetector"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/export.py",
+      "from_func": "load_models_for_export_v10",
+      "to_file": "comic-text-detector/scripts/export.py",
+      "to_func": "_is_detection_checkpoint"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/export.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/scripts/export.py",
+      "to_func": "load_models_for_export_v10"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/benchmark_comparison.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/scripts/benchmark_comparison.py",
+      "to_func": "AnimeTextYoloDetector"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/combined_inference.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/scripts/combined_inference.py",
+      "to_func": "visualize_result"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/visualize_comparison.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/scripts/visualize_comparison.py",
+      "to_func": "draw_boxes"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/visualize_comparison.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/scripts/visualize_comparison.py",
+      "to_func": "draw_mask_overlay"
+    },
+    {
+      "from_file": "comic-text-detector/utils/weight_init.py",
+      "from_func": "init_weights",
+      "to_file": "comic-text-detector/utils/weight_init.py",
+      "to_func": "xavier_init"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/test_generation.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/scripts/test_generation.py",
+      "to_func": "create_comparison_image"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_pipeline.py",
+      "from_func": "test_cache_lru_eviction",
+      "to_file": "comic-text-detector/src/inference/output_cache.py",
+      "to_func": "PerceptualHashCache"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_pipeline.py",
+      "from_func": "test_content_hash_cache",
+      "to_file": "comic-text-detector/tests/test_pipeline.py",
+      "to_func": "sample_images"
+    },
+    {
+      "from_file": "comic-text-detector/models/yolov5/yolo.py",
+      "from_func": "_forward_augment",
+      "to_file": "comic-text-detector/utils/yolov5_utils.py",
+      "to_func": "scale_img"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_v10_migration.py",
+      "from_func": "test_block_detector_init",
+      "to_file": "comic-text-detector/src/models/heads.py",
+      "to_func": "BlockDetector"
+    },
+    {
+      "from_file": "comic-text-detector/inference.py",
+      "from_func": "<module>",
+      "to_file": "comic-text-detector/inference.py",
+      "to_func": "traverse_by_dict"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/visualize_comparison.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/scripts/visualize_comparison.py",
+      "to_func": "create_comparison_visualization"
+    },
+    {
+      "from_file": "comic-text-detector/inference.py",
+      "from_func": "model2annotations",
+      "to_file": "comic-text-detector/inference.py",
+      "to_func": "TextDetector"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/verify_pipeline_outputs.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/scripts/verify_pipeline_outputs.py",
+      "to_func": "load_and_preprocess"
+    },
+    {
+      "from_file": "comic-text-detector/utils/textblock.py",
+      "from_func": "group_output",
+      "to_file": "comic-text-detector/utils/textblock.py",
+      "to_func": "TextBlock"
+    },
+    {
+      "from_file": "scripts/benchmark_animetext.py",
+      "from_func": "benchmark_onnx_runtime",
+      "to_file": "scripts/benchmark_animetext.py",
+      "to_func": "calculate_statistics"
+    },
+    {
+      "from_file": "comic-text-detector/train_db.py",
+      "from_func": "<module>",
+      "to_file": "comic-text-detector/train_db.py",
+      "to_func": "train"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/build_tensorrt.py",
+      "from_func": "<module>",
+      "to_file": "comic-text-detector/scripts/build_tensorrt.py",
+      "to_func": "_check_pycuda"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/verify_pipeline_outputs.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/scripts/verify_pipeline_outputs.py",
+      "to_func": "extract_boxes_from_blk"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_pipeline.py",
+      "from_func": "test_tensorrt_engine_with_onnx",
+      "to_file": "comic-text-detector/tests/test_pipeline.py",
+      "to_func": "mock_model_cuda"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/verify_pipeline_outputs.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/scripts/verify_pipeline_outputs.py",
+      "to_func": "visualize_comparison"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_v10_migration.py",
+      "from_func": "backbone",
+      "to_file": "comic-text-detector/tests/test_v10_migration.py",
+      "to_func": "backbone"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_v10_migration.py",
+      "from_func": "test_psa_attention_ratio",
+      "to_file": "comic-text-detector/src/models/heads.py",
+      "to_func": "PSA"
+    },
+    {
+      "from_file": "comic-text-detector/src/utils/textblock.py",
+      "from_func": "rotate_points",
+      "to_file": "comic-text-detector/src/utils/textblock.py",
+      "to_func": "center"
+    },
+    {
+      "from_file": "comic-text-detector/utils/textmask.py",
+      "from_func": "refine_mask",
+      "to_file": "comic-text-detector/utils/textmask.py",
+      "to_func": "merge_mask_list"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/export.py",
+      "from_func": "load_models_for_export",
+      "to_file": "comic-text-detector/scripts/export.py",
+      "to_func": "_extract_sub_state_dict"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_pipeline.py",
+      "from_func": "test_pipeline_preprocessing",
+      "to_file": "comic-text-detector/tests/test_pipeline.py",
+      "to_func": "sample_images"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/export.py",
+      "from_func": "load_models_for_export_v10",
+      "to_file": "comic-text-detector/src/models/heads.py",
+      "to_func": "DBHead"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/prepare_animetext.py",
+      "from_func": "<module>",
+      "to_file": "comic-text-detector/scripts/prepare_animetext.py",
+      "to_func": "main"
+    },
+    {
+      "from_file": "comic-text-detector/src/inference/output_cache.py",
+      "from_func": "create_cache",
+      "to_file": "comic-text-detector/src/inference/output_cache.py",
+      "to_func": "PerceptualHashCache"
+    },
+    {
+      "from_file": "comic-text-detector/models/yolov5/yolo.py",
+      "from_func": "load_yolov5",
+      "to_file": "comic-text-detector/models/yolov5/yolo.py",
+      "to_func": "fuse"
+    },
+    {
+      "from_file": "comic-text-detector/src/utils/textblock.py",
+      "from_func": "group_output",
+      "to_file": "comic-text-detector/src/utils/textblock.py",
+      "to_func": "sort_textblocks"
+    },
+    {
+      "from_file": "scripts/benchmark_animetext.py",
+      "from_func": "<module>",
+      "to_file": "scripts/benchmark_animetext.py",
+      "to_func": "main"
+    },
+    {
+      "from_file": "comic-text-detector/src/inference/tensorrt_backend.py",
+      "from_func": "__init__",
+      "to_file": "comic-text-detector/src/inference/tensorrt_backend.py",
+      "to_func": "TensorRTEngineConfig"
+    },
+    {
+      "from_file": "scripts/benchmark_animetext.py",
+      "from_func": "benchmark_pytorch",
+      "to_file": "scripts/benchmark_animetext.py",
+      "to_func": "create_dummy_input"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_v10_migration.py",
+      "from_func": "test_export_no_nms_nodes",
+      "to_file": "comic-text-detector/tests/test_v10_migration.py",
+      "to_func": "exported_model_path"
+    },
+    {
+      "from_file": "comic-text-detector/seg_dataset.py",
+      "from_func": "augment",
+      "to_file": "comic-text-detector/seg_dataset.py",
+      "to_func": "mini_mosaic"
+    },
+    {
+      "from_file": "comic-text-detector/src/training/losses.py",
+      "from_func": "create_loss",
+      "to_file": "comic-text-detector/src/training/losses.py",
+      "to_func": "DBLoss"
+    },
+    {
+      "from_file": "scripts/test_phase1_phase2.py",
+      "from_func": "<module>",
+      "to_file": "scripts/test_phase1_phase2.py",
+      "to_func": "main"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/benchmark.py",
+      "from_func": "from_outputs",
+      "to_file": "comic-text-detector/scripts/benchmark.py",
+      "to_func": "to_numpy"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/train.py",
+      "from_func": "<module>",
+      "to_file": "comic-text-detector/scripts/train.py",
+      "to_func": "main"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/train_yolo_blocks.py",
+      "from_func": "<module>",
+      "to_file": "comic-text-detector/scripts/train_yolo_blocks.py",
+      "to_func": "main"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/compare_models.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/scripts/compare_models.py",
+      "to_func": "preprocess_for_reference"
+    },
+    {
+      "from_file": "comic-text-detector/src/training/trainer.py",
+      "from_func": "__init__",
+      "to_file": "comic-text-detector/src/training/trainer.py",
+      "to_func": "EarlyStopping"
+    },
+    {
+      "from_file": "comic-text-detector/src/models/detector.py",
+      "from_func": "get_base_det_models",
+      "to_file": "comic-text-detector/src/models/backbone.py",
+      "to_func": "create_backbone"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/build_tensorrt.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/scripts/build_tensorrt.py",
+      "to_func": "parse_args"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/benchmark.py",
+      "from_func": "<module>",
+      "to_file": "comic-text-detector/scripts/benchmark.py",
+      "to_func": "main"
+    },
+    {
+      "from_file": "comic-text-detector/text_rendering.py",
+      "from_func": "__init__",
+      "to_file": "comic-text-detector/text_rendering.py",
+      "to_func": "TextBlkSampler"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_v10_migration.py",
+      "from_func": "<module>",
+      "to_file": "comic-text-detector/tests/test_v10_migration.py",
+      "to_func": "_check_yolov10_available"
+    },
+    {
+      "from_file": "comic-text-detector/inference.py",
+      "from_func": "__init__",
+      "to_file": "comic-text-detector/utils/db_utils.py",
+      "to_func": "SegDetectorRepresenter"
+    },
+    {
+      "from_file": "comic-text-detector/src/inference/output_cache.py",
+      "from_func": "get",
+      "to_file": "comic-text-detector/src/inference/output_cache.py",
+      "to_func": "CacheEntry"
+    },
+    {
+      "from_file": "comic-text-detector/src/inference/detector.py",
+      "from_func": "_process_single",
+      "to_file": "comic-text-detector/src/inference/detector.py",
+      "to_func": "DetectionResult"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/optimize_onnx.py",
+      "from_func": "analyze_model",
+      "to_file": "comic-text-detector/scripts/optimize_onnx.py",
+      "to_func": "find_silu_patterns"
+    },
+    {
+      "from_file": "comic-text-detector/utils/db_utils.py",
+      "from_func": "shrink_polygon_pyclipper",
+      "to_file": "comic-text-detector/utils/db_utils.py",
+      "to_func": "distance"
+    },
+    {
+      "from_file": "comic-text-detector/train_db.py",
+      "from_func": "train",
+      "to_file": "comic-text-detector/train_db.py",
+      "to_func": "eval_model"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_pipeline.py",
+      "from_func": "test_cache_stats",
+      "to_file": "comic-text-detector/tests/test_pipeline.py",
+      "to_func": "sample_images"
+    },
+    {
+      "from_file": "comic-text-detector/src/utils/textblock.py",
+      "from_func": "merge_textlines",
+      "to_file": "comic-text-detector/src/utils/textblock.py",
+      "to_func": "examine_textblock"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_pipeline.py",
+      "from_func": "test_cache_with_disk_storage",
+      "to_file": "comic-text-detector/tests/test_pipeline.py",
+      "to_func": "sample_images"
+    },
+    {
+      "from_file": "comic-text-detector/utils/db_utils.py",
+      "from_func": "gather_measure",
+      "to_file": "comic-text-detector/utils/db_utils.py",
+      "to_func": "AverageMeter"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/evaluate_vs_gt.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/src/inference/detector.py",
+      "to_func": "TextDetector"
+    },
+    {
+      "from_file": "comic-text-detector/src/inference/cuda_graphs.py",
+      "from_func": "add_shape",
+      "to_file": "comic-text-detector/src/inference/cuda_graphs.py",
+      "to_func": "CUDAGraphInference"
+    },
+    {
+      "from_file": "comic-text-detector/utils/yolov5_utils.py",
+      "from_func": "box_iou",
+      "to_file": "comic-text-detector/utils/yolov5_utils.py",
+      "to_func": "box_area"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/fast_annotations.py",
+      "from_func": "<module>",
+      "to_file": "comic-text-detector/scripts/fast_annotations.py",
+      "to_func": "generate_annotations"
+    },
+    {
+      "from_file": "comic-text-detector/src/inference/compiled_model.py",
+      "from_func": "benchmark_compilation",
+      "to_file": "comic-text-detector/src/inference/compiled_model.py",
+      "to_func": "compile_pytorch"
+    },
+    {
+      "from_file": "comic-text-detector/text_rendering.py",
+      "from_func": "__init__",
+      "to_file": "comic-text-detector/text_rendering.py",
+      "to_func": "FontSampler"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/inference.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/inference.py",
+      "to_func": "TextDetector"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/export.py",
+      "from_func": "export_onnx_v10",
+      "to_file": "comic-text-detector/scripts/export.py",
+      "to_func": "validate_no_nms"
+    },
+    {
+      "from_file": "comic-text-detector/src/models/heads.py",
+      "from_func": "initialize_db",
+      "to_file": "comic-text-detector/src/models/heads.py",
+      "to_func": "DBHead"
+    },
+    {
+      "from_file": "scripts/benchmark_animetext.py",
+      "from_func": "main",
+      "to_file": "scripts/benchmark_animetext.py",
+      "to_func": "benchmark_pytorch"
+    },
+    {
+      "from_file": "comic-text-detector/src/inference/output_cache.py",
+      "from_func": "__init__",
+      "to_file": "comic-text-detector/src/inference/output_cache.py",
+      "to_func": "LRUCache"
+    },
+    {
+      "from_file": "comic-text-detector/basemodel.py",
+      "from_func": "get_base_det_models",
+      "to_file": "comic-text-detector/models/yolov5/yolo.py",
+      "to_func": "load_yolov5_ckpt"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_pipeline.py",
+      "from_func": "test_pipeline_preprocessing",
+      "to_file": "comic-text-detector/src/inference/async_pipeline.py",
+      "to_func": "AsyncInferencePipeline"
+    },
+    {
+      "from_file": "comic-text-detector/utils/db_utils.py",
+      "from_func": "evaluate_image",
+      "to_file": "comic-text-detector/utils/db_utils.py",
+      "to_func": "get_intersection_over_union"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/compare_models.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/scripts/compare_models.py",
+      "to_func": "load_yolo26_model"
+    },
+    {
+      "from_file": "comic-text-detector/inference.py",
+      "from_func": "traverse_by_dict",
+      "to_file": "comic-text-detector/utils/textblock.py",
+      "to_func": "TextBlock"
+    },
+    {
+      "from_file": "comic-text-detector/src/inference/detector.py",
+      "from_func": "_postprocess",
+      "to_file": "comic-text-detector/src/inference/detector.py",
+      "to_func": "DetectionResult"
+    },
+    {
+      "from_file": "comic-text-detector/inference.py",
+      "from_func": "model2annotations",
+      "to_file": "comic-text-detector/utils/imgproc_utils.py",
+      "to_func": "get_yololabel_strings"
+    },
+    {
+      "from_file": "comic-text-detector/utils/textblock.py",
+      "from_func": "min_rect",
+      "to_file": "comic-text-detector/utils/imgproc_utils.py",
+      "to_func": "rotate_polygons"
+    },
+    {
+      "from_file": "comic-text-detector/src/inference/detector.py",
+      "from_func": "process_directory",
+      "to_file": "comic-text-detector/src/inference/detector.py",
+      "to_func": "load_image"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/generate_comparison.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/scripts/generate_comparison.py",
+      "to_func": "run_onnx_inference"
+    },
+    {
+      "from_file": "comic-text-detector/src/inference/compiled_model.py",
+      "from_func": "__init__",
+      "to_file": "comic-text-detector/src/inference/compiled_model.py",
+      "to_func": "compile_pytorch"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/export.py",
+      "from_func": "load_models_for_export_v10",
+      "to_file": "comic-text-detector/src/models/heads.py",
+      "to_func": "BlockDetector"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_pipeline.py",
+      "from_func": "test_cuda_graph_input_validation",
+      "to_file": "comic-text-detector/tests/test_pipeline.py",
+      "to_func": "mock_model_cuda"
+    },
+    {
+      "from_file": "comic-text-detector/train_seg.py",
+      "from_func": "train",
+      "to_file": "comic-text-detector/basemodel.py",
+      "to_func": "TextDetector"
+    },
+    {
+      "from_file": "comic-text-detector/src/training/losses.py",
+      "from_func": "create_loss",
+      "to_file": "comic-text-detector/src/training/losses.py",
+      "to_func": "DualAssignmentLoss"
+    },
+    {
+      "from_file": "comic-text-detector/utils/textmask.py",
+      "from_func": "get_topk_masklist",
+      "to_file": "comic-text-detector/utils/textmask.py",
+      "to_func": "minxor_thresh"
+    },
+    {
+      "from_file": "comic-text-detector/src/training/trainer.py",
+      "from_func": "_cosine_warmup_scheduler",
+      "to_file": "comic-text-detector/src/training/trainer.py",
+      "to_func": "lr_lambda"
+    },
+    {
+      "from_file": "comic-text-detector/utils/textmask.py",
+      "from_func": "refine_mask",
+      "to_file": "comic-text-detector/utils/textmask.py",
+      "to_func": "get_otsuthresh_masklist"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/prepare_animetext.py",
+      "from_func": "process_sample",
+      "to_file": "comic-text-detector/scripts/prepare_animetext.py",
+      "to_func": "xyxy_to_polygon"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/generate_line_annotations.py",
+      "from_func": "process_json_file",
+      "to_file": "comic-text-detector/scripts/generate_line_annotations.py",
+      "to_func": "bbox_to_polygon"
+    },
+    {
+      "from_file": "comic-text-detector/utils/db_utils.py",
+      "from_func": "evaluate_image",
+      "to_file": "comic-text-detector/utils/db_utils.py",
+      "to_func": "get_union"
+    },
+    {
+      "from_file": "comic-text-detector/src/inference/tensorrt_backend.py",
+      "from_func": "load_tensorrt_engine",
+      "to_file": "comic-text-detector/src/inference/tensorrt_backend.py",
+      "to_func": "TensorRTEngine"
+    },
+    {
+      "from_file": "comic-text-detector/db_dataset.py",
+      "from_func": "__getitem__",
+      "to_file": "comic-text-detector/utils/imgproc_utils.py",
+      "to_func": "letterbox"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_pipeline.py",
+      "from_func": "test_cache_stats",
+      "to_file": "comic-text-detector/tests/test_pipeline.py",
+      "to_func": "compute_fn"
+    },
+    {
+      "from_file": "comic-text-detector/src/utils/textblock.py",
+      "from_func": "group_output",
+      "to_file": "comic-text-detector/src/utils/textblock.py",
+      "to_func": "examine_textblock"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_pipeline.py",
+      "from_func": "test_content_hash_cache",
+      "to_file": "comic-text-detector/src/inference/output_cache.py",
+      "to_func": "ContentHashCache"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/validate.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/scripts/validate.py",
+      "to_func": "validate"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_pipeline.py",
+      "from_func": "test_cuda_graph_inference",
+      "to_file": "comic-text-detector/tests/test_pipeline.py",
+      "to_func": "mock_model_cuda"
+    },
+    {
+      "from_file": "comic-text-detector/src/training/losses.py",
+      "from_func": "_compute_loss",
+      "to_file": "comic-text-detector/src/training/losses.py",
+      "to_func": "xywh_to_xyxy"
+    },
+    {
+      "from_file": "comic-text-detector/text_rendering.py",
+      "from_func": "__init__",
+      "to_file": "comic-text-detector/text_rendering.py",
+      "to_func": "TextLinesSampler"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/export.py",
+      "from_func": "load_models_for_export",
+      "to_file": "comic-text-detector/src/models/backbone.py",
+      "to_func": "create_backbone"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_pipeline.py",
+      "from_func": "test_engine_config_custom",
+      "to_file": "comic-text-detector/src/inference/tensorrt_backend.py",
+      "to_func": "TensorRTEngineConfig"
+    },
+    {
+      "from_file": "comic-text-detector/src/models/detector.py",
+      "from_func": "load_text_detector",
+      "to_file": "comic-text-detector/src/models/detector.py",
+      "to_func": "TextDetBase"
+    },
+    {
+      "from_file": "comic-text-detector/src/training/losses.py",
+      "from_func": "create_loss",
+      "to_file": "comic-text-detector/src/training/losses.py",
+      "to_func": "UnifiedLoss"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_pipeline.py",
+      "from_func": "test_pipeline_context_manager",
+      "to_file": "comic-text-detector/src/inference/async_pipeline.py",
+      "to_func": "AsyncInferencePipeline"
+    },
+    {
+      "from_file": "comic-text-detector/src/inference/cuda_graphs.py",
+      "from_func": "benchmark_cuda_graphs",
+      "to_file": "comic-text-detector/src/inference/cuda_graphs.py",
+      "to_func": "CUDAGraphInference"
+    },
+    {
+      "from_file": "comic-text-detector/src/inference/compiled_model.py",
+      "from_func": "convert_to_openvino",
+      "to_file": "comic-text-detector/src/inference/compiled_model.py",
+      "to_func": "OpenVINOConfig"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_pipeline.py",
+      "from_func": "test_pipeline_preprocessing",
+      "to_file": "comic-text-detector/tests/test_pipeline.py",
+      "to_func": "mock_model"
+    },
+    {
+      "from_file": "comic-text-detector/src/inference/cuda_graphs.py",
+      "from_func": "benchmark_cuda_graphs",
+      "to_file": "comic-text-detector/src/inference/cuda_graphs.py",
+      "to_func": "warmup"
+    },
+    {
+      "from_file": "comic-text-detector/train_seg.py",
+      "from_func": "train",
+      "to_file": "comic-text-detector/utils/loss.py",
+      "to_func": "BinaryDiceLoss"
+    },
+    {
+      "from_file": "comic-text-detector/train_seg.py",
+      "from_func": "eval_model",
+      "to_file": "comic-text-detector/utils/loss.py",
+      "to_func": "BinaryDiceLoss"
+    },
+    {
+      "from_file": "comic-text-detector/utils/db_utils.py",
+      "from_func": "evaluate_image",
+      "to_file": "comic-text-detector/utils/db_utils.py",
+      "to_func": "get_intersection"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_unified_training.py",
+      "from_func": "test_unified_loss_forward_returns_scalar",
+      "to_file": "comic-text-detector/src/training/losses.py",
+      "to_func": "UnifiedLoss"
+    },
+    {
+      "from_file": "comic-text-detector/utils/textmask.py",
+      "from_func": "refine_undetected_mask",
+      "to_file": "comic-text-detector/utils/textmask.py",
+      "to_func": "refine_mask"
+    },
+    {
+      "from_file": "comic-text-detector/src/inference/compiled_model.py",
+      "from_func": "__call__",
+      "to_file": "comic-text-detector/src/inference/compiled_model.py",
+      "to_func": "run_openvino_inference"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/build_tensorrt.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/scripts/build_tensorrt.py",
+      "to_func": "TensorRTBuilder"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/build_tensorrt.py",
+      "from_func": "_build_engine",
+      "to_file": "comic-text-detector/scripts/build_tensorrt.py",
+      "to_func": "_create_int8_calibrator"
+    },
+    {
+      "from_file": "comic-text-detector/seg_dataset.py",
+      "from_func": "load_image_mask",
+      "to_file": "comic-text-detector/utils/imgproc_utils.py",
+      "to_func": "resize_keepasp"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_pipeline.py",
+      "from_func": "test_tensorrt_load_function",
+      "to_file": "comic-text-detector/src/inference/tensorrt_backend.py",
+      "to_func": "load_tensorrt_engine"
+    },
+    {
+      "from_file": "comic-text-detector/inference.py",
+      "from_func": "traverse_by_dict",
+      "to_file": "comic-text-detector/utils/io_utils.py",
+      "to_func": "find_all_imgs"
+    },
+    {
+      "from_file": "comic-text-detector/utils/db_utils.py",
+      "from_func": "evaluate_image",
+      "to_file": "comic-text-detector/utils/db_utils.py",
+      "to_func": "iou_rotate"
+    },
+    {
+      "from_file": "scripts/benchmark_animetext.py",
+      "from_func": "benchmark_onnx_runtime",
+      "to_file": "scripts/benchmark_animetext.py",
+      "to_func": "create_dummy_input"
+    },
+    {
+      "from_file": "comic-text-detector/utils/textblock.py",
+      "from_func": "group_output",
+      "to_file": "comic-text-detector/utils/textblock.py",
+      "to_func": "xywh"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_v10_migration.py",
+      "from_func": "test_scdown_output_shape",
+      "to_file": "comic-text-detector/src/models/heads.py",
+      "to_func": "SCDown"
+    },
+    {
+      "from_file": "comic-text-detector/utils/db_utils.py",
+      "from_func": "get_intersection_over_union",
+      "to_file": "comic-text-detector/utils/db_utils.py",
+      "to_func": "get_intersection"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/benchmark.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/scripts/benchmark.py",
+      "to_func": "parse_args"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_pipeline.py",
+      "from_func": "test_cuda_graph_config_custom",
+      "to_file": "comic-text-detector/src/inference/cuda_graphs.py",
+      "to_func": "CUDAGraphConfig"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/merge_datasets.py",
+      "from_func": "<module>",
+      "to_file": "comic-text-detector/scripts/merge_datasets.py",
+      "to_func": "main"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_unified_training.py",
+      "from_func": "test_unified_loss_weights",
+      "to_file": "comic-text-detector/src/training/losses.py",
+      "to_func": "UnifiedLoss"
+    },
+    {
+      "from_file": "comic-text-detector/src/inference/compiled_model.py",
+      "from_func": "<module>",
+      "to_file": "comic-text-detector/src/inference/compiled_model.py",
+      "to_func": "_check_torch_compile"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/combined_inference.py",
+      "from_func": "load_combined_model",
+      "to_file": "comic-text-detector/src/models/heads.py",
+      "to_func": "UnetHead"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_pipeline.py",
+      "from_func": "test_pipeline_with_cache",
+      "to_file": "comic-text-detector/tests/test_pipeline.py",
+      "to_func": "mock_model_cuda"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_unified_training.py",
+      "from_func": "test_unified_loss_init",
+      "to_file": "comic-text-detector/src/training/losses.py",
+      "to_func": "UnifiedLoss"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/prepare_animetext.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/scripts/prepare_animetext.py",
+      "to_func": "get_datasets"
+    },
+    {
+      "from_file": "comic-text-detector/inference.py",
+      "from_func": "preprocess_img",
+      "to_file": "comic-text-detector/utils/imgproc_utils.py",
+      "to_func": "letterbox"
+    },
+    {
+      "from_file": "comic-text-detector/src/training/losses.py",
+      "from_func": "_compute_loss",
+      "to_file": "comic-text-detector/src/training/losses.py",
+      "to_func": "xyxy_to_xywh"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/benchmark.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/scripts/benchmark.py",
+      "to_func": "format_results_table"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/benchmark.py",
+      "from_func": "save_results",
+      "to_file": "comic-text-detector/scripts/benchmark.py",
+      "to_func": "format_summary"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/export.py",
+      "from_func": "load_models_for_export",
+      "to_file": "comic-text-detector/scripts/export.py",
+      "to_func": "_is_detection_checkpoint"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/visualize_comparison.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/scripts/visualize_comparison.py",
+      "to_func": "preprocess_image"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_pipeline.py",
+      "from_func": "test_create_pipeline_factory",
+      "to_file": "comic-text-detector/src/inference/async_pipeline.py",
+      "to_func": "create_pipeline"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/generate_line_annotations.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/scripts/generate_line_annotations.py",
+      "to_func": "process_json_file"
+    },
+    {
+      "from_file": "comic-text-detector/text_rendering.py",
+      "from_func": "drawtext_one_page",
+      "to_file": "comic-text-detector/text_rendering.py",
+      "to_func": "draw_textblk"
+    },
+    {
+      "from_file": "comic-text-detector/utils/textblock.py",
+      "from_func": "alignment",
+      "to_file": "comic-text-detector/utils/imgproc_utils.py",
+      "to_func": "rotate_polygons"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/generate_comparison.py",
+      "from_func": "annotate_image",
+      "to_file": "comic-text-detector/scripts/generate_comparison.py",
+      "to_func": "draw_blocks"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/generate_sample_annotation.py",
+      "from_func": "create_3panel_visualization",
+      "to_file": "comic-text-detector/scripts/generate_sample_annotation.py",
+      "to_func": "draw_textblocks"
+    },
+    {
+      "from_file": "comic-text-detector/utils/textblock.py",
+      "from_func": "merge_textlines",
+      "to_file": "comic-text-detector/utils/textblock.py",
+      "to_func": "try_merge_textline"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_pipeline.py",
+      "from_func": "test_create_pipeline_factory",
+      "to_file": "comic-text-detector/tests/test_pipeline.py",
+      "to_func": "mock_model"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_pipeline.py",
+      "from_func": "test_cache_stats",
+      "to_file": "comic-text-detector/src/inference/output_cache.py",
+      "to_func": "PerceptualHashCache"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/verify_pipeline_outputs.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/scripts/verify_pipeline_outputs.py",
+      "to_func": "compute_iou"
+    },
+    {
+      "from_file": "comic-text-detector/models/yolov5/common.py",
+      "from_func": "__init__",
+      "to_file": "comic-text-detector/models/yolov5/common.py",
+      "to_func": "autopad"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_pipeline.py",
+      "from_func": "test_cache_with_disk_storage",
+      "to_file": "comic-text-detector/src/inference/output_cache.py",
+      "to_func": "PerceptualHashCache"
+    },
+    {
+      "from_file": "comic-text-detector/utils/yolov5_utils.py",
+      "from_func": "draw_bbox",
+      "to_file": "comic-text-detector/utils/yolov5_utils.py",
+      "to_func": "Colors"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/quantize.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/scripts/quantize.py",
+      "to_func": "quantize_int8_dynamic"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/evaluate_vs_gt.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/scripts/evaluate_vs_gt.py",
+      "to_func": "match_predictions_to_gt"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/optimize_onnx.py",
+      "from_func": "analyze_model",
+      "to_file": "comic-text-detector/scripts/optimize_onnx.py",
+      "to_func": "count_ops"
+    },
+    {
+      "from_file": "scripts/benchmark_animetext.py",
+      "from_func": "benchmark_tensorrt_engine",
+      "to_file": "scripts/benchmark_animetext.py",
+      "to_func": "calculate_statistics"
+    },
+    {
+      "from_file": "comic-text-detector/train_db.py",
+      "from_func": "train",
+      "to_file": "comic-text-detector/utils/db_utils.py",
+      "to_func": "QuadMetric"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/visualize_trained.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/src/inference/detector.py",
+      "to_func": "TextDetector"
+    },
+    {
+      "from_file": "comic-text-detector/train_seg.py",
+      "from_func": "train",
+      "to_file": "comic-text-detector/train_seg.py",
+      "to_func": "one_cycle"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/compare_models.py",
+      "from_func": "run_reference_inference",
+      "to_file": "comic-text-detector/scripts/compare_models.py",
+      "to_func": "preprocess_for_reference"
+    },
+    {
+      "from_file": "comic-text-detector/src/inference/compiled_model.py",
+      "from_func": "load_openvino_model",
+      "to_file": "comic-text-detector/src/inference/compiled_model.py",
+      "to_func": "OpenVINOConfig"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/combined_inference.py",
+      "from_func": "__call__",
+      "to_file": "comic-text-detector/scripts/combined_inference.py",
+      "to_func": "CombinedResult"
+    },
+    {
+      "from_file": "comic-text-detector/src/training/trainer.py",
+      "from_func": "__init__",
+      "to_file": "comic-text-detector/src/training/trainer.py",
+      "to_func": "EMA"
+    },
+    {
+      "from_file": "comic-text-detector/src/utils/textblock.py",
+      "from_func": "group_output",
+      "to_file": "comic-text-detector/src/utils/textblock.py",
+      "to_func": "merge_textlines"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/inference.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/scripts/inference.py",
+      "to_func": "visualize_result"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/merge_datasets.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/scripts/merge_datasets.py",
+      "to_func": "create_symlinks"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/generate_comparison.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/scripts/generate_comparison.py",
+      "to_func": "load_and_preprocess"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/benchmark.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/scripts/benchmark.py",
+      "to_func": "run_benchmark"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_pipeline.py",
+      "from_func": "test_pipeline_item_dataclass",
+      "to_file": "comic-text-detector/src/inference/async_pipeline.py",
+      "to_func": "PipelineItem"
+    },
+    {
+      "from_file": "comic-text-detector/src/inference/async_pipeline.py",
+      "from_func": "_io_worker",
+      "to_file": "comic-text-detector/src/inference/async_pipeline.py",
+      "to_func": "PipelineItem"
+    },
+    {
+      "from_file": "comic-text-detector/src/inference/compiled_model.py",
+      "from_func": "__init__",
+      "to_file": "comic-text-detector/src/inference/compiled_model.py",
+      "to_func": "convert_to_openvino"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/quantize.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/scripts/quantize.py",
+      "to_func": "quantize_fp16"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/export.py",
+      "from_func": "load_models_for_export_v10",
+      "to_file": "comic-text-detector/src/models/heads.py",
+      "to_func": "UnetHead"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/benchmark.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/scripts/benchmark.py",
+      "to_func": "get_backend"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/inference.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/scripts/inference.py",
+      "to_func": "parse_args"
+    },
+    {
+      "from_file": "comic-text-detector/src/training/losses.py",
+      "from_func": "__init__",
+      "to_file": "comic-text-detector/src/training/losses.py",
+      "to_func": "SegmentationLoss"
+    },
+    {
+      "from_file": "comic-text-detector/seg_dataset.py",
+      "from_func": "__init__",
+      "to_file": "comic-text-detector/seg_dataset.py",
+      "to_func": "load_image_mask"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/prepare_animetext.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/scripts/prepare_animetext.py",
+      "to_func": "process_sample"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/optimize_onnx.py",
+      "from_func": "<module>",
+      "to_file": "comic-text-detector/scripts/optimize_onnx.py",
+      "to_func": "main"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_pipeline.py",
+      "from_func": "test_cuda_graph_wrapper",
+      "to_file": "comic-text-detector/tests/test_pipeline.py",
+      "to_func": "mock_model_cuda"
+    },
+    {
+      "from_file": "comic-text-detector/src/utils/textblock.py",
+      "from_func": "merge_textlines",
+      "to_file": "comic-text-detector/src/utils/textblock.py",
+      "to_func": "can_merge_textlines"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_pipeline.py",
+      "from_func": "test_create_cache_factory",
+      "to_file": "comic-text-detector/tests/test_pipeline.py",
+      "to_func": "_check_imagehash_available"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/evaluate_vs_gt.py",
+      "from_func": "match_predictions_to_gt",
+      "to_file": "comic-text-detector/scripts/evaluate_vs_gt.py",
+      "to_func": "compute_iou"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/compare_models.py",
+      "from_func": "match_detections",
+      "to_file": "comic-text-detector/scripts/compare_models.py",
+      "to_func": "compute_iou"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_pipeline.py",
+      "from_func": "mock_model",
+      "to_file": "comic-text-detector/tests/test_pipeline.py",
+      "to_func": "SimpleMockModel"
+    },
+    {
+      "from_file": "comic-text-detector/utils/textblock.py",
+      "from_func": "group_output",
+      "to_file": "comic-text-detector/utils/textblock.py",
+      "to_func": "examine_textblk"
+    },
+    {
+      "from_file": "comic-text-detector/tests/test_v10_migration.py",
+      "from_func": "test_text_detector_with_all_options",
+      "to_file": "comic-text-detector/src/models/backbone.py",
+      "to_func": "create_backbone"
+    },
+    {
+      "from_file": "comic-text-detector/db_dataset.py",
+      "from_func": "__init__",
+      "to_file": "comic-text-detector/utils/db_utils.py",
+      "to_func": "MakeBorderMap"
+    },
+    {
+      "from_file": "comic-text-detector/train_seg.py",
+      "from_func": "<module>",
+      "to_file": "comic-text-detector/train_seg.py",
+      "to_func": "train"
+    },
+    {
+      "from_file": "comic-text-detector/train_seg.py",
+      "from_func": "train",
+      "to_file": "comic-text-detector/utils/general.py",
+      "to_func": "Loggers"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/test_generation.py",
+      "from_func": "main",
+      "to_file": "comic-text-detector/scripts/test_generation.py",
+      "to_func": "calculate_metrics"
+    },
+    {
+      "from_file": "comic-text-detector/scripts/combined_inference.py",
+      "from_func": "__init__",
+      "to_file": "comic-text-detector/scripts/combined_inference.py",
+      "to_func": "load_combined_model"
+    },
+    {
+      "from_file": "comic-text-detector/src/utils/textblock.py",
+      "from_func": "group_output",
+      "to_file": "comic-text-detector/src/utils/textblock.py",
+      "to_func": "expand_bbox"
+    },
+    {
+      "from_file": "comic-text-detector/src/inference/output_cache.py",
+      "from_func": "create_cache",
+      "to_file": "comic-text-detector/src/inference/output_cache.py",
+      "to_func": "ContentHashCache"
+    }
+  ],
+  "languages": [
+    "python"
+  ],
+  "timestamp": 1768834694.1226525
+}

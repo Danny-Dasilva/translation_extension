@@ -1,0 +1,87 @@
+---
+session: dbnet-training-fix
+date: 2026-01-12
+status: partial
+outcome: PARTIAL_MINUS
+---
+
+goal: Fix DBNet line detection - threshold map training was producing binary targets instead of smooth gradients
+now: Restart DBNet Phase 2 training with fixed threshold map generation and verify line detection works
+
+test: |
+  python scripts/generate_sample_annotation.py \
+    --image data/merged_val/00000001.jpg \
+    --output outputs/sample_annotation.png
+
+done_this_session:
+  - task: Created 3-panel visualization script matching CTD homepage style
+    files: [scripts/generate_sample_annotation.py]
+  - task: Fixed C2f→C2fCIB architecture mismatch in heads.py
+    files: [src/models/heads.py]
+  - task: Implemented adaptive thresholding (shrink > threshold_map) in detector
+    files: [src/inference/detector.py]
+  - task: Added polygon unclipping using Vatti algorithm
+    files: [src/inference/detector.py]
+  - task: ROOT CAUSE FIX - Rewrote _generate_border_map() with proper distance transform
+    files: [src/data/dataset.py]
+
+blockers:
+  - Training needs to be restarted - previous training process not found
+
+questions:
+  - Should training use more epochs than 100?
+  - Is lr=1e-3 appropriate for Phase 2?
+
+decisions:
+  - c2fcib_architecture: Checkpoint uses CIB blocks (depthwise convolutions), not standard C2f
+  - adaptive_threshold: Use per-pixel learned threshold (shrink > threshold_map) instead of fixed 0.3
+  - distance_transform: Use cv2.distanceTransform for smooth gradient [0.3, 0.7] in border region
+
+findings:
+  - binary_targets_root_cause: |
+      _generate_border_map() was producing BINARY values (0 or 0.7) instead of smooth gradients.
+      Model learned to output mean (~0.35) everywhere since binary targets are unlearnable.
+      Location: src/data/dataset.py:435-475
+  - shrink_map_statistics: |
+      Before fix: shrink values 0.09-0.72, mean 0.35, pre-sigmoid only -2.3 to 0.96
+      This showed model wasn't learning proper text regions
+  - threshold_map_fix: |
+      After fix: smooth gradient from 0.7 (at text edge) to 0.3 (at border boundary)
+      Verified with test showing mean 0.487 in border region (proper distribution)
+
+worked:
+  - Loading checkpoint with model_state_dict first, then overlaying ema_shadow
+  - Deleting upconv3-6 from seg_net before loading (architecture changed)
+  - Using BGR preprocessing (not RGB conversion)
+  - Step function (shrink > threshold) gives much better results than fixed threshold
+
+failed:
+  - Fixed threshold of 0.3 - model outputs around mean 0.35 everywhere
+  - Original _generate_border_map() with simple polyline dilation - produced binary targets
+  - Expecting proper outputs without retraining after threshold fix
+
+next:
+  - Restart DBNet Phase 2 training with fixed threshold map generation
+  - Training command: |
+      python scripts/train.py --mode detection --training-phase 2 \
+        --img-dirs data/animetext/images --ann-dirs data/animetext/annotations \
+        --unet-weights runs/segmentation_v3/best.pt --freeze-seg \
+        --epochs 100 --batch-size 4 --accumulation-steps 4 \
+        --img-size 1024 --lr 1e-3 --save-dir runs/detection_v6 --no-wandb
+  - After training, test with visualization script to verify line detection
+  - Generate sample annotation for README/homepage
+
+files:
+  created:
+    - scripts/generate_sample_annotation.py
+    - thoughts/shared/handoffs/general/2026-01-12_16-45_dbnet-threshold-fix.yaml
+  modified:
+    - src/models/heads.py  # C2f → C2fCIB (lines 295, 323)
+    - src/inference/detector.py  # Adaptive thresholding, unclipping
+    - src/data/dataset.py  # _generate_border_map() complete rewrite (lines 435-475)
+
+code_references:
+  threshold_fix: src/data/dataset.py:435-475
+  architecture_fix: src/models/heads.py:295,323
+  adaptive_inference: src/inference/detector.py:_process_single,_extract_line_polygons
+  visualization: scripts/generate_sample_annotation.py

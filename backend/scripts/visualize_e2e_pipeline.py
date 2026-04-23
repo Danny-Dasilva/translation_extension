@@ -530,20 +530,45 @@ def discover_test_images(limit: int = 4) -> list[Path]:
 # ---------------------------------------------------------------------------
 
 async def main():
+    import argparse
+
+    ap = argparse.ArgumentParser(
+        description="Run the end-to-end koharu-style pipeline on one or more "
+                    "manga pages, emitting per-stage PNG artefacts.",
+    )
+    ap.add_argument("images", nargs="*", type=Path,
+                    help="Image file paths (jpg/png). If omitted, auto-discovers "
+                         "from repo training dirs (up to --limit).")
+    ap.add_argument("--out", type=Path,
+                    default=REPO_ROOT / "thoughts" / "koharu-improvements" / "pipeline-e2e",
+                    help="Output gallery root (default: thoughts/.../pipeline-e2e).")
+    ap.add_argument("--limit", type=int, default=4,
+                    help="Max images when auto-discovering (default: 4).")
+    ap.add_argument("--skip-features", action="store_true",
+                    help="Skip the per-feature static demos.")
+    args = ap.parse_args()
+
     _init_fonts()
-    out_root = REPO_ROOT / "thoughts" / "koharu-improvements" / "pipeline-e2e"
+    out_root = args.out
     out_root.mkdir(parents=True, exist_ok=True)
     print(f"output: {out_root}")
 
     # Per-feature demos (no model calls)
-    print("feature demos…")
-    all_feature_demos(out_root / "features")
+    if not args.skip_features:
+        print("feature demos…")
+        all_feature_demos(out_root / "features")
 
     # Pipeline runner (loads all services — slow)
     print("loading pipeline…")
     runner = PipelineRunner()
 
-    images = discover_test_images(limit=4)
+    if args.images:
+        images = [p for p in args.images if p.exists()]
+        missing = [p for p in args.images if not p.exists()]
+        for m in missing:
+            print(f"  skipping missing: {m}")
+    else:
+        images = discover_test_images(limit=args.limit)
     if not images:
         print("No test images found; abort.")
         return

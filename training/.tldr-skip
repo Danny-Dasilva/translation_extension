@@ -1,0 +1,3 @@
+# Skip TLDR daemon startup for this project
+# This is a training data project with mostly images/models, not code.
+# The TLDR cache hook adds ~10s startup delay with no benefit.

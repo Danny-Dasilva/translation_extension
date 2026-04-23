@@ -1,0 +1,82 @@
+---
+session: yolo26-migration
+date: 2026-01-16
+status: complete
+outcome: PARTIAL_PLUS
+---
+
+goal: Generate block annotations for all training/validation data using original comic-text-detector model
+now: Train Phase 3 block detection using new annotations
+
+test: |
+  # Verify annotations exist
+  find data/merged_val/block_annotations -name '*.json' | wc -l  # Should be 9859
+  find data/merged_train/block_annotations -name '*.json' | wc -l  # Should be 49213
+
+done_this_session:
+  - task: Fixed onnx-simplifier dependency (renamed to onnxsim in pyproject.toml)
+    files: [comic-text-detector/pyproject.toml:38]
+  - task: Added NMS to generate_block_annotations.py to deduplicate overlapping boxes
+    files: [comic-text-detector/scripts/generate_block_annotations.py:13-55]
+  - task: Added --skip-existing flag to annotation script for resumability
+    files: [comic-text-detector/scripts/generate_block_annotations.py:64,75-81]
+  - task: Created verify_pipeline_outputs.py for comparing model outputs
+    files: [comic-text-detector/scripts/verify_pipeline_outputs.py]
+  - task: Generated block annotations for validation set (9,859 images)
+    files: [comic-text-detector/data/merged_val/block_annotations/]
+  - task: Generated block annotations for training set (49,213 images)
+    files: [comic-text-detector/data/merged_train/block_annotations/]
+  - task: Stopped Phase 2 training at epoch 15/160 (checkpoint preserved)
+    files: [comic-text-detector/runs/detection_yolo26/best.pt]
+
+blockers: []
+
+questions:
+  - Should Phase 2 training be resumed to completion before Phase 3?
+  - What confidence threshold should be used for block detection training?
+
+decisions:
+  - nms_threshold_0.5: Standard NMS IoU threshold to remove duplicate boxes while preserving distinct detections
+  - conf_thresh_0.25: Low confidence threshold to capture more potential text blocks during annotation
+
+findings:
+  - original_model_outputs: |
+      blk: (1, 64512, 7) - Block/bubble detections (anchor-based)
+      seg: (1, 1, 1024, 1024) - Segmentation mask
+      det: (1, 2, 1024, 1024) - DBNet text line detection
+  - annotation_format: |
+      JSON with text_blocks array, each having bbox [x1,y1,x2,y2] and confidence
+      Plus original_size [width, height] for scaling
+  - nms_impact: Reduced boxes from 163+ overlapping to ~10-15 clean boxes per image
+
+worked:
+  - Using original comic-text-detector.onnx to generate ground truth annotations
+  - Adding NMS post-processing to clean up anchor-based detections
+  - Running val and train annotation generation in parallel
+
+failed:
+  - Initial annotation without NMS produced too many overlapping boxes (unusable)
+
+next:
+  - Train Phase 3 block detection with command:
+    cd comic-text-detector && WANDB_MODE=disabled python scripts/train.py \
+      --training-phase 3 --mode block \
+      --checkpoint runs/detection_yolo26/best.pt \
+      --freeze-seg --freeze-det \
+      --img-dirs data/merged_train/images \
+      --ann-dirs data/merged_train/block_annotations \
+      --val-img-dirs data/merged_val/images \
+      --val-ann-dirs data/merged_val/block_annotations \
+      --epochs 50 --batch-size 8 --workers 4 \
+      --save-dir runs/block_yolo26
+  - Run verify_pipeline_outputs.py to compare trained model vs original
+  - Export final model to ONNX and verify output shapes match original
+
+files:
+  created:
+    - comic-text-detector/scripts/verify_pipeline_outputs.py
+    - comic-text-detector/data/merged_val/block_annotations/ (9,859 JSON files)
+    - comic-text-detector/data/merged_train/block_annotations/ (49,213 JSON files)
+  modified:
+    - comic-text-detector/pyproject.toml (onnx-simplifier -> onnxsim)
+    - comic-text-detector/scripts/generate_block_annotations.py (added NMS, skip-existing)

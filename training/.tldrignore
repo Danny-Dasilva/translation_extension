@@ -1,0 +1,122 @@
+# TLDR ignore patterns (gitignore syntax)
+# Auto-generated - review and customize for your project
+# Docs: https://git-scm.com/docs/gitignore
+
+# ===================
+# Dependencies
+# ===================
+node_modules/
+.venv/
+venv/
+env/
+__pycache__/
+.tox/
+.nox/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+vendor/
+Pods/
+
+# ===================
+# Build outputs
+# ===================
+dist/
+build/
+out/
+target/
+*.egg-info/
+*.whl
+*.pyc
+*.pyo
+
+# ===================
+# Binary/large files
+# ===================
+*.so
+*.dylib
+*.dll
+*.exe
+*.bin
+*.o
+*.a
+*.lib
+
+# ===================
+# IDE/editors
+# ===================
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# ===================
+# Security (always exclude)
+# ===================
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+credentials.*
+secrets.*
+
+# ===================
+# Version control
+# ===================
+.git/
+.hg/
+.svn/
+
+# ===================
+# OS files
+# ===================
+.DS_Store
+Thumbs.db
+
+# ===================
+# Project-specific
+# ===================
+
+# ML Training Data (CRITICAL for startup speed)
+**/data/
+**/runs/
+**/models/*.pt
+**/models/*.pth
+**/models/*.onnx
+**/models/*.safetensors
+
+# Archive and temp directories (10K+ Python files)
+**/archive*/
+**/.tmp*/
+**/sdists*/
+
+# Training outputs
+**/outputs/
+**/checkpoints/
+**/tensorboard/
+wandb/
+
+# Image datasets
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.bmp
+*.tiff
+
+# Model weights
+*.pt
+*.pth
+*.onnx
+*.safetensors
+*.ckpt
+*.h5
+*.pkl
+*.npy
+*.npz
+
+# Huggingface cache
+.cache/
