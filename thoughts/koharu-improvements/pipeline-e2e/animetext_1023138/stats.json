@@ -1,0 +1,17 @@
+{
+  "image": "animetext_1023138.jpg",
+  "detect_ms": 543.4994697570801,
+  "num_blocks": 2,
+  "num_text_lines": 5,
+  "ocr_ms": 1812.3130798339844,
+  "inpaint_ms": 6832.416772842407,
+  "translate_ms": 2992.6414489746094,
+  "ocr_samples": [
+    "...やっぱり気のせいか..",
+    "さっさと脱いで入っちゃおう"
+  ],
+  "translations": [
+    "...Maybe it’s just my imagination after all..",
+    "Let’s get out of these clothes and get in quickly."
+  ]
+}
