@@ -1,0 +1,27 @@
+{
+  "image": "animetext_1029121.jpg",
+  "detect_ms": 529.6404361724854,
+  "num_blocks": 7,
+  "num_text_lines": 11,
+  "ocr_ms": 5284.782886505127,
+  "inpaint_ms": 14970.414638519287,
+  "translate_ms": 11605.505466461182,
+  "ocr_samples": [
+    "もう酒も煙草も覚えたのか",
+    "もう私も大人だからな",
+    "嬉しい筈だというのに何故こうも息苦しく喋りにくいのか",
+    "おぉおおちつけはっつっけロード・・エルロロロイ1世これは夢だ幻覚だ疲れているんだ",
+    "...まぁ、",
+    "ドガつかん",
+    "三故だ"
+  ],
+  "translations": [
+    "Have you already learned to drink and smoke?",
+    "I’m also an adult now.",
+    "I should be happy, but why is it so difficult to speak and feel comfortable like this?",
+    "Oh no, calm down! Lord Elroloilo Ii, this is just a dream, a hallucination. I’m just tired.",
+    "...Well,",
+    "Let’s stop this nonsense.",
+    "Three deaths."
+  ]
+}
