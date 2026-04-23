@@ -1,0 +1,19 @@
+{
+  "image": "animetext_1027061.jpg",
+  "detect_ms": 569.3862438201904,
+  "num_blocks": 3,
+  "num_text_lines": 3,
+  "ocr_ms": 1450.0048160552979,
+  "inpaint_ms": 3967.089891433716,
+  "translate_ms": 3800.8930683135986,
+  "ocr_samples": [
+    "お瀬子?",
+    "それとも..",
+    "イタズラする?"
+  ],
+  "translations": [
+    "Oseko?",
+    "Or maybe…",
+    "Do you want to play tricks?"
+  ]
+}
