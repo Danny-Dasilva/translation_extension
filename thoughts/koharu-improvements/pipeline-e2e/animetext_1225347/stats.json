@@ -1,0 +1,25 @@
+{
+  "image": "animetext_1225347.jpg",
+  "detect_ms": 989.4216060638428,
+  "num_blocks": 6,
+  "num_text_lines": 18,
+  "ocr_ms": 9880.291223526001,
+  "inpaint_ms": 20345.266103744507,
+  "translate_ms": 59721.32086753845,
+  "ocr_samples": [
+    "わずかにリード!残り30Mいけるか!",
+    "ここで極選手がてる選手をかわし先頭へ!",
+    "いや違う!ミスティアだ!ミスティア・ローレライだ!",
+    "椿!",
+    "往差で推選手をかわしミスティア選手今拳を突き上げガッツボー..",
+    "いよったら"
+  ],
+  "translations": [
+    "Lead slightly! Can we make it 30 meters further!",
+    "Here, the top player is passing the other player and taking the lead!",
+    "No, that’s not right! It’s Mistia! Mistia Lorelei!",
+    "Toji!",
+    "With a slight advantage, we’re passing the other player. Mistia is raising her fists now… Guts Boom…",
+    "Alright then."
+  ]
+}

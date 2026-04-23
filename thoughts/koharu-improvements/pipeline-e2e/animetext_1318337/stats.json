@@ -1,0 +1,29 @@
+{
+  "image": "animetext_1318337.jpg",
+  "detect_ms": 944.859504699707,
+  "num_blocks": 9,
+  "num_text_lines": 20,
+  "ocr_ms": 10322.479009628296,
+  "inpaint_ms": 31214.58888053894,
+  "translate_ms": 85204.42986488342,
+  "ocr_samples": [
+    "まったく!いったい何だって辞めろなんて..",
+    "...つまり",
+    "うん",
+    "寺のお偉いさんにバンドを辞めるように言われた...と",
+    "騒音で苦情が出てるらしくて..他人に迷惑をかけるのはダメだって..",
+    "それは絶対ダメっ!!",
+    "来たけど言い出しづらくて",
+    "うん.."
+  ],
+  "translations": [
+    "Really! What in the world is it that tells me to quit…",
+    "…I mean,",
+    "Yeah.",
+    "The high-ranking person in the temple told me to quit the band…",
+    "It seems like there are complaints due to the noise pollution. It’s not allowed to cause trouble to others…",
+    "That’s absolutely unacceptable!!",
+    "I came, but it was difficult to say anything at first…",
+    "Yeah…"
+  ]
+}
