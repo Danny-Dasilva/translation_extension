@@ -1,0 +1,11 @@
+[1] It’s terrible! Muraza is suffering from stress without a sea to escape to, and she’s even engaging in self-harm.
+[2] I really hope there’s something that can help her relieve this stress.
+[3] It’s the town union’s “Starman” event!
+[4] Well, what should we do?
+[5] I heard there’s a lake nearby, even though there’s no sea.
+[6] …Maybe we shouldn’t go. It might be better to hurry up.
+[7] Oh, that’s great! We’ve saved enough money to calm down now.
+[8] It’s interesting to watch, isn’t it?
+[9] Let’s go out and have fun together.
+[10] Shall we go and play together?
+[11] Yeah, I’m fine with that. It’s a fun activity to do together.
