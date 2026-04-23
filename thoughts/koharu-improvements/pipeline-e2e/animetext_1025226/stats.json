@@ -1,0 +1,19 @@
+{
+  "image": "animetext_1025226.jpg",
+  "detect_ms": 530.2801132202148,
+  "num_blocks": 3,
+  "num_text_lines": 3,
+  "ocr_ms": 1419.633150100708,
+  "inpaint_ms": 6174.557447433472,
+  "translate_ms": 7870.216131210327,
+  "ocr_samples": [
+    "彼はもう",
+    "その小要もはないわ",
+    "目覚める事はない"
+  ],
+  "translations": [
+    "He is no longer there.",
+    "There’s nothing left of that little thing either.",
+    "He will never wake up again."
+  ]
+}

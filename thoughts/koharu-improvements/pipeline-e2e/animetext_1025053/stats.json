@@ -1,0 +1,15 @@
+{
+  "image": "animetext_1025053.jpg",
+  "detect_ms": 541.1844253540039,
+  "num_blocks": 1,
+  "num_text_lines": 7,
+  "ocr_ms": 459.9740505218506,
+  "inpaint_ms": 9865.331649780273,
+  "translate_ms": 2156.7063331604004,
+  "ocr_samples": [
+    "え?"
+  ],
+  "translations": [
+    "Huh?"
+  ]
+}
