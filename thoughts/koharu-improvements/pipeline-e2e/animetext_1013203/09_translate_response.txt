@@ -1,0 +1,13 @@
+[1] Oh!
+[2] Bye-bye!
+[3] Hi there!
+[4] Hey, can I go play with A-yo next time?
+[5] Ah!
+[6] You can go anytime!
+[7] Welcome back!
+[8] I came to play!
+[9] “I came to play.”
+[10] I’m back now.
+[11] What about the kid behind you?
+[12] Quick enough!
+[13] ...Ara?

@@ -1,0 +1,23 @@
+{
+  "image": "animetext_1013188.jpg",
+  "detect_ms": 477.68163681030273,
+  "num_blocks": 5,
+  "num_text_lines": 5,
+  "ocr_ms": 2365.3948307037354,
+  "inpaint_ms": 6531.558036804199,
+  "translate_ms": 9298.290967941284,
+  "ocr_samples": [
+    "おはよう",
+    "るかよ",
+    "くわー",
+    "ございます",
+    "ああ"
+  ],
+  "translations": [
+    "Good morning.",
+    "Really?",
+    "Wow!",
+    "I’m here.",
+    "Ah."
+  ]
+}

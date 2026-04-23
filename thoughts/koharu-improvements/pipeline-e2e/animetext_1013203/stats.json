@@ -1,0 +1,29 @@
+{
+  "image": "animetext_1013203.jpg",
+  "detect_ms": 491.7628765106201,
+  "num_blocks": 13,
+  "num_text_lines": 19,
+  "ocr_ms": 8075.170993804932,
+  "inpaint_ms": 25788.671731948853,
+  "translate_ms": 8917.040824890137,
+  "ocr_samples": [
+    "おーっ",
+    "じゃーなー",
+    "バイバーイ",
+    "ねーねー今度阿遊びに行っていい?",
+    "あっ",
+    "いつでもいいよーっ",
+    "おかえり",
+    "遊びにきたよ!"
+  ],
+  "translations": [
+    "Oh!",
+    "Bye-bye!",
+    "Hi there!",
+    "Hey, can I go play with A-yo next time?",
+    "Ah!",
+    "You can go anytime!",
+    "Welcome back!",
+    "I came to play!"
+  ]
+}
