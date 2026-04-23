@@ -1,0 +1,19 @@
+{
+  "image": "animetext_1036053.jpg",
+  "detect_ms": 942.8598880767822,
+  "num_blocks": 4,
+  "num_text_lines": 6,
+  "ocr_ms": 4038.771152496338,
+  "inpaint_ms": 15331.078052520752,
+  "translate_ms": 56159.33680534363,
+  "ocr_samples": [
+    "V配制席てくださフリホ",
+    "まだっです。",
+    "一田三二丁"
+  ],
+  "translations": [
+    "Please arrange the seats for V preparation.",
+    "It’s still not done yet.",
+    "Ita Sanjiu Ding"
+  ]
+}

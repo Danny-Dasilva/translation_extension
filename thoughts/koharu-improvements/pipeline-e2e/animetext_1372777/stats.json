@@ -1,0 +1,17 @@
+{
+  "image": "animetext_1372777.jpg",
+  "detect_ms": 1034.8093509674072,
+  "num_blocks": 2,
+  "num_text_lines": 7,
+  "ocr_ms": 2674.5922565460205,
+  "inpaint_ms": 12580.764293670654,
+  "translate_ms": 54583.60409736633,
+  "ocr_samples": [
+    "召かし",
+    "OTさてててン!!アアラ〜〜"
+  ],
+  "translations": [
+    "Summon me.",
+    "OT, come on!! Ah-ah-ah~"
+  ]
+}
