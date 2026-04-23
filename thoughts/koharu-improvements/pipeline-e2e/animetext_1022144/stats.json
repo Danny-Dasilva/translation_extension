@@ -1,0 +1,29 @@
+{
+  "image": "animetext_1022144.jpg",
+  "detect_ms": 580.3165435791016,
+  "num_blocks": 11,
+  "num_text_lines": 13,
+  "ocr_ms": 6312.649965286255,
+  "inpaint_ms": 14360.528469085693,
+  "translate_ms": 9543.745279312134,
+  "ocr_samples": [
+    "ここは私のあれだ!大切?な聖地だ!",
+    "奇話-",
+    "ちみう",
+    "ででいき",
+    "食べる?",
+    "いや",
+    "ええい!",
+    "ごこご私ん家"
+  ],
+  "translations": [
+    "This is my sacred place! It’s a truly important place.",
+    "Strange stories…",
+    "Chimiu",
+    "Let’s go!",
+    "Do we eat here?",
+    "No.",
+    "Ugh!",
+    "This is my home."
+  ]
+}

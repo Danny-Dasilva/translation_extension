@@ -1,0 +1,29 @@
+{
+  "image": "animetext_1022149.jpg",
+  "detect_ms": 529.6564102172852,
+  "num_blocks": 10,
+  "num_text_lines": 17,
+  "ocr_ms": 7113.78288269043,
+  "inpaint_ms": 17983.01672935486,
+  "translate_ms": 10570.122241973877,
+  "ocr_samples": [
+    "うわ",
+    "うわわわっ",
+    "正式に紅魔の一員になることに",
+    "ぎゃああああ",
+    "レミリア様は恐ろしいいだだ失礼の無い様",
+    "本来はいいの?",
+    "わわー!",
+    "笑えー.."
+  ],
+  "translations": [
+    "Uwa",
+    "Uwa-wa-wa-っ",
+    "To officially become a member of Red Devil",
+    "Gya-a-a-a-a",
+    "Lermia-sama, please be careful not to cause any harm",
+    "Is it really okay in the first place?",
+    "Waaah!",
+    "Lol.."
+  ]
+}
