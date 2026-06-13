@@ -23,7 +23,7 @@ from app.utils.image_processing import (
     decode_base64_to_pil,
     extract_text_region_background
 )
-from app.utils.ctd_utils import build_text_regions, build_inpaint_mask
+from app.utils.ctd_utils import build_text_regions, build_inpaint_mask, match_blocks_to_bubbles
 from app.utils.japanese_text_filter import is_japanese_text, filter_japanese_texts
 from app.utils.zindex_utils import assign_smart_zindex
 from app.utils.progress_bus import bus as progress_bus
@@ -81,6 +81,19 @@ if settings.enable_inpainting:
         logger.warning(f"LaMa inpainting unavailable ({exc}); continuing without plate")
         inpaint_service = None
 
+# Lazy-init speech-bubble detector (YOLOv10n). Separate from the CTD text
+# detector above: CTD finds tight text columns, this finds the enclosing
+# balloon so the frontend can typeset the translation to the bubble interior.
+bubble_detector = None
+if settings.enable_bubble_fit:
+    try:
+        from app.services.detector_service import DetectorService
+        logger.info("Loading YOLOv10n speech-bubble detector (bubble-fit typesetting)")
+        bubble_detector = DetectorService(model_path=settings.yolo_model_path)
+    except Exception as exc:
+        logger.warning(f"Bubble detector unavailable ({exc}); typesetting falls back to text blocks")
+        bubble_detector = None
+
 logger.info("Local AI pipeline ready")
 
 
@@ -132,6 +145,7 @@ async def process_single_image(
         Tuple of (index, list of TextBox results)
     """
     inpainted_b64: Optional[str] = None
+    bubbles: List[dict] = []
     try:
         image_start = time.time()
         logger.info(f"Processing image {idx + 1}")
@@ -166,6 +180,17 @@ async def process_single_image(
                 logger.warning(f"No text blocks detected in image {idx + 1}")
                 await emit("done", 5, 5, note="no_blocks")
                 return (idx, [], None)
+
+            # Step 2b: Detect speech bubbles (YOLOv10n) for bubble-fit typesetting.
+            # Run inside the GPU semaphore alongside detection; failures are
+            # non-fatal (we just fall back to tight block bboxes downstream).
+            if bubble_detector is not None:
+                try:
+                    bubbles = await bubble_detector.detect_bubbles(image_np)
+                    logger.info(f"Image {idx + 1}: Detected {len(bubbles)} speech bubbles")
+                except Exception as exc:
+                    logger.warning(f"Image {idx + 1}: bubble detect failed ({exc}); using text blocks")
+                    bubbles = []
 
             # Step 3: Crop block regions
             crops = detector_service.crop_regions(image_np, blocks)
@@ -324,9 +349,19 @@ async def process_single_image(
         # Decode image once for all background extractions (avoids N base64 decodes)
         pil_image = decode_base64_to_pil(base64_image)
 
+        # Match each kept block to its enclosing speech bubble so the frontend
+        # can typeset the translation to the bubble interior (wide) instead of
+        # the tight vertical-JP column. None where no qualifying bubble exists.
+        fit_rects = (
+            match_blocks_to_bubbles(blocks, bubbles)
+            if bubbles else [None] * len(blocks)
+        )
+
         # Step 6: Build response
         text_boxes = []
-        for block, ocr_text, translated_text, text_regions in zip(blocks, ocr_texts, translations, all_text_regions):
+        for block, ocr_text, translated_text, text_regions, fit_rect in zip(
+            blocks, ocr_texts, translations, all_text_regions, fit_rects
+        ):
             # Calculate font size based on inset text region (where text will be rendered)
             # Use the first text region (the inset box) for font sizing
             region = text_regions[0] if text_regions else block
@@ -367,6 +402,12 @@ async def process_single_image(
                 translatedText=translated_text,
                 subtextBoxes=[],
                 textRegions=[TextRegion(**r) for r in text_regions],
+                bubbleRect=TextRegion(
+                    minX=int(fit_rect["minX"]),
+                    minY=int(fit_rect["minY"]),
+                    maxX=int(fit_rect["maxX"]),
+                    maxY=int(fit_rect["maxY"]),
+                ) if fit_rect else None,
                 confidence=block.get('confidence', 0.0),
                 ocrTimeMs=round(ocr_time_per_crop, 2),
                 translateTimeMs=round(translate_time_per_text, 2),

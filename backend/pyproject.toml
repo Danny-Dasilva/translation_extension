@@ -19,7 +19,7 @@ dependencies = [
     "transformers>=4.60", # Model loading for manga-ocr and translation
     "accelerate>=0.30.0", # Model loading optimization
     "onnxruntime-gpu>=1.24.0", # GPU ONNX Runtime; 1.24+ is the first with Blackwell sm_120 cubins (CUDA 13). Runs CTD/PARSeq/LaMa on CUDA (LaMa ~50ms/forward vs ~2-4s CPU). Do NOT also install CPU `onnxruntime` (silent CPU fallback).
-    "optimum[onnxruntime-gpu]>=1.19.0", # only the non-default manga-ocr backend (lazy import); PARSeq default uses raw onnxruntime-gpu
+    "optimum>=1.19.0", # only the non-default manga-ocr backend (lazy import); PARSeq default uses raw onnxruntime-gpu (declared above). No [onnxruntime-gpu] extra — its transformers/ort pins conflict with transformers>=4.60 + numpy>=2.3.3.
     "huggingface-hub>=0.23.0", # Model downloads
     "torch>=2.0.0", # PyTorch backend
     "jinja2>=3.1.0", # HTML templating

@@ -90,6 +90,10 @@ class Settings(BaseSettings):
     # When enabled, run LaMa inpainting after OCR/translate and return inpainted PNG
     enable_inpainting: bool = True
     lama_model_path: str = "models/lama.onnx"
+    # When enabled, detect speech bubbles (YOLOv10n) and expose the matched
+    # bubble interior per text box (bubbleRect) so the frontend can typeset the
+    # translation to the bubble rather than the tight (vertical-JP) text column.
+    enable_bubble_fit: bool = True
     # When enabled, use page-level [N]-tagged batched translation (coherence win)
     # instead of per-bubble parallel calls. Fallback to parallel on failure.
     use_batched_translation: bool = True

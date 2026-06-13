@@ -29,6 +29,10 @@ class TextBox(BaseModel):
     translatedText: str
     subtextBoxes: List = []
     textRegions: List[TextRegion] = []
+    # Speech-bubble interior this box was matched to (YOLOv10n + match_blocks_to_bubbles).
+    # None when the block sits in no qualifying bubble (e.g. SFX over art) — the
+    # frontend should fall back to the tight block bbox / textRegions in that case.
+    bubbleRect: Optional[TextRegion] = None
     confidence: float = 0.0
     ocrTimeMs: float = 0.0
     translateTimeMs: float = 0.0
