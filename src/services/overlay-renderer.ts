@@ -37,6 +37,12 @@ interface RegionBBox {
   y: number;
   width: number;
   height: number;
+  /**
+   * Which source produced this region. 'bubble' = matched speech-bubble
+   * interior; 'regions'/'bbox' = tight text-pixel sources; 'expanded' = the
+   * null-bubble fallback grew a tight source outward to give long EN text room.
+   */
+  source?: 'bubble' | 'regions' | 'bbox' | 'expanded';
 }
 
 // Minimum and maximum font sizes probed by the binary search.
@@ -49,21 +55,43 @@ const LINE_GAP_FACTOR = 1.1;
 // Contrast ratio threshold below which we override API-supplied colors.
 const MIN_CONTRAST_RATIO = 3.0;
 
+// Comic font families we try to guarantee are loaded before the first
+// measure/paint pass. Order = preference (local bundled first, then CDN).
+const PRIMARY_FONT_FAMILY = 'Bangers';
+const SECONDARY_FONT_FAMILY = 'Fredoka';
+// Font sizes (px) we eagerly prime via document.fonts.load so the binary
+// search measures with real glyph metrics instead of the Arial fallback.
+const FONT_PRIME_SIZES = [12, 24, 48, 72];
+
 export class OverlayRenderer {
   private renderedImages: Map<HTMLElement, RenderedImage> = new Map();
   private fontsInjected = false;
+  /** Memoized promise that resolves once comic fonts are usable on canvas. */
+  private fontsReadyPromise: Promise<void> | null = null;
 
   constructor() {
     this.ensureFontsInjected();
   }
 
   /**
-   * Inject a `<link>` into the host page pointing at a comic-style Google Font
-   * so our canvas font-family fallback chain has something to use.
+   * Inject font sources into the host page so our canvas font-family fallback
+   * chain has comic fonts to use.
    *
-   * Documented license: Bangers is OFL (https://fonts.google.com/specimen/Bangers),
-   * Fredoka is OFL (https://fonts.google.com/specimen/Fredoka). Both are
-   * safe to link directly via Google Fonts CSS API.
+   * Strategy (preferring local, falling back to CDN):
+   *   1. LOCAL @font-face via the extension's web_accessible_resources
+   *      (`fonts/*`, declared in manifest.chrome.json). We register these with
+   *      the FontFace API using browser.runtime.getURL so they resolve in the
+   *      content-script context (the `chrome-extension://__MSG_@@extension_id__`
+   *      placeholder in overlay.css only resolves for manifest-referenced CSS,
+   *      NOT for canvas painting). Local fonts eliminate the CDN 404/offline +
+   *      latency path.
+   *   2. CDN <link> (Google Fonts) as a robust fallback. Bangers + Fredoka are
+   *      OFL-licensed and safe to link.
+   *
+   * NOTE: local TTFs are not yet shipped in public/fonts/ (only a README),
+   * so the local path is best-effort and silently falls back to the CDN.
+   * FOLLOW-UP: bundle Bangers-Regular.ttf (OFL) into public/fonts/ to make the
+   * local path the default and drop the CDN dependency entirely.
    */
   private ensureFontsInjected(): void {
     if (this.fontsInjected) return;
@@ -84,6 +112,98 @@ export class OverlayRenderer {
     } catch (err) {
       // Non-fatal: canvas drawing will fall back to Arial/sans-serif.
       console.warn('Manga Translator: font injection failed', err);
+    }
+  }
+
+  /**
+   * Resolve once the comic fonts are actually available for canvas drawing.
+   *
+   * This closes the measure-in-Arial / paint-in-Bangers race: the renderer
+   * previously measured & painted BEFORE the CDN font loaded, so the binary
+   * search sized against Arial metrics and the final paint used a different
+   * (wider) glyph set — causing overspill. We now:
+   *   1. Attempt to register a LOCAL @font-face (via runtime.getURL) and add it
+   *      to document.fonts — preferred over the CDN.
+   *   2. Explicitly document.fonts.load() the comic families at several sizes.
+   *   3. Await document.fonts.ready as a backstop.
+   *
+   * Memoized so we only pay the cost once per renderer instance. All failures
+   * are swallowed (we degrade to the Arial fallback rather than blocking).
+   */
+  private async ensureFontsReady(): Promise<void> {
+    if (this.fontsReadyPromise) return this.fontsReadyPromise;
+
+    this.fontsReadyPromise = (async () => {
+      if (typeof document === 'undefined' || !('fonts' in document)) return;
+      const fontSet = (document as Document).fonts;
+
+      // 1. Best-effort LOCAL @font-face registration (preferred over CDN).
+      await this.tryRegisterLocalFonts(fontSet);
+
+      // 2. Explicitly prime the comic families at the sizes the layout probes.
+      const loadJobs: Promise<unknown>[] = [];
+      for (const family of [PRIMARY_FONT_FAMILY, SECONDARY_FONT_FAMILY]) {
+        for (const size of FONT_PRIME_SIZES) {
+          try {
+            // "AaGg" exercises ascenders/descenders so metrics are realistic.
+            loadJobs.push(fontSet.load(`bold ${size}px "${family}"`, 'AaGg'));
+          } catch {
+            // Some browsers throw on unknown families — ignore.
+          }
+        }
+      }
+      try {
+        await Promise.allSettled(loadJobs);
+      } catch {
+        /* ignore */
+      }
+
+      // 3. Backstop: wait for the document's overall font readiness.
+      try {
+        await fontSet.ready;
+      } catch {
+        /* ignore */
+      }
+    })();
+
+    return this.fontsReadyPromise;
+  }
+
+  /**
+   * Try to register the bundled comic font(s) via the FontFace API using the
+   * extension's own URL. Returns silently if the asset is missing or the
+   * runtime API is unavailable (e.g. unit/test context).
+   */
+  private async tryRegisterLocalFonts(fontSet: FontFaceSet): Promise<void> {
+    try {
+      // Already registered? (family present in the set) — skip.
+      const browserMod = await import('webextension-polyfill');
+      const runtime = browserMod.default?.runtime;
+      const getURL = runtime?.getURL?.bind(runtime);
+      if (!getURL) return;
+
+      // Map of family -> bundled asset path under web_accessible_resources.
+      const localFonts: Array<{ family: string; path: string }> = [
+        { family: PRIMARY_FONT_FAMILY, path: 'fonts/Bangers-Regular.ttf' },
+      ];
+
+      for (const { family, path } of localFonts) {
+        try {
+          const url = getURL(path);
+          // HEAD-check so a missing asset doesn't spam FontFace errors.
+          const probe = await fetch(url, { method: 'HEAD' });
+          if (!probe.ok) continue;
+          const face = new FontFace(family, `url(${url}) format('truetype')`, {
+            weight: 'normal',
+          });
+          const loaded = await face.load();
+          fontSet.add(loaded);
+        } catch {
+          // Missing/forbidden asset — fall back to CDN for this family.
+        }
+      }
+    } catch {
+      // No runtime (non-extension context) — CDN fallback handles it.
     }
   }
 
@@ -200,6 +320,12 @@ export class OverlayRenderer {
     showDebug: boolean = false,
     inpaintedBase64: string | null = null
   ): Promise<HTMLCanvasElement> {
+    // Close the measure/paint font race: make sure the comic fonts are loaded
+    // BEFORE the first layoutAtSize/measureText call below. Otherwise the
+    // binary search measures Arial metrics and the paint uses Bangers ->
+    // systematic overspill. Best-effort; degrades to Arial on failure.
+    await this.ensureFontsReady();
+
     // Always load original first — we may still need it for luminance sampling
     // under boxes that lack inpainted coverage (e.g. partial plates).
     const image = await this.loadImage(base64Image);
@@ -241,13 +367,26 @@ export class OverlayRenderer {
     // rounded rects.
     if (!inpaintedBase64) {
       for (const textBox of sortedTextBoxes) {
-        this.drawTextBoxBackground(ctx, textBox);
+        this.drawTextBoxBackground(
+          ctx,
+          textBox,
+          sortedTextBoxes,
+          canvas.width,
+          canvas.height
+        );
       }
     }
 
     // Pass 2: Draw ALL text on top of all backgrounds
     for (const textBox of sortedTextBoxes) {
-      this.drawTextBoxText(ctx, textBox, fontFamily);
+      this.drawTextBoxText(
+        ctx,
+        textBox,
+        fontFamily,
+        sortedTextBoxes,
+        canvas.width,
+        canvas.height
+      );
     }
 
     // Pass 3 (optional): Draw debug overlays
@@ -262,39 +401,95 @@ export class OverlayRenderer {
   }
 
   /**
-   * Draw ONLY the white background for a text box (Pass 1 of two-pass rendering)
+   * Draw ONLY the white background for a text box (Pass 1 of two-pass rendering).
+   *
+   * Mask/plate coupling policy (reconciled with the null-bubble expansion):
+   *   - IN-BUBBLE case (bubbleRect matched): the speech bubble already provides
+   *     a clean background, so we keep the mask TIGHT to the text pixels
+   *     (textRegions) — painting the whole bubble interior would cover bubble
+   *     art / tails. Text never sits on un-erased pixels because the bubble
+   *     interior is uniform.
+   *   - NULL-BUBBLE / EXPANDED case (SFX over art, no bubble): the text now
+   *     lays out inside an EXPANDED region (computeTextRegionBBox), which can
+   *     extend beyond the tight text pixels onto un-erased art. So here we
+   *     paint the plate to cover the actual LAYOUT region, guaranteeing text
+   *     never sits on busy art. This is the same region findBestFit uses, so
+   *     plate and text stay coupled.
    */
-  private drawTextBoxBackground(ctx: CanvasRenderingContext2D, textBox: TextBox): void {
-    const x = textBox.minX;
-    const y = textBox.minY;
-    const width = textBox.maxX - textBox.minX;
-    const height = textBox.maxY - textBox.minY;
+  private drawTextBoxBackground(
+    ctx: CanvasRenderingContext2D,
+    textBox: TextBox,
+    allBoxes?: TextBox[],
+    canvasW?: number,
+    canvasH?: number
+  ): void {
+    const region = this.computeTextRegionBBox(textBox, allBoxes, canvasW, canvasH);
 
-    // NOTE: the mask source intentionally stays on textRegions (the actual
-    // text pixels), NOT bubbleRect. Text LAYOUT uses the larger bubble interior
-    // (see computeTextRegionBBox), but painting a white plate over the whole
-    // bubble interior would cover bubble art. Keep masking tight to text.
-    if (textBox.textRegions && textBox.textRegions.length > 0) {
-      for (const region of textBox.textRegions) {
-        const rw = region.maxX - region.minX;
-        const rh = region.maxY - region.minY;
-        this.drawRoundedRect(ctx, region.minX, region.minY, rw, rh, 'white', 4);
+    // In-bubble: keep the mask tight to text pixels (preserve bubble art).
+    if (region.source === 'bubble') {
+      if (textBox.textRegions && textBox.textRegions.length > 0) {
+        for (const r of textBox.textRegions) {
+          this.drawRoundedRect(
+            ctx,
+            r.minX,
+            r.minY,
+            r.maxX - r.minX,
+            r.maxY - r.minY,
+            'white',
+            4
+          );
+        }
+      } else {
+        this.drawRoundedRect(
+          ctx,
+          textBox.minX,
+          textBox.minY,
+          textBox.maxX - textBox.minX,
+          textBox.maxY - textBox.minY,
+          'white',
+          8
+        );
       }
-    } else {
-      this.drawRoundedRect(ctx, x, y, width, height, 'white', 8);
+      return;
     }
+
+    // Null-bubble / expanded / tight: plate MUST cover the layout region so
+    // expanded text never lands on un-erased pixels.
+    this.drawRoundedRect(
+      ctx,
+      region.x,
+      region.y,
+      region.width,
+      region.height,
+      'white',
+      8
+    );
   }
 
   /**
    * Compute the box we wrap and center text inside. Fallback chain:
    *   1. bubbleRect  — the matched speech-bubble interior (larger than the
    *      tight OCR bbox), so text fills the bubble and overspill resolves.
-   *   2. textRegions — union of precise text regions (older responses / no bubble).
-   *   3. tight outer bbox — last resort.
-   * bubbleRect is optional and may be null (e.g. SFX over art), so older
-   * responses without it still render via the textRegions/bbox fallback.
+   *   2. textRegions/bbox — tight text-pixel sources. When NO qualifying
+   *      bubble was matched (bubbleRect null/zero-area — e.g. SFX over art,
+   *      the ~11% overspill + 27 miss boxes in the perf evidence), we do NOT
+   *      fall straight to the tight box. Instead we EXPAND the tight union
+   *      outward (see expandRegion) so long EN text has room to lay out at a
+   *      readable size instead of overflowing an 8px-floored tight box.
+   *
+   * bubbleRect is optional and may be null, so older responses without it
+   * still render via the (expanded) textRegions/bbox fallback.
+   *
+   * @param allBoxes optional sibling boxes; used to bound expansion so we
+   *   don't grow a region over a neighbor's text.
+   * @param canvasW/canvasH image bounds; expansion is clamped to these.
    */
-  private computeTextRegionBBox(textBox: TextBox): RegionBBox {
+  private computeTextRegionBBox(
+    textBox: TextBox,
+    allBoxes?: TextBox[],
+    canvasW?: number,
+    canvasH?: number
+  ): RegionBBox {
     const b = textBox.bubbleRect;
     if (b && b.maxX > b.minX && b.maxY > b.minY) {
       return {
@@ -302,8 +497,12 @@ export class OverlayRenderer {
         y: b.minY,
         width: Math.max(1, b.maxX - b.minX),
         height: Math.max(1, b.maxY - b.minY),
+        source: 'bubble',
       };
     }
+
+    // Build the tight union (textRegions if present, else outer bbox).
+    let tight: RegionBBox;
     if (textBox.textRegions && textBox.textRegions.length > 0) {
       let minX = Infinity;
       let minY = Infinity;
@@ -315,18 +514,101 @@ export class OverlayRenderer {
         if (r.maxX > maxX) maxX = r.maxX;
         if (r.maxY > maxY) maxY = r.maxY;
       }
-      return {
+      tight = {
         x: minX,
         y: minY,
         width: Math.max(1, maxX - minX),
         height: Math.max(1, maxY - minY),
+        source: 'regions',
+      };
+    } else {
+      tight = {
+        x: textBox.minX,
+        y: textBox.minY,
+        width: Math.max(1, textBox.maxX - textBox.minX),
+        height: Math.max(1, textBox.maxY - textBox.minY),
+        source: 'bbox',
       };
     }
+
+    // Null/zero-area bubble => expand the tight box to give text room.
+    return this.expandRegion(tight, textBox, allBoxes, canvasW, canvasH);
+  }
+
+  /**
+   * Grow a tight text region outward when no speech bubble was matched.
+   *
+   * Heuristic (documented):
+   *   - Target ~2x area (matches the observed median bubbleRect/bbox expansion
+   *     ratio of 2.0x in the perf evidence), via a margin of ~50% of each
+   *     dimension capped at 48px per side so huge SFX boxes don't balloon.
+   *   - Clamp to image bounds [0, canvasW] x [0, canvasH].
+   *   - Bound by the nearest neighbor box edge on each side (when sibling boxes
+   *     are provided) minus a small gutter, so we never grow over a neighbor's
+   *     text. Cheap O(n) per box; n is tiny (<= ~10 blocks/page).
+   */
+  private expandRegion(
+    tight: RegionBBox,
+    self: TextBox,
+    allBoxes: TextBox[] | undefined,
+    canvasW: number | undefined,
+    canvasH: number | undefined
+  ): RegionBBox {
+    const MAX_MARGIN_PX = 48;
+    const NEIGHBOR_GUTTER_PX = 6;
+    const marginX = Math.min(MAX_MARGIN_PX, Math.round(tight.width * 0.5));
+    const marginY = Math.min(MAX_MARGIN_PX, Math.round(tight.height * 0.5));
+
+    let left = tight.x - marginX;
+    let top = tight.y - marginY;
+    let right = tight.x + tight.width + marginX;
+    let bottom = tight.y + tight.height + marginY;
+
+    // Clamp to image bounds.
+    const imgW = canvasW ?? Infinity;
+    const imgH = canvasH ?? Infinity;
+    left = Math.max(0, left);
+    top = Math.max(0, top);
+    right = Math.min(imgW, right);
+    bottom = Math.min(imgH, bottom);
+
+    // Bound by neighbors so we don't overlap their text (cheap rejection:
+    // only neighbors that vertically/horizontally straddle us can collide).
+    if (allBoxes && allBoxes.length > 1) {
+      const cx = tight.x + tight.width / 2;
+      const cy = tight.y + tight.height / 2;
+      for (const other of allBoxes) {
+        if (other === self) continue;
+        const oL = other.minX;
+        const oT = other.minY;
+        const oR = other.maxX;
+        const oB = other.maxY;
+        // Vertical overlap with the tight band => can clip our horizontal grow.
+        const vOverlap = oB > tight.y && oT < tight.y + tight.height;
+        if (vOverlap) {
+          if (oR <= cx) left = Math.max(left, oR + NEIGHBOR_GUTTER_PX);
+          if (oL >= cx) right = Math.min(right, oL - NEIGHBOR_GUTTER_PX);
+        }
+        const hOverlap = oR > tight.x && oL < tight.x + tight.width;
+        if (hOverlap) {
+          if (oB <= cy) top = Math.max(top, oB + NEIGHBOR_GUTTER_PX);
+          if (oT >= cy) bottom = Math.min(bottom, oT - NEIGHBOR_GUTTER_PX);
+        }
+      }
+    }
+
+    // Never shrink below the tight box (neighbor clamps could over-constrain).
+    left = Math.min(left, tight.x);
+    top = Math.min(top, tight.y);
+    right = Math.max(right, tight.x + tight.width);
+    bottom = Math.max(bottom, tight.y + tight.height);
+
     return {
-      x: textBox.minX,
-      y: textBox.minY,
-      width: Math.max(1, textBox.maxX - textBox.minX),
-      height: Math.max(1, textBox.maxY - textBox.minY),
+      x: left,
+      y: top,
+      width: Math.max(1, right - left),
+      height: Math.max(1, bottom - top),
+      source: 'expanded',
     };
   }
 

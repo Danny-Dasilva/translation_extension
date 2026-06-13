@@ -23,6 +23,12 @@ export interface TextBox {
   maxX: number;
   maxY: number;
   background: string; // base64
+  /**
+   * Backend-estimated glyph height in pixels for this block. Used by the
+   * renderer as the initial seed / soft cap for the font-fit binary search
+   * (see findBestFit). Optional + may be 0 on older responses, in which case
+   * the renderer falls back to a pure 8..72 search.
+   */
   fontHeightPx: number;
   fontColor: string;
   fontStrokeColor: string;
