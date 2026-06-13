@@ -23,3 +23,11 @@ backend/debug_output/
 # YOLO training run outputs / checkpoints — large, regenerable; never commit.
 # (Stripped from history 2026-06-13; .pt weights kept on local disk only.)
 runs/
+
+# Machine-generated caches (local only, regenerable)
+.benchmark/
+.claude/tsc-cache/
+unsloth_compiled_cache/
+
+# Secrets / scratch — never commit
+exhentai_cookies.txt
