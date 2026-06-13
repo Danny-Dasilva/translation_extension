@@ -64,3 +64,10 @@ __pycache__/
 
 # ===== Machine-generated manifest =====
 filepaths.txt
+
+# ===== Visual-test harness screenshots (regenerable) =====
+dev/visual-test/out/
+
+# ===== eval_vision result artifacts (regenerable) =====
+backend/scripts/eval_vision/*_results.json
+backend/scripts/eval_vision/*_ctd-lines.json

@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Manga Overlay Visual Test Harness</title>
+    <!--
+      Comic fonts. OverlayRenderer also injects this same <link> itself, but we
+      add it here too so it starts loading at parse time. We additionally
+      await document.fonts.ready in main.ts before signalling render-complete.
+    -->
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Bangers&family=Fredoka:wght@400;600&display=swap"
+    />
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        background: #2b2b2b;
+      }
+      /* The image is replaced in-place by OverlayRenderer (its src becomes the
+         rendered canvas dataURL). We render at NATURAL size (no CSS scaling) so
+         the screenshot is pixel-faithful to the canvas the renderer produced. */
+      #page-img {
+        display: block;
+      }
+      #status {
+        position: fixed;
+        bottom: 4px;
+        right: 4px;
+        font: 11px monospace;
+        color: #0f0;
+        background: rgba(0, 0, 0, 0.6);
+        padding: 2px 6px;
+        z-index: 2147483647;
+      }
+      #status.error {
+        color: #f55;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- The host element OverlayRenderer.buildDomOverlay() positions against. -->
+    <div id="page-host">
+      <img id="page-img" alt="manga page" />
+    </div>
+    <div id="status">loading…</div>
+    <script type="module" src="/main.ts"></script>
+  </body>
+</html>
