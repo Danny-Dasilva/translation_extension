@@ -46,8 +46,124 @@ else:
     raise RuntimeError("No usable font found")
 
 
+# Wide-coverage fallback chain used when a bubble still contains a glyph
+# missing from the primary display font. First entry that can actually
+# render the string wins. Noto Sans CJK is listed first because any leaked
+# Japanese/Chinese character requires its cmap; DejaVu covers the rest.
+_FALLBACK_FONT_CANDIDATES = [
+    Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc"),
+    Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"),
+    Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"),
+    Path("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"),
+    Path("/usr/share/fonts/TTF/DejaVuSans-Bold.ttf"),
+]
+FALLBACK_FONT_PATHS: list[Path] = [p for p in _FALLBACK_FONT_CANDIDATES if p.exists()]
+FALLBACK_FONT_PATH: Path | None = FALLBACK_FONT_PATHS[0] if FALLBACK_FONT_PATHS else None
+
+
 def load_font(size: int, path: Path = DEFAULT_FONT_PATH) -> ImageFont.FreeTypeFont:
     return ImageFont.truetype(str(path), size)
+
+
+# ---------------------------------------------------------------------------
+# Display-text normalization & font coverage
+# ---------------------------------------------------------------------------
+
+# Map characters our Latin display fonts don't support (Anton/Bangers/Oswald
+# only cover ASCII + a sliver of Latin-1) back to ASCII equivalents so they
+# render instead of showing as tofu squares (□). Keeps the same semantic
+# punctuation the model emits — just in a font-compatible encoding.
+_DISPLAY_REPLACE: dict[str, str] = {
+    # ellipsis variants
+    "…": "...",   # …
+    "⋯": "...",   # ⋯
+    # dashes
+    "—": "-",     # em-dash
+    "–": "-",     # en-dash
+    "−": "-",     # minus
+    "ー": "-",     # ー katakana-hiragana prolonged sound mark (safe ASCII approx)
+    # curly/smart quotes
+    "‘": "'", "’": "'",
+    "“": '"', "”": '"',
+    "«": '"', "»": '"',
+    # Japanese quotes + brackets
+    "「": '"', "」": '"',
+    "『": '"', "』": '"',
+    "（": "(", "）": ")",
+    # Japanese punctuation
+    "。": ".", "、": ",",
+    "．": ".", "，": ",",
+    "？": "?", "！": "!",
+    "：": ":", "；": ";",
+    "・": ".",   # ・ middle dot
+    "·": ".",   # ·
+    # wave dashes
+    "〜": "~", "～": "~",
+    # fullwidth ASCII letters/digits → normal (rare in translations but safe)
+    **{chr(0xFF01 + i): chr(0x21 + i) for i in range(94)},
+    # non-breaking/zero-width spaces
+    " ": " ", "​": "", "‌": "", "‍": "", "﻿": "",
+}
+
+
+def normalize_for_display(text: str) -> str:
+    """Replace characters our Latin display fonts can't render with ASCII
+    equivalents. Safe to call multiple times (idempotent)."""
+    if not text:
+        return text
+    return "".join(_DISPLAY_REPLACE.get(ch, ch) for ch in text)
+
+
+_CMAP_CACHE: dict[str, set[int]] = {}
+
+
+def _cmap_for(path: Path) -> set[int]:
+    """Return the set of Unicode codepoints the font at `path` has glyphs
+    for. Cached; uses fontTools (which handles both .ttf and .ttc) and
+    returns a full-BMP set on error so we never false-negatively drop
+    supported glyphs."""
+    key = str(path)
+    if key in _CMAP_CACHE:
+        return _CMAP_CACHE[key]
+    try:
+        from fontTools.ttLib import TTFont, TTCollection
+        if path.suffix.lower() == ".ttc":
+            # .ttc collections carry multiple fonts — union all subfonts'
+            # cmaps so whichever face Pillow actually uses still passes.
+            coll = TTCollection(str(path))
+            codepoints: set[int] = set()
+            for ttf in coll.fonts:
+                try:
+                    codepoints.update(ttf.getBestCmap().keys())
+                except Exception:
+                    continue
+        else:
+            ttf = TTFont(str(path))
+            codepoints = set(ttf.getBestCmap().keys())
+    except Exception:
+        codepoints = set(range(0x10000))  # permissive on failure
+    _CMAP_CACHE[key] = codepoints
+    return codepoints
+
+
+def _font_supports(path: Path, text: str) -> bool:
+    """True if every non-whitespace codepoint in `text` is in the font's cmap."""
+    cmap = _cmap_for(path)
+    return all(ord(c) in cmap for c in text if not c.isspace())
+
+
+def _pick_renderable_font(preferred: Path, text: str) -> Path:
+    """Return `preferred` if it can render every char in `text`. Otherwise
+    return the first fallback that can. If none can render everything,
+    return the widest-coverage fallback we have (still better than the
+    narrow display font). The caller is responsible for handling the
+    mixed-style consequence — coverage beats tofu."""
+    if _font_supports(preferred, text):
+        return preferred
+    for fb in FALLBACK_FONT_PATHS:
+        if _font_supports(fb, text):
+            return fb
+    return FALLBACK_FONT_PATH or preferred
 
 
 # ---------------------------------------------------------------------------
@@ -88,8 +204,10 @@ def wrap_greedy(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFo
     for w in words:
         trial = (cur + " " + w).strip()
         if font.getlength(trial) <= max_w or not cur:
-            # single word wider than box? break it up by char
-            if font.getlength(w) > max_w and not cur:
+            # A word wider than the box: only hard-break LONG words (≥13 chars).
+            # Short words (e.g. "MOMMY") should overflow the narrow box on one
+            # line — a slight overhang reads far better than "MO/MM/Y".
+            if font.getlength(w) > max_w and not cur and len(w) >= 13:
                 frag = ""
                 for ch in w:
                     if font.getlength(frag + ch) > max_w and frag:
@@ -234,20 +352,51 @@ def compose_final(
     """
     pil = Image.fromarray(inpainted).convert("RGB")
     draw = ImageDraw.Draw(pil)
+    img_h, img_w = inpainted.shape[:2]
     for block, text in zip(blocks, translations):
+        if not text:
+            continue
+        # Normalize to the ASCII subset our display fonts actually cover, then
+        # UPPERCASE — English manga dialogue is conventionally all-caps (Wild
+        # Words / Anime Ace are caps-first), and it reads as "official" rather
+        # than machine output.
+        text = normalize_for_display(text).strip().upper()
         if not text:
             continue
         x0, y0 = int(block["minX"]), int(block["minY"])
         x1, y1 = int(block["maxX"]), int(block["maxY"])
-
         bw, bh = x1 - x0, y1 - y0
+        cx, cy = (x0 + x1) // 2, (y0 + y1) // 2
+
         # Fixed-px inset preserves a consistent visual margin at any bubble size.
         inset_w = max(20, bw - inset_margin * 2)
         inset_h = max(12, bh - inset_margin * 2)
 
-        font_path = pick_font(text)
-        font, lines = find_best_fit(draw, text.strip(), inset_w, inset_h, font_path,
-                                    min_size=6, max_size=96)
+        # Tall-narrow blocks come from vertical Japanese text columns. Rendering
+        # horizontal English into that skinny box forces one-word-per-line (or
+        # mid-word splits like "MO/M/MY"). Widen the fit box toward a readable
+        # aspect, centered on the block, clamped to the image — far better than
+        # cramming. Height may then overflow the original column, which is fine.
+        # Note: we deliberately do NOT widen narrow (vertical-JP-origin) blocks
+        # beyond their detected box. Widening blind to bubble geometry makes
+        # adjacent columns overlap into an unreadable jumble (CTD gives the
+        # tight text region, not the bubble interior). Proper widening needs a
+        # speech-bubble segmentation model — tracked as a follow-up. Here we
+        # keep text inside its block and rely on all-caps + the min floor +
+        # word-safe wrapping for legibility.
+        eff_w, eff_h = inset_w, inset_h
+        max_cap = 96
+
+        # Pick the display font, then swap in the widest-coverage fallback
+        # if it can't render every glyph (smart-quote, CJK leak, accented
+        # letter, etc.) — prevents tofu squares in the final composite.
+        font_path = _pick_renderable_font(pick_font(text), text)
+        # Minimum legible floor. Below this, text is unreadable at reading
+        # size — prefer a little overflow over microscopic text. Kept modest
+        # (13px) so small bubbles don't get text that dwarfs them.
+        min_floor = 13
+        font, lines = find_best_fit(draw, text, eff_w, eff_h, font_path,
+                                    min_size=min_floor, max_size=max_cap)
         mw, mh = measure_block(draw, lines, font)
 
         # Auto-contrast: flip to white text on dark plates.
@@ -258,14 +407,20 @@ def compose_final(
             fill, stroke = (0, 0, 0), (255, 255, 255)
 
         line_h = line_height_px(font)
-        top = y0 + (bh - mh) // 2
+        # Center the rendered block on the original block's center, then clamp
+        # so the whole block stays on-canvas (a tall column near a page edge
+        # would otherwise render off the top/bottom).
+        top = cy - mh // 2
+        top = max(2, min(top, img_h - mh - 2))
         # Stroke ~10 % of font size, capped so it doesn't close counters on tiny text.
         stroke_w = max(2, min(5, round(font.size * 0.10)))
         for i, ln in enumerate(lines):
             bb = font.getbbox(ln)
             lw = bb[2] - bb[0]
-            # ink-bbox correction so `left` aligns with the first glyph's ink edge
-            left = x0 + (bw - lw) // 2 - bb[0]
+            # ink-bbox correction so the line is centered on the block center,
+            # then clamp horizontally to keep the line on-canvas.
+            left = cx - lw // 2 - bb[0]
+            left = max(2 - bb[0], min(left, img_w - lw - 2 - bb[0]))
             y = top + i * line_h
             draw_stroked_text(draw, (left, y), ln, font,
                               fill=fill, stroke=stroke, stroke_width=stroke_w)
@@ -335,19 +490,36 @@ async def recompose_one(dir_: Path, detector, ocr_service) -> Optional[dict]:
 
 
 async def main():
-    e2e_root = REPO_ROOT / "thoughts" / "koharu-improvements" / "pipeline-e2e"
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--root", type=Path,
+                    default=REPO_ROOT / "thoughts" / "koharu-improvements" / "pipeline-e2e",
+                    help="Gallery root produced by visualize_e2e_pipeline.py")
+    ap.add_argument("--final-only", type=Path, default=None,
+                    help="Mirror refreshed 11_final_composite.png files into "
+                         "this flat folder as <slug>.png")
+    args = ap.parse_args()
+
+    e2e_root = args.root
     dirs = [p for p in sorted(e2e_root.iterdir())
-            if p.is_dir() and p.name not in ("features",)]
+            if p.is_dir() and p.name not in ("features", "originals")
+            and (p / "stats.json").exists()]
     if not dirs:
-        print("no e2e dirs found; run visualize_e2e_pipeline.py first")
+        print(f"no e2e dirs with stats.json found under {e2e_root}")
         return
     print(f"using font: {DEFAULT_FONT_PATH}")
-    print(f"re-composing {len(dirs)} image dirs…")
+    print(f"fallback fonts: {[p.name for p in FALLBACK_FONT_PATHS]}")
+    print(f"re-composing {len(dirs)} image dirs under {e2e_root}…")
     detector = create_detector()
     ocr = ParseqOCRService(model_path=settings.parseq_model_path)
     for d in dirs:
         try:
             await recompose_one(d, detector, ocr)
+            if args.final_only:
+                args.final_only.mkdir(parents=True, exist_ok=True)
+                src = d / "11_final_composite.png"
+                if src.exists():
+                    (args.final_only / f"{d.name}.png").write_bytes(src.read_bytes())
         except Exception as exc:
             print(f"  [{d.name}] FAILED: {exc}")
 

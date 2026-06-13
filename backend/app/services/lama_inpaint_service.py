@@ -68,6 +68,22 @@ _SIMPLE_BG_CHANNEL_STD_SWITCH = 1.0
 _RING_UNIFORM_FRACTION = 0.90
 _RING_TOLERANCE = 12.0
 
+# 3-way router tier-2 cutoff: residual regions whose ring std (max channel) is
+# below this go to classical cv2.inpaint (smooth/gradient — diffusion handles
+# them); at or above, they're textured/screentone and go to the LaMa model.
+_CLASSICAL_STD_MAX = 20.0
+
+
+def _ring_std_max(crop_img: np.ndarray, crop_msk: np.ndarray) -> float | None:
+    """Max per-channel std of the ~12px ring around the mask. None if no ring.
+    Low = smooth/gradient (classical-inpaint-safe); high = textured."""
+    ring_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (25, 25))
+    ring = (cv2.dilate(crop_msk, ring_kernel, iterations=1) > 0) & (crop_msk == 0)
+    if not ring.any():
+        return None
+    px = crop_img[ring].astype(np.float32)
+    return float(px.std(axis=0).max())
+
 
 class LamaInpaintService:
     """LaMa ONNX inpainter with koharu's Crop + balloon-fill strategy."""
@@ -84,7 +100,12 @@ class LamaInpaintService:
         # resolution: the global downscale pass added blur on the pasted-back
         # patches while per-component crops already bound model cost (512²).
         default_max_side: int = 2048,
+        enable_classical_inpaint: bool = True,
     ):
+        # 3-way router tier 2: route smooth/gradient residual regions to
+        # classical cv2.inpaint instead of the LaMa model. Set False to force
+        # the old flat-fill-or-LaMa behavior.
+        self.enable_classical_inpaint = enable_classical_inpaint
         model_file = Path(model_path)
         if not model_file.is_absolute():
             model_file = Path(__file__).resolve().parents[2] / model_file
@@ -228,6 +249,7 @@ class LamaInpaintService:
             self.last_stats = {
                 "components": 0,
                 "fastpath_hits": 0,
+                "classical_hits": 0,
                 "forward_calls": 0,
                 "forward_ms": 0.0,
             }
@@ -249,6 +271,7 @@ class LamaInpaintService:
 
         t_total_forward = 0.0
         fastpath_hits = 0
+        classical_hits = 0
         forward_calls = 0
 
         for bx, by, bw, bh in boxes:
@@ -282,6 +305,25 @@ class LamaInpaintService:
                 _clear_region_in_mask(working_mask, binary_mask, l, t, r, b)
                 continue
 
+            # Tier 2 — classical inpaint for smooth / gradient backgrounds.
+            # The flat-fill fast path already handled uniform regions; whatever
+            # remains has a non-flat ring. If that ring is merely smooth (low
+            # std — gradients, soft shading), cv2.inpaint (Navier-Stokes,
+            # radius 3) reconstructs the thin text strokes in ~tens of ms with
+            # quality indistinguishable from LaMa, and avoids LaMa entirely.
+            # Only genuinely textured/screentone rings (high std) fall through
+            # to the neural model, which is the one case classical smears.
+            if self.enable_classical_inpaint:
+                ring_std = _ring_std_max(crop_img, crop_msk)
+                if ring_std is not None and ring_std < _CLASSICAL_STD_MAX:
+                    m = (crop_msk > 0).astype(np.uint8)
+                    classical = cv2.inpaint(crop_img, m, 3, cv2.INPAINT_NS)
+                    _composite_masked(out, classical, crop_msk, l, t)
+                    classical_hits += 1
+                    _clear_region_in_mask(working_mask, binary_mask, l, t, r, b)
+                    continue
+
+            # Tier 3 — LaMa neural inpaint (textured/screentone residual only).
             # Pad-to-multiple path is moot: our ONNX has fixed 512×512. Just
             # resize the crop → 512, forward, resize output back.
             t0 = time.perf_counter()
@@ -301,6 +343,7 @@ class LamaInpaintService:
         self.last_stats = {
             "components": len(boxes),
             "fastpath_hits": fastpath_hits,
+            "classical_hits": classical_hits,
             "forward_calls": forward_calls,
             "forward_ms": t_total_forward * 1000.0,
             "downscale": downscale,
