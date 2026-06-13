@@ -1,0 +1,54 @@
+# v8: continue-SFT v7 base on Gemma 4 31B distillation pairs.
+# Small data (1740 pairs), low LR, few epochs — bias toward Gemma style
+# without overwriting v7's broader register coverage.
+model:
+  name_or_path: backend/training/weights/qwen3-mt-v7-merged
+  dtype: bfloat16
+  max_seq_length: 512
+  load_in_4bit: false
+
+lora:
+  r: 16
+  alpha: 32
+  dropout: 0.05
+  target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
+  bias: none
+
+data:
+  train_path: backend/training/datasets/filtered/gemma_distill_v8.parquet
+  dev_path: backend/training/runs/manga-bubbles/dev_200_v7.parquet
+  prompt_template: |
+    Translate the following Japanese to English. Output only the translation.
+
+    Japanese: {jp}
+    English:
+  completion_field: en
+
+train:
+  num_train_epochs: 3
+  per_device_train_batch_size: 8
+  gradient_accumulation_steps: 2
+  learning_rate: 5.0e-5      # lower than v7's 8e-5; this is bias-correction not full SFT
+  lr_scheduler_type: cosine
+  warmup_ratio: 0.05
+  logging_steps: 10
+  save_steps: 100
+  eval_steps: 100
+  save_total_limit: 2
+  seed: 42
+  dataloader_num_workers: 8
+  dataset_num_proc: 8
+  packing: false
+
+output:
+  dir: backend/training/runs/manga-bubbles/qwen3_4b_v8_distill
+  wandb_project: manga-translator
+  wandb_run_name: qwen3-4b-v8-distill
+
+thinking_mode:
+  disable: true
+
+eval:
+  l1_dev_size: 200
+  l1_every_n_steps: 100
+  probe_every_checkpoint: false

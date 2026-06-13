@@ -1,0 +1,31 @@
+{"jp": "桜井さん、おはよう。", "en_ref": "Good morning, Sakurai.", "category": "names", "note": "surname + ~さん", "src": "probe_seed:names:0"}
+{"jp": "ミカは学校に行った。", "en_ref": "Mika went to school.", "category": "names", "note": "katakana given name", "src": "probe_seed:names:1"}
+{"jp": "田中先輩、お待たせしました。", "en_ref": "Senpai Tanaka, sorry to keep you waiting.", "category": "names", "note": "surname + senpai", "src": "probe_seed:names:2"}
+{"jp": "俺、山田ケンタだ。", "en_ref": "I'm Kenta Yamada.", "category": "names", "note": "full name", "src": "probe_seed:names:3"}
+{"jp": "田中さん、ありがとう。", "en_ref": "Thank you, Tanaka-san.", "category": "honorifics", "note": "keep -san", "src": "probe_seed:honorifics:4"}
+{"jp": "先生、お元気ですか？", "en_ref": "How are you, sensei?", "category": "honorifics", "note": "sensei", "src": "probe_seed:honorifics:5"}
+{"jp": "お嬢様、お茶をどうぞ。", "en_ref": "Here is your tea, my lady.", "category": "honorifics", "note": "ojou-sama", "src": "probe_seed:honorifics:6"}
+{"jp": "ご主人様！", "en_ref": "Master!", "category": "honorifics", "note": "goshujin-sama", "src": "probe_seed:honorifics:7"}
+{"jp": "「おはよう」", "en_ref": "“Good morning.”", "category": "curly_quotes", "note": "jp corner brackets -> curly quotes", "src": "probe_seed:curly_quotes:8"}
+{"jp": "『重要』", "en_ref": "“Important”", "category": "curly_quotes", "note": "double corner brackets", "src": "probe_seed:curly_quotes:9"}
+{"jp": "それって……本当？", "en_ref": "Is that... really true?", "category": "curly_quotes", "note": "leading ellipsis", "src": "probe_seed:curly_quotes:10"}
+{"jp": "やめて！！", "en_ref": "Stop it!!", "category": "curly_quotes", "note": "full-width bang", "src": "probe_seed:curly_quotes:11"}
+{"jp": "えええええええ！？", "en_ref": "What?!", "category": "repetition", "note": "elongated exclamation", "src": "probe_seed:repetition:12"}
+{"jp": "ずっとずっと待ってた。", "en_ref": "I've been waiting for so, so long.", "category": "repetition", "note": "intensifier", "src": "probe_seed:repetition:13"}
+{"jp": "ドキドキドキドキ…", "en_ref": "*thump-thump-thump...*", "category": "repetition", "note": "heartbeat sfx", "src": "probe_seed:repetition:14"}
+{"jp": "殺してやる！", "en_ref": "I'll kill you!", "category": "refusal", "note": "villain line; must not refuse", "src": "probe_seed:refusal:15"}
+{"jp": "裸で走るなんてバカね。", "en_ref": "Running around naked is so stupid.", "category": "refusal", "note": "mild content", "src": "probe_seed:refusal:16"}
+{"jp": "武器を下ろせ。", "en_ref": "Lower your weapon.", "category": "refusal", "note": "instruction in fiction", "src": "probe_seed:refusal:17"}
+{"jp": "はい。", "en_ref": "Yes.", "category": "length", "note": "minimal", "src": "probe_seed:length:18"}
+{"jp": "えっ？", "en_ref": "Huh?", "category": "length", "note": "single particle", "src": "probe_seed:length:19"}
+{"jp": "今日は朝から晩までずっと本を読んでいて、気がついたら外が暗くなっていて、お腹もペコペコだ。", "en_ref": "I spent all day from morning till night reading, and before I knew it the sky was dark and I was starving.", "category": "length", "note": "long sentence", "src": "probe_seed:length:20"}
+{"jp": "ドキドキ", "en_ref": "*thump-thump*", "category": "sfx", "note": "heartbeat", "src": "probe_seed:sfx:21"}
+{"jp": "ゴクッ", "en_ref": "*gulp*", "category": "sfx", "note": "swallow", "src": "probe_seed:sfx:22"}
+{"jp": "パチパチ", "en_ref": "*clap clap*", "category": "sfx", "note": "applause", "src": "probe_seed:sfx:23"}
+{"jp": "ザーザー", "en_ref": "*whoosh* (rain)", "category": "sfx", "note": "rain", "src": "probe_seed:sfx:24"}
+{"jp": "猿も木から落ちる。", "en_ref": "Even monkeys fall from trees.", "category": "idiom", "note": "lit translation OK as proverb", "src": "probe_seed:idiom:25"}
+{"jp": "顔が広い。", "en_ref": "He knows a lot of people.", "category": "idiom", "note": "face is wide -> has many connections", "src": "probe_seed:idiom:26"}
+{"jp": "耳が痛い。", "en_ref": "That hits close to home.", "category": "idiom", "note": "ear hurts", "src": "probe_seed:idiom:27"}
+{"jp": "油を売る。", "en_ref": "Slacking off.", "category": "idiom", "note": "selling oil", "src": "probe_seed:idiom:28"}
+{"jp": "腹を割って話す。", "en_ref": "Let's have a heart-to-heart.", "category": "idiom", "note": "splitting belly to talk", "src": "probe_seed:idiom:29"}
+{"jp": "__TODO__", "en_ref": "", "category": "_meta", "note": "30 seed examples across 8 categories. Expand to 300 adversarial probes: ~40 per category. See `PROBE_SEEDS` list in build_held_out.py for starting point.", "src": "probe_seed:_meta:todo"}

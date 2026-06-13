@@ -1,0 +1,74 @@
+---
+session: general
+date: 2026-05-07
+status: partial
+outcome: PARTIAL_MINUS
+---
+
+goal: Researched v10 training plan via 10 ultrathink oracle agents covering vLLM/llama.cpp Gemma 4 + LoRA serving, Unsloth merge bug, Manga109Dialog pipeline, v9c plateau diagnosis, MTP drafter training, and data-vs-epochs tradeoff
+now: Implement v10 plan — start by getting Manga109-s license access form submitted, then build merge fix + Manga109 ingest pipeline in parallel
+test: bash -c "ls backend/training/runs/manga-bubbles/gemma4_e4b_v9c/final && ls /home/danny/manga-output/v7-v9c-gemma.html"
+
+done_this_session:
+  - task: Verified vLLM Gemma 4 + LoRA serving status (silent no-op today, must merge externally)
+    files: []
+  - task: Verified llama.cpp Gemma 4 + LoRA path WORKS via convert_lora_to_gguf.py
+    files: []
+  - task: Diagnosed Unsloth save_pretrained_merged Gemma 4 corruption — root cause = Gemma4ClippableLinear wrapper trips PEFT isinstance(nn.Linear), workaround = plain HF+PEFT merge_and_unload on CPU
+    files: [backend/scripts/eval/translate_manga_unsloth.py, backend/scripts/eval/translate_manga_gemma4.py]
+  - task: Confirmed Manga109-s license permits training-derivative model release; pipeline = manga109api → vLLM batched Gemma 31B → ~1.5-3h for 132k bubbles
+    files: []
+  - task: Diagnosed v9c plateau (33.1% vs v7's 34.6%) as SFT ceiling = data, not base model — both Qwen3-4B and Gemma 4 E4B saturate at the same reference distribution at train_loss 0.14
+    files: [backend/scripts/eval/build_v7_v9c_gemma_html.py]
+  - task: Concluded MTP custom drafter training is NOT worth ROI (24-48h compute, complex EAGLE-3 setup)
+    files: []
+  - task: Confirmed B (1ep × 276k expanded mix) > A (3ep × 144k) — train_loss 0.14 already in overfit zone, more epochs = regression risk
+    files: []
+
+blockers:
+  - 3 of 10 oracle agents rate-limited (CPO recipe, optimal hyperparams, v10 final synthesis) — re-run before locking v10 config
+
+questions:
+  - Should v10 chain CPO after SFT, or ship SFT-only and add CPO as v11?
+  - Switch to E4B-it base + proper chat template for MTP compat, or stay on E4B-pt for clean raw-prompt training?
+  - Manga109 license application turnaround — submit ASAP to unblock data work
+
+decisions:
+  - skip_mtp_drafter_training: poor ROI for our throughput (24-48h compute vs 1.5x speedup); revisit only if production volume justifies
+  - deploy_via_llama_cpp_not_vllm: vLLM Gemma 4 LoRA load is silently broken (issue #41754); llama.cpp `--lora adapter.gguf` path works today
+  - fix_merge_via_plain_peft: Unsloth's save_pretrained_merged corrupts Gemma 4 weights — bypass entirely with HF+PEFT merge_and_unload on CPU (vision/audio towers untouched since LoRA targets only language_model.*.{q,k,v,o,gate,up,down}_proj)
+  - v10_path_b: 1 epoch on 276k (v7.1 + 132k Manga109Dialog) — highest EV per published wisdom, +5-10% Gemma exact-match expected
+
+findings:
+  - v9c_plateau_root_cause: Both v7 (Qwen3-4B) and v9c (Gemma 4 E4B) hit train_loss 0.14 = both saturated against same reference distribution. SFT cross-entropy caps at reference quality regardless of base model strength. Adding data > more epochs.
+  - register_skew: Current 144k v7.1 mix is 65% non-manga (VN eroge 24%, novel 21%, vn 20%) — Manga109Dialog (132k contemporary manga bubbles) directly fills the missing register.
+  - unsloth_clippable_linear_bug: Gemma 4 wraps vision/audio projections in Gemma4ClippableLinear (nn.Module not nn.Linear). PEFT's isinstance check fails → LoRA merges into wrong attribute → output garbage (TeX/Cyrillic/Korean). Fix landed on Unsloth main, not yet on PyPI.
+  - llama_cpp_lora_works: convert_lora_to_gguf.py + `llama-server --lora adapter.gguf -m gemma-4-E4B-it.Q4_K_M.gguf` is the shortest deploy path today.
+  - vllm_lora_broken: vLLM 0.20.0 loads Gemma 4 LoRA but silently no-ops (issue #41754, #39246 still open). FlashInfer needed on Blackwell sm_120. Don't go this route until fixed.
+  - mtp_pt_it_mismatch: gemma-4-E4B-it-assistant drafter targets -IT logits; pairing with -pt-trained LoRA drops 41→25 tok/s (-38%) and 0.2% acceptance.
+
+worked:
+  - 10-agent parallel oracle research with ultrathink directive
+  - Loading v9c LoRA via Unsloth FastLanguageModel.from_pretrained on adapter dir (auto-resolves base + adapter — bypasses broken merge)
+  - 3-way comparison HTML harness (v7 vs v9c vs Gemma teacher) for empirical eval
+
+failed:
+  - Unsloth save_pretrained_merged on Gemma 4 (silent corruption — generates TeX, Cyrillic, Korean garbage)
+  - v9b (Gemma 4 -IT base + raw prompts + merged) — confirmed merge corruption was the issue, not chat template mismatch
+  - 3 oracle agents hit API rate limits (CPO recipe, hyperparam search, final synthesis) — partial coverage
+
+next:
+  - Submit Manga109-s license application at http://www.manga109.org/en/download_s.html
+  - Re-run the 3 rate-limited oracle agents (CPO recipe, optimal Gemma 4 LoRA hyperparams, v10 final synthesis) on next session
+  - Implement merge fix script using plain HF+PEFT merge_and_unload on CPU (not Unsloth) — produce verified merged Gemma 4 weights
+  - Build Manga109Dialog ingest pipeline (extract_manga109_bubbles.py + translate_manga109.py via vLLM batched Gemma 31B)
+  - Cross-dedup Manga109 against held-out evals (MinHash 14×8 Jaccard 0.75)
+  - Compose data_v10.parquet (v7.1 mix + 132k Manga109 contemporary register)
+  - Train v10 = continue from v9c adapter, 1 epoch on 276k mix, same hyperparams as v9c (r=16, alpha=32, LR 1e-4 cosine)
+  - Eval v10 vs v9c vs v7 using same 3-way HTML harness — success gate: ≥38% Gemma exact-match
+  - If v10 succeeds, deploy via llama.cpp (convert_lora_to_gguf.py + llama-server --lora)
+
+files:
+  created:
+    - thoughts/shared/handoffs/general/2026-05-07_09-10_v10-research-synthesis.yaml
+  modified: []

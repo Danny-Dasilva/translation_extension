@@ -1,0 +1,157 @@
+---
+session: v10-research-synthesis-round2
+date: 2026-05-07
+status: research_complete_implementation_in_flight
+agents_run: 7  # 3 re-runs + 4 new MTP-focused
+---
+
+goal: Lock v10 training plan after re-running rate-limited agents and adding MTP-focused research per user request.
+
+corrections_to_handoff_2026-05-07_09-10:
+  - issue: Handoff claimed v9c LoRA "targets only language_model.*.{q,k,v,o,gate,up,down}_proj — vision/audio towers untouched"
+    reality: v9c adapter targets 406 modules — 258 language_model (bare nn.Linear) + 112 vision_tower + 36 audio_tower (both inside Gemma4ClippableLinear)
+    impact: PEFT's merge_and_unload REJECTS the adapter outright with "Target module Gemma4ClippableLinear is not supported" — never even gets to merge. The "plain HF+PEFT" workaround in the handoff would have failed.
+    actual_fix: bypass PEFT entirely; manual safetensors state-dict fold (target += B@A * alpha/r). Implemented at backend/scripts/eval/merge_gemma4_lora_clean.py — verification PASSED 5/5 prompts.
+  - issue: Handoff said base model is google/gemma-4-E4B-pt
+    reality: base is unsloth/gemma-4-E4B (no -pt suffix; google variant doesn't exist on HF Hub)
+  - issue: Handoff recommended deploy via llama.cpp + LoRA-as-GGUF
+    reality: llama.cpp does NOT support EAGLE-3 or MTP for Gemma 4 (only vanilla draft model). vLLM gemma4-0505-cu130 preview Docker has Google's MTP fix (PR #41745) and per-layer attention backend fix (#38887). Recommended: vLLM, not llama.cpp, for production deploy.
+  - issue: Handoff said adapter has lora_dropout=0
+    reality: actual lora_dropout=0.05
+
+locked_v10_hyperparams:
+  base_model: unsloth/gemma-4-E4B (continue from v9c adapter)
+  init: warm-start from backend/training/runs/manga-bubbles/gemma4_e4b_v9c/final/
+  lora_r: 16  # cannot raise mid-continuation; defer to v11 post-merge
+  lora_alpha: 32
+  lora_dropout: 0.05
+  target_modules: same as v9c (q,k,v,o,gate,up,down × language_model + projection.linear × vision/audio)
+  learning_rate: 5e-5  # halved from v9c's 1e-4 for continuation stability
+  lr_scheduler: cosine
+  warmup_ratio: 0.01  # down from v9c's 0.03
+  num_train_epochs: 1  # at train_loss 0.14 already overfit; more epochs = regression risk
+  per_device_train_batch_size: 4
+  gradient_accumulation_steps: 4  # effective batch = 16 (LoRA Without Regret cap is &lt;32)
+  max_seq_length: 1024
+  packing: false
+  completion_only_loss: true  # NEW for v10 — Shi et al. 2024 +0.5-2pp EM on short completions
+  neftune_noise_alpha: null
+  max_grad_norm: 1.0
+  bf16: true  # requires torch ≥2.11 for sm_120
+  optim: adamw_8bit
+  weight_decay: 0.01
+  data_ordering: random_shuffle  # not curriculum, not domain-grouped
+
+v10_data_composition:
+  base: v7.1 (144k, ×1.0 weight) + Manga109Dialog auto-translated (132k, ×1.5 weight)
+  effective_passes: 342k (~1.24 epochs)
+  source_manga109: /mnt/nas/drive_2/manga-ml/datasets/manga109s/Manga109s_released_2023_12_07/
+  ingest_plan:
+    - Parse annotations/*.xml (87 books) → extract <text id=... xmin=... ymin=... xmax=... ymax=...>JP</text>
+    - Cross-reference annotations_Manga109Dialog/*.xml for speaker context
+    - Filter: drop SFX-only bubbles, very-short (&lt;3 chars) bubbles
+    - Translate via vLLM batched Gemma 31B (or 26B-A4B AWQ on 5090: 196 tok/s confirmed)
+    - QE filter: COMET-Kiwi-23 ≥30th percentile
+    - Cross-dedup against held-out: MinHash 9-grams, Jaccard ≥0.7
+
+mtp_decision_tree:
+  question: -pt warm-start vs -it fresh re-base?
+  option_A:
+    name: Re-base v10 on -it (fresh train)
+    cost: 5-7h training, lose v9c warm-start
+    benefit: official google/gemma-4-E4B-it-assistant drafter works (~3x speedup, zero training cost)
+    deploy: vLLM gemma4-0505-cu130 Docker, MTP enabled
+  option_B:
+    name: Stay on v9c -pt + train custom EAGLE-3 drafter
+    cost: 24-36h via SpecForge offline mode, ~600GB hidden-state cache
+    benefit: ~1.7-2.4x speedup (matches user's "I want MTP for speed" ask), preserves v9c warm-start
+    deploy: vLLM with custom drafter
+  option_C:
+    name: Dual-base experiment (v10-pt warm-start + v10-it fresh)
+    cost: 10-14h training, ship whichever wins quality eval
+    benefit: empirical de-risking
+  recommendation: A (cheapest path to user's speed ask, simplest production)
+    fallback: if -it underperforms -pt by &gt;1.5pp on Gemma exact-match, switch to B
+
+cpo_chain_v10_5:
+  trigger: ship after v10 SFT, not as separate v11
+  rationale: ALMA-R recipe broke SFT ceiling on translation with only 22k triplets; same bottleneck as v9c
+  loss: CPO-SimPO joint (TRL CPOTrainer with loss_type="simpo", cpo_alpha=1.0, simpo_gamma=0.5, beta=2.0)
+  triplet_construction:
+    - per source: gold + Gemma 31B teacher + v9c on-policy×2
+    - score with: XCOMET-XL + COMET-Kiwi-XL averaged
+    - chosen=argmax, rejected=argmin, drop pair if margin &lt;0.05 or length-ratio extreme
+    - target: 25-35k filtered pairs from 132k Manga109 pool
+  hyperparams:
+    learning_rate: 1e-6
+    num_train_epochs: 1
+    per_device_batch: 2
+    grad_accum: 32  # effective 64
+    warmup_ratio: 0.05
+    weight_decay: 0.0
+    max_length: 768
+    max_prompt_length: 384
+    attn_implementation: sdpa  # required on Blackwell sm_120 for Gemma 4 hybrid attention
+  expected_lift: +4-7pp on Gemma exact-match, +0.02-0.04 XCOMET-XL absolute
+  reference_model_required: false  # CPO is reference-free — main practical advantage
+
+inference_engine_recommendation:
+  primary: vLLM gemma4-0505-cu130 preview Docker
+  rationale:
+    - Contains PR #41745 (Google's official Gemma 4 MTP support)
+    - Contains per-layer attention backend fix (#38887) — without this E4B runs at 9 tok/s on Triton fallback
+    - LoRA must be merged first (#41754: vLLM Gemma 4 LoRA silently no-ops) — done via merge_gemma4_lora_clean.py
+    - CRITICAL: drafter must pair with -it target, NOT -pt (#41789: 0.2% accept rate when mismatched)
+  expected_throughput:
+    e4b_vllm_no_mtp: ~150-200 tok/s decode on RTX 5090
+    e4b_vllm_with_mtp: ~250-380 tok/s decode (1.7-2.2x consistent gain)
+  fallback: llama.cpp (vanilla draft model only, no EAGLE/MTP for Gemma 4 yet)
+  avoid: SGLang (requires forks for Gemma 4 EAGLE3), MLC-LLM (no Gemma 4), TRT-LLM (consumer Blackwell gaps)
+
+eval_gates_v10:
+  primary: 5-metric Pareto (≥3 of 5 must improve over v9c)
+    - Gemma exact-match: ≥36% (softened from prior 38% — +4.9pp absolute is upper-end of plausible)
+    - chrF++: +1.5 absolute
+    - COMET-22: +0.015 absolute
+    - COMET-Kiwi-23: +0.015 absolute
+    - short-bubble (≤8 chars) accuracy: +2%
+  per_bubble_logging: yes (track failure modes by length, register, character type)
+  harness: existing 3-way HTML (v7 vs v9c vs v10) + add v10.5 column post-CPO
+
+failure_mode_fallbacks:
+  v10_regresses_below_v9c: roll back, restart fresh on -it instead of warm-start
+  pareto_fails_under_3of5: skip v10 SFT, run CPO directly on v9c → ship as v10.5
+  manga109_teacher_too_noisy: subset top-50% by COMET-Kiwi, halve to 66k
+  gguf_conversion_breaks: vLLM-only deploy at lower throughput (no MTP)
+  both_pt_and_it_underperform: data ceiling confirmed — pivot v11 to human-annotated 5-10k Manga109 subset
+
+next_actions_blocked_on_user:
+  - Confirm option A/B/C for MTP path (recommend A)
+  - Approve copy of Manga109-s license-bound 6.7GB to local for ingest, OR work directly on NAS mount
+
+next_actions_unblocked:
+  - Wait for kraken llama.cpp benchmark agent (still in flight)
+  - Build Manga109 ingest pipeline (parse XML → extract bubbles → batch-translate)
+  - Compose data_v10.parquet
+  - Train v10 (5-7h on RTX 5090)
+
+artifacts:
+  scripts_created:
+    - backend/scripts/eval/merge_gemma4_lora_clean.py  # 13.5KB
+    - backend/scripts/eval/verify_merged_gemma4.py  # 9.5KB
+  models_created:
+    - backend/training/runs/manga-bubbles/gemma4_e4b_v9c/merged_clean/  # 15.91GB, 4 shards
+  data_located:
+    - /mnt/nas/drive_2/manga-ml/datasets/manga109s/Manga109s_released_2023_12_07/  # 6.7GB
+
+references:
+  - https://thinkingmachines.ai/blog/lora/  # LoRA Without Regret — LR scaling, batch size cap
+  - https://arxiv.org/abs/2401.08417  # CPO original (Xu et al., ICML 2024)
+  - https://arxiv.org/abs/2503.01840  # EAGLE-3 (training-time test, ~6.5x HumanEval)
+  - https://github.com/sgl-project/SpecForge  # EAGLE-3 trainer for SGLang/vLLM
+  - https://blog.google/innovation-and-ai/technology/developers-tools/multi-token-prediction-gemma-4/
+  - https://github.com/vllm-project/vllm/pull/41745  # Google's official Gemma 4 MTP PR
+  - https://github.com/vllm-project/vllm/issues/41754  # vLLM Gemma 4 LoRA silent no-op
+  - https://github.com/vllm-project/vllm/issues/38887  # E4B Triton fallback at 9 tok/s without per-layer fix
+  - https://huggingface.co/datasets/haoranxu/ALMA-R-Preference  # CPO triplet format reference
+  - https://docs.unsloth.ai/get-started/fine-tuning-llms-guide/lora-hyperparameters-guide

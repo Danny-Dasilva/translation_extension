@@ -1,0 +1,128 @@
+{"jp": "[運転手]: 「本当にすみませんね」", "en": "[Taxi Driver]: 「I'm real sorry about this.」", "src": "vntl_v31_1k_val:row0:turn0"}
+{"jp": "[将臣]: 「……わかりました。じゃあ、ここでいいです」", "en": "[Masaomi]: 「It's fine. Just drop me off here, then.」", "src": "vntl_v31_1k_val:row0:turn1"}
+{"jp": "[運転手]: 「ありがとうございます」", "en": "[Taxi Driver]: 「Thanks a ton.」", "src": "vntl_v31_1k_val:row0:turn2"}
+{"jp": "タクシーが止まり、俺は精算を済ませて、タクシーを降りる。", "en": "The driver stops the taxi, and I pay my fare and get off.", "src": "vntl_v31_1k_val:row0:turn3"}
+{"jp": "[運転手]: 「わざわざイヌツキの土地に祭りを見に来るなんて、不心得者が増えたもんだよ、まったく……」", "en": "[Taxi Driver]: 「I can't believe anyone would want to go all the way out to Inutsuki just to see a festival. Kids these days. They have no respect for tradition, I tell ya.」", "src": "vntl_v31_1k_val:row0:turn4"}
+{"jp": "降りる間際に聞こえてきた呟き。", "en": "I can still hear you, you know.", "src": "vntl_v31_1k_val:row0:turn5"}
+{"jp": "無視して、そのまま外に出た。", "en": "But I ignore the driver and take my leave.", "src": "vntl_v31_1k_val:row0:turn6"}
+{"jp": "[将臣]: 「まだ距離があるけど……ま、いっか。久しぶりだし歩こう」", "en": "[Masaomi]: 「He left me with quite the walk... Oh well. I haven't been here in ages, so I may as well enjoy the scenery.」", "src": "vntl_v31_1k_val:row0:turn7"}
+{"jp": "息を吐き、両手を腰に当てて、大きく背をのけ反らせる。", "en": "With a sigh, I put my hands on my hips and stretch my back.", "src": "vntl_v31_1k_val:row0:turn8"}
+{"jp": "ずっと座っていたせいか、腰の辺りでポキポキと骨が鳴った。", "en": "I've been sitting so long my spine has gone stiff.", "src": "vntl_v31_1k_val:row0:turn9"}
+{"jp": "[将臣]: 「んーーー！　つっかれたぁぁぁーーーー！」", "en": "[Masaomi]: 「Nnnngh! Man, I'm tired!」", "src": "vntl_v31_1k_val:row0:turn10"}
+{"jp": "家を出て、電車を乗り継ぎ約２時間。", "en": "After leaving my house, I spent 2 hours on a train.", "src": "vntl_v31_1k_val:row0:turn11"}
+{"jp": "そしてタクシーを使って約３０分。", "en": "And after that, another thirty minutes in a taxi.", "src": "vntl_v31_1k_val:row0:turn12"}
+{"jp": "どんな病気でも治るし、入浴すれば肌もツルツル、信じられないほど様々な効能がある万能薬、とまで言われることがある。", "en": "It's said they can cure any illness, make your skin smooth as silk, and basically fix all your problems.", "src": "vntl_v31_1k_val:row1:turn0"}
+{"jp": "なので療養・湯治に来る人が昔から結構いる温泉地だ。", "en": "Because of that, plenty of tourists come here to soak in Hoori's mystical hot springs.", "src": "vntl_v31_1k_val:row1:turn1"}
+{"jp": "近年では口コミやネットで噂が広まり、外国人観光客も増えたらしく、今も日本語以外の会話がたくさん聞こえる。", "en": "Thanks to the town's growing popularity and the rise of the internet, there's been an upswing in foreign visitors as well. Even now I can hear plenty of languages other than Japanese.", "src": "vntl_v31_1k_val:row1:turn2"}
+{"jp": "[将臣]: 「……行くか」", "en": "[Masaomi]: 「Alright, let's go.」", "src": "vntl_v31_1k_val:row1:turn3"}
+{"jp": "観光に来たわけじゃないんだから、立ち尽くしてても仕方ない。", "en": "I didn't come here to sightsee, so there's no reason to stand around.", "src": "vntl_v31_1k_val:row1:turn4"}
+{"jp": "[女性]: 「……んー……あの」", "en": "[Woman]: 「Umm... Excuse me.」", "src": "vntl_v31_1k_val:row1:turn5"}
+{"jp": "[将臣]: 「あ、はい？」", "en": "[Masaomi]: 「Oh, yes?」", "src": "vntl_v31_1k_val:row1:turn6"}
+{"jp": "[女性]: 「人違いならごめんなさい。もしかして、まー坊？」", "en": "[Woman]: 「I'm sorry if I got the wrong person, but are you Ma-bou?」", "src": "vntl_v31_1k_val:row1:turn7"}
+{"jp": "[将臣]: 「芦花姉？」", "en": "[Masaomi]: 「Wait, are you Roka-nee?」", "src": "vntl_v31_1k_val:row1:turn8"}
+{"jp": "[芦花姉]: 「やっぱりまー坊だ！　よかった、人違いじゃなくって」", "en": "[Roka]: 「I knew it! You are Ma-bou! I'm glad I wasn't mistaken.」", "src": "vntl_v31_1k_val:row1:turn9"}
+{"jp": "[芦花姉]: 「やーやー、随分とお久しぶりだね」", "en": "[Roka]: 「My, it's been so long since we've last met.」", "src": "vntl_v31_1k_val:row1:turn10"}
+{"jp": "明るい笑顔を浮かべながら手を振っているこの人は、馬庭芦花。", "en": "The girl smiling and waving at me is Maniwa Roka.", "src": "vntl_v31_1k_val:row1:turn11"}
+{"jp": "確か……俺より２、３歳年上だった気がする。", "en": "If memory serves, she's two, maybe three years older than me.", "src": "vntl_v31_1k_val:row2:turn0"}
+{"jp": "俺が子供の頃、母さんに連れられて穂織に帰ってきたとき、よく一緒に遊んでもらっていた。", "en": "Back when I was a kid, I'd hang out with her whenever my mom took me here.", "src": "vntl_v31_1k_val:row2:turn1"}
+{"jp": "[将臣]: 「元気してた？」", "en": "[Masaomi]: 「How've you been?」", "src": "vntl_v31_1k_val:row2:turn2"}
+{"jp": "[芦花]: 「うん、元気元気～。まー坊の方こそどうしてたの？　あれ？　何年ぶりだっけ？」", "en": "[Roka]: 「I've been doing great! How about you, Ma-bou? Actually, how many years has it been since you last came here?」", "src": "vntl_v31_1k_val:row2:turn3"}
+{"jp": "[将臣]: 「ここに来たのは多分……４年ぶりじゃないかな？　俺も問題ないよ。健康そのもの」", "en": "[Masaomi]: 「Uhh, I think around four years ago or so? I've been well. The picture of health.」", "src": "vntl_v31_1k_val:row2:turn4"}
+{"jp": "[芦花]: 「そっか、もうそんなになるのか……随分おっきくなったね、まー坊」", "en": "[Roka]: 「Oh, I suppose it has been that long... You sure have grown.」", "src": "vntl_v31_1k_val:row2:turn5"}
+{"jp": "[芦花]: 「まさか、まー坊を見上げなきゃいけない日が来ようとは。アタシに無断でこんなに背を伸ばすなんて生意気な」", "en": "[Roka]: 「I never thought the day would come where I'd have to look up at you instead of down. I don't remember giving you permission to grow so tall, you little brat.」", "src": "vntl_v31_1k_val:row2:turn6"}
+{"jp": "[将臣]: 「去年ぐらいかな？　ぐいぐい背が伸びたんだよ。膝が痛くなるぐらいに」", "en": "[Masaomi]: 「I hit my growth spurt last year or so. My knees are still aching from the growing pains.」", "src": "vntl_v31_1k_val:row2:turn7"}
+{"jp": "[芦花]: 「そっか……４年もあれば、大学だって卒業できるもんね。大きくもなるか……」", "en": "[Roka]: 「I see... You could complete a full four-year college program in the time since we last met. Of course you'd grow some...」", "src": "vntl_v31_1k_val:row2:turn8"}
+{"jp": "[将臣]: 「芦花姉もちゃんと成長……縮むのも成長っていうのかな？」", "en": "[Masaomi]: 「You've changed a lot too, Roka-nee. Though you look like you got shorter, not taller.」", "src": "vntl_v31_1k_val:row3:turn0"}
+{"jp": "[芦花]: 「おやまあっ。本当に小生意気に育っちゃって、この」", "en": "[Roka]: 「How rude! I see you lost your manners over the past few years.」", "src": "vntl_v31_1k_val:row3:turn1"}
+{"jp": "俺の頭をペシッと叩く芦花姉。", "en": "Roka-nee smacks me upside my head.", "src": "vntl_v31_1k_val:row3:turn2"}
+{"jp": "[芦花]: 「頭を叩くのも結構ギリギリかぁ……身体もがっしりしてきたし、本当に男らしくなったもんだね」", "en": "[Roka]: 「I can barely reach your head anymore. You've gotten stronger, too. You look like a real man now.」", "src": "vntl_v31_1k_val:row3:turn3"}
+{"jp": "[将臣]: 「おかげさまで」", "en": "[Masaomi]: 「Thanks for the compliment.」", "src": "vntl_v31_1k_val:row3:turn4"}
+{"jp": "[芦花]: 「で？　１人？」", "en": "[Roka]: 「So, are you here alone?」", "src": "vntl_v31_1k_val:row3:turn5"}
+{"jp": "[将臣]: 「そう。今回は俺だけ。しかも宿の手伝いのためにね」", "en": "[Masaomi]: 「Yep. I came here alone this time. Mostly to help out with the inn.」", "src": "vntl_v31_1k_val:row3:turn6"}
+{"jp": "[母・都子]: 「将臣、アンタお祖父ちゃんのところに行ってきなさい」", "en": "[Mom]: 「Masaomi, what do you say to visiting Grandpa?」", "src": "vntl_v31_1k_val:row3:turn7"}
+{"jp": "[将臣]: 「は？　いきなりなんだよ？」", "en": "[Masaomi]: 「Huh? Where'd that come from?」", "src": "vntl_v31_1k_val:row3:turn8"}
+{"jp": "[母・都子]: 「お祖父ちゃんが経営してる旅館、春や夏、正月なんかは繁忙期なのは知ってるでしょ？」", "en": "[Mom]: 「You know how he runs an inn that gets really busy during the spring, summer, and New Year's?」", "src": "vntl_v31_1k_val:row3:turn9"}
+{"jp": "[将臣]: 「ああ……志那都荘だっけ？」", "en": "[Masaomi]: 「Oh, yeah. Shinatsu Manor, right?」", "src": "vntl_v31_1k_val:row3:turn10"}
+{"jp": "[母・都子]: 「また宿の手伝いに来て欲しいんだって」", "en": "[Mom]: 「Well, he wants people to help him out again.」", "src": "vntl_v31_1k_val:row3:turn11"}
+{"jp": "[母・都子]: 「いいから行きなさい。もう何年挨拶してないと思ってんの」", "en": "[Mom]: 「Why don't you want to go, anyway? You haven't seen Grandpa in years.」", "src": "vntl_v31_1k_val:row4:turn0"}
+{"jp": "[母・都子]: 「子供の頃からお世話になってたんだから。一度ぐらいは手伝いをしてきなさい」", "en": "[Mom]: 「He looked after you when you were a kid, so the least you could do is help him out just this once.」", "src": "vntl_v31_1k_val:row4:turn1"}
+{"jp": "[将臣]: 「俺みたいな素人が手伝いに行っても迷惑かけるだけだろ」", "en": "[Masaomi]: 「A rookie like me would just get in the way if I went.」", "src": "vntl_v31_1k_val:row4:turn2"}
+{"jp": "[母・都子]: 「あんたみたいな素人をお客の前に出すわけないでしょうが」", "en": "[Mom]: 「They won't have a rookie serving guests to begin with.」", "src": "vntl_v31_1k_val:row4:turn3"}
+{"jp": "[母・都子]: 「草刈り、お風呂掃除、ゴミ捨て、皿洗い、裏方の仕事もたんまりあるわよ」", "en": "[Mom]: 「There's plenty of odd jobs that need to be done, like mowing the yard, cleaning the bath, taking out the trash, and washing dishes.」", "src": "vntl_v31_1k_val:row4:turn4"}
+{"jp": "[母・都子]: 「春休みもずっと家にこもってゴロゴロしてるだけでしょうが。いいから行ってきなさい！」", "en": "[Mom]: 「If you stay home, all you'll be doing is lazing about anyway. So no more buts―you're going!」", "src": "vntl_v31_1k_val:row4:turn5"}
+{"jp": "[将臣]: 「みたいな感じでさ。子供にそういう脅しを使うのは卑怯だと思わない？」", "en": "[Masaomi]: 「That's basically what happened. What kind of mom threatens her own son like that? Don't you think that's unfair?」", "src": "vntl_v31_1k_val:row4:turn6"}
+{"jp": "[芦花]: 「ちょっとね」", "en": "[Roka]: 「A little, I guess.」", "src": "vntl_v31_1k_val:row4:turn7"}
+{"jp": "[芦花]: 「でも全然顔を見せに来なかった、まー坊も悪い。よってドロー」", "en": "[Roka]: 「But it's also partially your fault for not coming back here sooner, Ma-bou. So I'd say it's even.」", "src": "vntl_v31_1k_val:row4:turn8"}
+{"jp": "[将臣]: 「まあ……確かにご無沙汰だったとは思うけどさ」", "en": "[Masaomi]: 「Well, it's true I haven't been back here for a long time.」", "src": "vntl_v31_1k_val:row4:turn9"}
+{"jp": "[芦花]: 「このまま志那都荘に行くの？」", "en": "[Roka]: 「Are you going to go straight to Shinatsu Manor?」", "src": "vntl_v31_1k_val:row5:turn0"}
+{"jp": "[将臣]: 「そのつもり」", "en": "[Masaomi]: 「That's the plan.」", "src": "vntl_v31_1k_val:row5:turn1"}
+{"jp": "[芦花]: 「アタシも一緒に行こっかな。久しぶりだから、もうちょっと話そうよ」", "en": "[Roka]: 「Mind if I walk with you? It's been a while; I'd like to catch up.」", "src": "vntl_v31_1k_val:row5:turn2"}
+{"jp": "[将臣]: 「俺はもちろん構わないよ。けど芦花姉は、時間大丈夫なの？」", "en": "[Masaomi]: 「Sure thing. You're not busy or anything, are you?」", "src": "vntl_v31_1k_val:row5:turn3"}
+{"jp": "[芦花]: 「平気平気。それじゃあ行こ」", "en": "[Roka]: 「Nope. Not at all. You ready to go, then?」", "src": "vntl_v31_1k_val:row5:turn4"}
+{"jp": "[芦花]: 「……なんだかまー坊、さっきからアタシをジッと見てる気がする？」", "en": "[Roka]: 「Hey, Ma-bou, how long do you plan on staring at me for?」", "src": "vntl_v31_1k_val:row5:turn5"}
+{"jp": "[芦花]: 「そんなに見つめられると、お姉さん照れちゃうよー。なになに？　もしかして見惚れちゃってる？」", "en": "[Roka]: 「It's kind of embarrassing to have someone looking at you for this long. What, did my charming beauty leave you captivated?」", "src": "vntl_v31_1k_val:row5:turn6"}
+{"jp": "[芦花]: 「それとも、顔に何かついてるかな？」", "en": "[Roka]: 「Or is there something on my face?」", "src": "vntl_v31_1k_val:row5:turn7"}
+{"jp": "[将臣]: 「正直、見惚れてた」", "en": "[Masaomi]: 「Honestly? Yeah, it did.」", "src": "vntl_v31_1k_val:row5:turn8"}
+{"jp": "[芦花]: 「―――ッ！？」", "en": "[Roka]: 「Huh!?」", "src": "vntl_v31_1k_val:row5:turn9"}
+{"jp": "[芦花]: 「えっと……えっと……あ、あはは、ありがとう」", "en": "[Roka]: 「Umm... Uhh... Ahaha, thanks.」", "src": "vntl_v31_1k_val:row5:turn10"}
+{"jp": "芦花姉は冗談に思っているかもしれないけど……ウソじゃない。", "en": "Roka-nee seems to be taking it as a joke, but I wasn't kidding.", "src": "vntl_v31_1k_val:row5:turn11"}
+{"jp": "美人になったと思う。", "en": "She's grown into a beautiful woman.", "src": "vntl_v31_1k_val:row5:turn12"}
+{"jp": "[芦花]: 「穴場の温泉地として、外国のサイトに載って、口コミが広まってるんだって」", "en": "[Roka]: 「A lot of foreign websites have been calling Hoori one of the best hot spring towns in Japan, and people are hearing about us through word of mouth too.」", "src": "vntl_v31_1k_val:row6:turn0"}
+{"jp": "[芦花]: 「あとは、今日は“春祭り”だから。それが目的の人たちが多いんじゃないかな？」", "en": "[Roka]: 「Also it's the Spring Festival today, so there's probably more people coming here than usual.」", "src": "vntl_v31_1k_val:row6:turn1"}
+{"jp": "[将臣]: 「ああ、春祭り！　そっか、春祭りか……俺、初めてかも」", "en": "[Masaomi]: 「Oh yeah, the Spring Festival! Man, I totally forgot... Actually I think this is my first time being here for one.」", "src": "vntl_v31_1k_val:row6:turn2"}
+{"jp": "[芦花]: 「あれ？　そうだっけ？」", "en": "[Roka]: 「Oh? Really?」", "src": "vntl_v31_1k_val:row6:turn3"}
+{"jp": "[将臣]: 「こっちに来るのは繁忙期を微妙にずらしてたから」", "en": "[Masaomi]: 「We usually timed our visits to avoid the busy season, so yeah.」", "src": "vntl_v31_1k_val:row6:turn4"}
+{"jp": "[将臣]: 「春祭りってそんなに人気なの？」", "en": "[Masaomi]: 「Is the Spring Festival really that popular?」", "src": "vntl_v31_1k_val:row6:turn5"}
+{"jp": "[芦花]: 「んー……そこそこ？　割合的には、欧米のお客さんが増えるね」", "en": "[Roka]: 「Hmm... It's decently popular. If anything, it seems bigger with westerners than locals.」", "src": "vntl_v31_1k_val:row6:turn6"}
+{"jp": "[芦花]: 「春祭りってね、男の人が甲冑を身につけて、馬に跨って街中を練り歩くから」", "en": "[Roka]: 「Probably because part of the festival includes guys dressing up in medieval armor and riding horses around town.」", "src": "vntl_v31_1k_val:row6:turn7"}
+{"jp": "[将臣]: 「確か……戦国時代の戦が、祭りの始まりなんだっけ？」", "en": "[Masaomi]: 「If I recall correctly, the festival started sometime during the Warring States period, right?」", "src": "vntl_v31_1k_val:row6:turn8"}
+{"jp": "[芦花]: 「コホン。遡ること数百年前、野望を抱く者たちが乱立する戦乱の世に、とある怪しげな女がおりました」", "en": "[Roka]: 「Ahem. Centuries past, ambitious warlords rampaged across the country. During those tumultuous times, a mysterious woman appeared before one of them.」", "src": "vntl_v31_1k_val:row6:turn9"}
+{"jp": "普通にしてるだけでも威圧感がある人で、子供の頃はかなり怖かった。", "en": "To be honest, he's always struck me as a little intimidating. I was terrified of him as a kid.", "src": "vntl_v31_1k_val:row7:turn0"}
+{"jp": "その印象のせいか、苦手だったりするんだよな。", "en": "I've mostly gotten over it by now, but I still feel a little uncomfortable around him.", "src": "vntl_v31_1k_val:row7:turn1"}
+{"jp": "[将臣]: 「こんにちはー」", "en": "[Masaomi]: 「Hello!」", "src": "vntl_v31_1k_val:row7:turn2"}
+{"jp": "[声]: 「はい、ただ今まいります」", "en": "[Voice]: 「Welcome. I'll be with you in a moment.」", "src": "vntl_v31_1k_val:row7:turn3"}
+{"jp": "[旅館の人]: 「お待たせいたしました。ご予約のお客様でしょうか？」", "en": "[Inn Employee]: 「My apologies for the wait. Do you have a reservation?」", "src": "vntl_v31_1k_val:row7:turn4"}
+{"jp": "[将臣]: 「すみません、客じゃないんです。鞍馬玄十郎はいますか？」", "en": "[Masaomi]: 「Oh, I'm not a guest. Is Kurama Genjuurou in?」", "src": "vntl_v31_1k_val:row7:turn5"}
+{"jp": "[旅館の人]: 「失礼ですが……」", "en": "[Inn Employee]: 「My apologies, but who might you be?」", "src": "vntl_v31_1k_val:row7:turn6"}
+{"jp": "[将臣]: 「祖父に挨拶をしておきたいんですが」", "en": "[Masaomi]: 「I'm his grandson. I'm here to visit.」", "src": "vntl_v31_1k_val:row7:turn7"}
+{"jp": "[旅館の人]: 「大旦那さんのお孫さんですか、話は聞いております。遠いところ、ご足労いただき誠にありがとうございます」", "en": "[Inn Employee]: 「Oh, you're the owner's grandson? He did mention you would be visiting. Thank you for coming. It must have been a long trip.」", "src": "vntl_v31_1k_val:row7:turn8"}
+{"jp": "[旅館の人]: 「大旦那さんは今、建実神社のはずですよ。実行委員ですから」", "en": "[Inn Employee]: 「The owner is currently at Takemi Shrine. He's part of the festival committee, so he's assisting with the preparations.」", "src": "vntl_v31_1k_val:row7:turn9"}
+{"jp": "[芦花]: 「あ、そっか。玄十郎さん、春祭りの実行委員になってたんだ」", "en": "[Roka]: 「Oh, right. I forgot Genjuurou-san was part of the Spring Festival committee.」", "src": "vntl_v31_1k_val:row7:turn10"}
+{"jp": "[旅館の人]: 「予定通りでしたら……練り歩きがそろそろ神社に到着している頃ですね」", "en": "[Inn Employee]: 「If things are proceeding on schedule, then the parade should be arriving at the shrine as well.」", "src": "vntl_v31_1k_val:row8:turn0"}
+{"jp": "[芦花]: 「それじゃあ、神社から離れることはできないかな」", "en": "[Roka]: 「Guess that means he'll be too busy to leave the shrine for now.」", "src": "vntl_v31_1k_val:row8:turn1"}
+{"jp": "[将臣]: 「そうですか」", "en": "[Masaomi]: 「Oh, really?」", "src": "vntl_v31_1k_val:row8:turn2"}
+{"jp": "[将臣]: 「あの、今すぐ俺が手伝うことは何かありますか？」", "en": "[Masaomi]: 「Umm, is there anything you need my help with right away?」", "src": "vntl_v31_1k_val:row8:turn3"}
+{"jp": "[旅館の人]: 「お気遣いありがとうございます」", "en": "[Inn Employee]: 「Thank you for the generous offer.」", "src": "vntl_v31_1k_val:row8:turn4"}
+{"jp": "[旅館の人]: 「今のところは大丈夫ですから、是非今日は春祭りを楽しんで下さい」", "en": "[Inn Employee]: 「But I think we should be fine for the present. Why don't you go enjoy the festival?」", "src": "vntl_v31_1k_val:row8:turn5"}
+{"jp": "[将臣]: 「ありがとうございます」", "en": "[Masaomi]: 「Thanks, I think I will.」", "src": "vntl_v31_1k_val:row8:turn6"}
+{"jp": "[旅館の人]: 「お荷物、預かりましょうか？」", "en": "[Inn Employee]: 「Would you like me to take in your luggage?」", "src": "vntl_v31_1k_val:row8:turn7"}
+{"jp": "[将臣]: 「じゃあお言葉に甘えて。よろしくお願いします」", "en": "[Masaomi]: 「If you're offering, sure. Thanks.」", "src": "vntl_v31_1k_val:row8:turn8"}
+{"jp": "[将臣]: 「芦花姉、祖父ちゃんって今も変わらず元気？」", "en": "[Masaomi]: 「Roka-nee, is my grandpa still as spry as ever?」", "src": "vntl_v31_1k_val:row8:turn9"}
+{"jp": "[芦花]: 「そりゃもう。風邪も引かない、背筋もシャンとしてて、足腰バッチリ」", "en": "[Roka]: 「Absolutely. I haven't ever seen him catch a cold, he still walks with his back straight, and he's keeping himself active.」", "src": "vntl_v31_1k_val:row8:turn10"}
+{"jp": "[芦花]: 「竹刀の素振りも毎日欠かしてないみたいだよ」", "en": "[Roka]: 「I've heard he even still practices sword swings daily.」", "src": "vntl_v31_1k_val:row8:turn11"}
+{"jp": "[将臣]: 「そっか……元気か……いや、元気なのはいいことなんだけどさ」", "en": "[Masaomi]: 「I see. So he's still doing well... I mean that's a good thing and all, but...」", "src": "vntl_v31_1k_val:row9:turn0"}
+{"jp": "[芦花]: 「まー坊は？　元気に剣道してる？」", "en": "[Roka]: 「How about you, Ma-bou? Do you still do kendo?」", "src": "vntl_v31_1k_val:row9:turn1"}
+{"jp": "[将臣]: 「もうやめたよ。竹刀も２年近く握ってもない」", "en": "[Masaomi]: 「Nah, I quit. Haven't held a shinai for almost two years now.」", "src": "vntl_v31_1k_val:row9:turn2"}
+{"jp": "[芦花]: 「あれま、どうして？」", "en": "[Roka]: 「My, that's a surprise. Why?」", "src": "vntl_v31_1k_val:row9:turn3"}
+{"jp": "[将臣]: 「言われて始めたことだから。祖父ちゃんが健康のためにやれって」", "en": "[Masaomi]: 「I mean, I only started 'cause Grandpa pushed me into it. Saying it was for my health and all that.」", "src": "vntl_v31_1k_val:row9:turn4"}
+{"jp": "[将臣]: 「でもなんか続ける理由を失って……勉強やら何やらで、竹刀を握らなくなってそのまま」", "en": "[Masaomi]: 「But I didn't really have any reason to stick with it. Eventually, my life got busy with school and stuff, so I just sort of stopped.」", "src": "vntl_v31_1k_val:row9:turn5"}
+{"jp": "[芦花]: 「なんか自然消滅する男女みたいだね」", "en": "[Roka]: 「Ah, like how couples sometimes get bored of each other and drift apart naturally?」", "src": "vntl_v31_1k_val:row9:turn6"}
+{"jp": "[将臣]: 「まさしく、ソレ」", "en": "[Masaomi]: 「Yeah, it's just like that.」", "src": "vntl_v31_1k_val:row9:turn7"}
+{"jp": "[将臣]: 「そんなわけで、祖父ちゃんと顔を合わせづらくて……」", "en": "[Masaomi]: 「Anyway, that's why I'm not sure how to face him...」", "src": "vntl_v31_1k_val:row9:turn8"}
+{"jp": "[芦花]: 「流石にとって食われたりはしないよ」", "en": "[Roka]: 「Come, now. I'm sure he won't bite your head off.」", "src": "vntl_v31_1k_val:row9:turn9"}
+{"jp": "過度に怖がる必要はないのはわかってる。優しさも持ってる人だということも知っている。", "en": "I know full well that I don't need to be this scared of him. I know that he's a kind person, too.", "src": "vntl_v31_1k_val:row9:turn10"}
+{"jp": "[将臣]: 「凄い綺麗だったと思う。最初から見てなかったことを、ちょっと後悔したよ」", "en": "[Masaomi]: 「It was beautiful. I kind of regret not seeing the whole thing now.」", "src": "vntl_v31_1k_val:row10:turn0"}
+{"jp": "[芦花]: 「巫女姫様の舞は春祭りだけじゃなくて、祭祀でも披露されるから、機会はいくらでもあるよ」", "en": "[Roka]: 「She performs that dance during all the important events, not just the Spring Festival. You'll have plenty of other chances to see it.」", "src": "vntl_v31_1k_val:row10:turn1"}
+{"jp": "[芦花]: 「さてと、それじゃあ玄十郎さんのところに行く？」", "en": "[Roka]: 「Now then, I suppose we should find Genjuurou-san, shouldn't we?」", "src": "vntl_v31_1k_val:row10:turn2"}
+{"jp": "[将臣]: 「そうだった……挨拶しに来たんだった」", "en": "[Masaomi]: 「Oh yeah. That's why we came here.」", "src": "vntl_v31_1k_val:row10:turn3"}
+{"jp": "[芦花]: 「まだここにいると思うんだけど……あっ！」", "en": "[Roka]: 「He should still be here... Ah!」", "src": "vntl_v31_1k_val:row10:turn4"}
+{"jp": "[芦花]: 「廉太郎ー！　小春ちゃーん！」", "en": "[Roka]: 「Rentarou! Koharu-chan!」", "src": "vntl_v31_1k_val:row10:turn5"}
+{"jp": "[廉太郎？]: 「うん？　なんだ、芦花姉」", "en": "[Rentarou?]: 「Hm? What's up, Roka-nee?」", "src": "vntl_v31_1k_val:row10:turn6"}
+{"jp": "[小春？]: 「どうしたの、お姉ちゃん」", "en": "[Koharu?]: 「Did you need something, Onee-chan?」", "src": "vntl_v31_1k_val:row10:turn7"}
+{"jp": "芦花姉の声を聞いた２人が、こちらを振り返る。", "en": "The two people Roka-nee called out to turn to us.", "src": "vntl_v31_1k_val:row10:turn8"}
+{"jp": "[廉太郎？]: 「って……あれ？　お前、将臣か？」", "en": "[Rentarou?]: 「Wait... No way. Is that you, Masaomi?」", "src": "vntl_v31_1k_val:row10:turn9"}
+{"jp": "[小春？]: 「あ、本当だ！　お兄ちゃん！」", "en": "[Koharu?]: 「Ah, it is! Onii-chan!」", "src": "vntl_v31_1k_val:row11:turn0"}
+{"jp": "俺を見て、驚いているのは鞍馬廉太郎。その妹の鞍馬小春。", "en": "These two are Kurama Kentarou and his younger sister, Kurama Koharu.", "src": "vntl_v31_1k_val:row11:turn1"}
+{"jp": "２人も祖父ちゃんの孫、つまり俺の従兄妹だ。", "en": "They're also Grandpa's grandkids, making them my cousins.", "src": "vntl_v31_1k_val:row11:turn2"}
+{"jp": "嫁入りして外に出た母さんの兄が２人の父親、俺の伯父にあたる人だ。", "en": "My mom left the town after she got married, but her brother, my uncle, stayed here.", "src": "vntl_v31_1k_val:row11:turn3"}
+{"jp": "ちなみに伯父は、長男だが宿を継がずに他で働いているらしい。", "en": "Incidentally, even though my uncle is my grandpa's oldest child, he didn't inherit the inn. If I recall correctly, he does something else for work.", "src": "vntl_v31_1k_val:row11:turn4"}

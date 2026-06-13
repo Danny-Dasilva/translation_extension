@@ -1,0 +1,74 @@
+---
+session: e2e-translation-pipeline
+date: 2026-06-13
+status: partial
+outcome: PARTIAL_PLUS
+---
+
+goal: Wire fine-tuned Gemma4 E4B v10it (vLLM+MTP) into backend, fix inpaint+typesetting, run full E2E translation of 2 nhentai galleries (205 pp)
+now: Merge branch cleanup/remove-llamacpp-eagle3 to main, then wire bubble-fit + GPU-LaMa into the production API path (routers/translate.py)
+test: cd backend && SKIP_MERGE=1 GPU_UTIL=0.60 GAMMA=2 bash scripts/eval/serve_v10it_vllm.sh  # wait ~80s for load; then TRANSLATION_BACKEND=vllm-openai .venv/bin/python scripts/visualize_e2e_pipeline.py <img.webp> --out /tmp/t --skip-features --orphan-lines paragraph
+
+done_this_session:
+  - task: Served merged v10it via vLLM + Google MTP drafter; wired as default translation backend
+    files: [backend/app/config.py, backend/app/services/vllm_openai_translation_service.py, backend/scripts/eval/serve_v10it_vllm.sh]
+  - task: Removed llama-cpp backend + all EAGLE-3 refs (commit bbf79b5)
+    files: [backend/app/services/translation_text_utils.py, backend/app/registry.py, backend/app/routers/translate.py, backend/pyproject.toml]
+  - task: Inpaint fix (ring flat-fill + adaptive mask pad, no downscale), 3-way router, GPU-LaMa (commit e593466)
+    files: [backend/app/services/lama_inpaint_service.py, backend/app/utils/ctd_utils.py, backend/pyproject.toml]
+  - task: Bubble-aware typesetting - fit EN text to speech-bubble interior (commit 265f35c)
+    files: [backend/app/utils/ctd_utils.py, backend/scripts/refit_final_composites.py, backend/scripts/visualize_e2e_pipeline.py]
+  - task: Full E2E v4 generation - 205/205 pages, 0 failures, 1.2s/page median
+    files: []
+
+blockers: []
+
+questions:
+  - Merge cleanup/remove-llamacpp-eagle3 to main now, or keep iterating on branch?
+  - Wire bubble-fit+GPU-LaMa into production API (routers/translate.py) or leave E2E-visualizer-only?
+
+decisions:
+  - GPU_UTIL=0.60 for vLLM serve - 0.45 too low (15GB model won't fit), 0.70 starved ONNX vision (OOM); 0.60 leaves ~7GB for CTD/PARSeq/LaMa at page-concurrency 1
+  - page-concurrency 1 (not 3) - concurrency 3 OOMs (3x ONNX CUDA sessions vs vLLM); GPU-LaMa made pages ~1-3s so serial is fine
+  - Bubble-fit over blind-widening - CTD blocks are tight text regions; widening narrow vertical-JP columns overlaps neighbors. YOLOv10n bubble detector gives disjoint bubble rects; dedup 1 block/bubble
+  - EAGLE-3 drafter rejected - 4-9pct runtime acceptance vs MTP 29pct despite 0.55 training acc; SpecForge->vLLM loading-path gap, not corpus. Production stays Google MTP gamma=2
+  - Custom EAGLE-3 retrain v2 (production-prompt corpus) also failed - confirms loading-path issue, not prompt format
+
+findings:
+  - GPU-LaMa is the unlock - onnxruntime-gpu>=1.24 (1.26 installed) first with Blackwell sm_120; LaMa ~50ms/forward vs 2-4s CPU; page 30s->1.2s (25x)
+  - optimum only used by non-default manga-ocr (lazy import); PARSeq default needs only raw onnxruntime-gpu
+  - Pipeline was CPU-bound on OCR+inpaint (96pct), not LLM (translate ~1pct/0.2s) - GPU-LaMa fixed inpaint; OCR now largest remaining stage
+  - EAGLE-3 retrain ran on remote 100.64.235.63 (idle 5090); env set up there (~/SpecForge, ~/.venvs/specforge, ~/.venvs/vllm)
+
+worked:
+  - YOLOv10n bubble detect (app/services/detector_service.py, model app/models/yolov10n_manga.pt) + match_blocks_to_bubbles for typesetting
+  - onnxruntime-gpu 1.26 drop-in on sm_120 (CUDAExecutionProvider works, no nvcc/ninja needed for LaMa)
+  - Launching vLLM clean (no pkill;sleep;relaunch race) - CUDA mem release after SIGKILL needs >5s
+
+failed:
+  - Blind block-widening for narrow columns - overlapped neighbors into jumble (page 2)
+  - vLLM GPU_UTIL 0.70 + page-concurrency 3 - ONNX OOM
+  - Custom EAGLE-3 drafter (v1 + v2 retrain) - never beat Google MTP at runtime
+
+next:
+  - Merge cleanup/remove-llamacpp-eagle3 to main (3 commits, reviewed+tested)
+  - Wire bubble-fit (match_blocks_to_bubbles) + fit_rects + bubble detector into backend/app/routers/translate.py production path
+  - Confirm onnxruntime-gpu in production runtime + persist in uv.lock (only pyproject.toml edited)
+  - Typeset polish - small bubbles w/ long text slightly overspill; shrink-to-fit-with-floor or comic font (Wild Words/Anime Ace)
+  - Batch PARSeq line-crops (OCR now largest stage ~0.3-1.4s/page)
+
+files:
+  created:
+    - backend/app/services/translation_text_utils.py
+    - backend/app/services/vllm_openai_translation_service.py (committed; was untracked)
+    - backend/app/services/hymt_transformers_service.py (committed; was untracked)
+    - "/mnt/nas/drive_2/.../637653_*/translated_en_v4/ + translated_en_v4_inspection/ (99pp)"
+    - "/mnt/nas/drive_2/.../653631_*/translated_en_v4/ + translated_en_v4_inspection/ (106pp)"
+    - 100.64.235.63:~/Documents/personal/manga/comic-text-detector/NEXT_STEPS_v10it_serving.md
+  modified:
+    - backend/app/config.py (translation_backend default vllm-openai)
+    - backend/app/services/lama_inpaint_service.py (3-way router + GPU)
+    - backend/app/utils/ctd_utils.py (build_inpaint_mask, match_blocks_to_bubbles)
+    - backend/scripts/refit_final_composites.py (compose_final fit_rects, all-caps, no mid-word break)
+    - backend/scripts/visualize_e2e_pipeline.py (bubble detect, orphan-lines paragraph mode)
+    - backend/pyproject.toml (onnxruntime-gpu, dropped llama-cpp-python)

@@ -1,0 +1,631 @@
+{"jp": "葬儀屋さん", "en": "welcome,\nghost undertaker", "src": "open_mantra_test:boureisougi:p1:t0"}
+{"jp": "人は平等ではない", "en": "people are not created equal", "src": "open_mantra_test:boureisougi:p2:t0"}
+{"jp": "しかし...", "en": "but", "src": "open_mantra_test:boureisougi:p2:t1"}
+{"jp": "【死】は誰にも平等に訪れる", "en": "\"death\" is equal to anyone.", "src": "open_mantra_test:boureisougi:p2:t2"}
+{"jp": "それでは", "en": "Well then", "src": "open_mantra_test:boureisougi:p2:t3"}
+{"jp": "故人に最期のお別れを", "en": "The last farewell to the deceased", "src": "open_mantra_test:boureisougi:p2:t4"}
+{"jp": "いやぁ", "en": "well", "src": "open_mantra_test:boureisougi:p2:t5"}
+{"jp": "まさかね", "en": "I didn't imagine", "src": "open_mantra_test:boureisougi:p2:t6"}
+{"jp": "こんなに来てくれるとはねぇ", "en": "so many people would come to miss me", "src": "open_mantra_test:boureisougi:p2:t7"}
+{"jp": "あ!", "en": "oh!", "src": "open_mantra_test:boureisougi:p3:t0"}
+{"jp": "あれは一丁目のスナックのママ!", "en": "That woman is the hostess in the bar at Block-1", "src": "open_mantra_test:boureisougi:p3:t1"}
+{"jp": "あっちは行きつけの店の女将!", "en": "That is the owner of my favorite restaurant!", "src": "open_mantra_test:boureisougi:p3:t2"}
+{"jp": "ワシもまだまだ人気者ですなぁ!", "en": "I'm still so popular!", "src": "open_mantra_test:boureisougi:p3:t3"}
+{"jp": "生き生きしますぞ!", "en": "i feel so alive!", "src": "open_mantra_test:boureisougi:p3:t4"}
+{"jp": "葬儀屋とは", "en": "The job of an undertaker", "src": "open_mantra_test:boureisougi:p3:t5"}
+{"jp": "生者と死者の最期の場所を作る仕事", "en": "is to set up the last place for the living and the dead", "src": "open_mantra_test:boureisougi:p3:t6"}
+{"jp": "..もう", "en": "well, I'm afraid", "src": "open_mantra_test:boureisougi:p3:t7"}
+{"jp": "私はその中でも", "en": "particularly, I ...", "src": "open_mantra_test:boureisougi:p3:t8"}
+{"jp": "死んでるんですよねぇ", "en": "you're already dead ...", "src": "open_mantra_test:boureisougi:p4:t0"}
+{"jp": "ようこそ\n亡霊葬儀屋さん\n吉良いと", "en": "Welcome, \nghost undertaker\n@Kilightit", "src": "open_mantra_test:boureisougi:p4:t1"}
+{"jp": "「視える」人間ってヤツでして", "en": "... am one of those who can \"see\"", "src": "open_mantra_test:boureisougi:p4:t2"}
+{"jp": "え?", "en": "Hmm", "src": "open_mantra_test:boureisougi:p4:t3"}
+{"jp": "亡くなったお姉さんのお化粧を?", "en": "you want to put on your late sister's make up?", "src": "open_mantra_test:boureisougi:p4:t4"}
+{"jp": "烏丸葬儀社社長\n烏丸枢(からすまくるる）　２５歳", "en": "karasuma undertaking ceo\nkururu karasuma (25)", "src": "open_mantra_test:boureisougi:p4:t5"}
+{"jp": "はい...", "en": "yes...", "src": "open_mantra_test:boureisougi:p4:t6"}
+{"jp": "葬儀依頼人\n桜野　すずめ　１９歳", "en": "Client:\nSuzume Sakurano (19)", "src": "open_mantra_test:boureisougi:p4:t7"}
+{"jp": "エンゼルメイク", "en": "\"Postmortem care,\"", "src": "open_mantra_test:boureisougi:p5:t0"}
+{"jp": "っていうんですよね", "en": "we call it", "src": "open_mantra_test:boureisougi:p5:t1"}
+{"jp": "無理は承知です", "en": "i know this might appear to be impossible", "src": "open_mantra_test:boureisougi:p5:t2"}
+{"jp": "でもどうしても私", "en": "But i really and truly", "src": "open_mantra_test:boureisougi:p5:t3"}
+{"jp": "お姉ちゃんにメイクをしたくって...", "en": "want to put makeup on my sister by myself", "src": "open_mantra_test:boureisougi:p5:t4"}
+{"jp": "ハァ", "en": "hmm", "src": "open_mantra_test:boureisougi:p5:t5"}
+{"jp": "まだプロじゃないですけど...", "en": "i'm not a professional makeup artist yet,", "src": "open_mantra_test:boureisougi:p5:t6"}
+{"jp": "専門学校に通うメイクの卵です!", "en": "but i'm studying it at technical college!", "src": "open_mantra_test:boureisougi:p5:t7"}
+{"jp": "ちゃんとできます!烏丸さんっ", "en": "i can\ndo it without fail, karasuma- san!", "src": "open_mantra_test:boureisougi:p5:t8"}
+{"jp": "やめた方がいいです", "en": "No, you shouldn't do it.", "src": "open_mantra_test:boureisougi:p5:t9"}
+{"jp": "!", "en": "!", "src": "open_mantra_test:boureisougi:p5:t10"}
+{"jp": "私は「生きている彼女」に会ったことはないですが", "en": "i've never met her when she was alive,", "src": "open_mantra_test:boureisougi:p6:t0"}
+{"jp": "さぞかし美しいお顔だったのでしょう", "en": "but still, i'm sure that she was so beautiful", "src": "open_mantra_test:boureisougi:p6:t1"}
+{"jp": "なぜですかっ!?", "en": "Why is that?", "src": "open_mantra_test:boureisougi:p6:t2"}
+{"jp": "すずめさん", "en": "suzume- san", "src": "open_mantra_test:boureisougi:p6:t3"}
+{"jp": "お姉さんは有名な美人女優だったそうですね", "en": "I hear that your sister was a famous beautiful actress", "src": "open_mantra_test:boureisougi:p6:t4"}
+{"jp": "連日メディアが騒いでいます", "en": "It's featured in the news every day", "src": "open_mantra_test:boureisougi:p6:t5"}
+{"jp": "...私では", "en": "Do you mean ...", "src": "open_mantra_test:boureisougi:p6:t6"}
+{"jp": "姉のメイクをするには実力不足ということですか", "en": "I'm not skilled enough to put her makeup on?", "src": "open_mantra_test:boureisougi:p6:t7"}
+{"jp": "ハハそういう訳では", "en": "No, that's not what i mean...", "src": "open_mantra_test:boureisougi:p6:t8"}
+{"jp": "お姉さんの事故後のお顔", "en": "Did you see ...", "src": "open_mantra_test:boureisougi:p7:t0"}
+{"jp": "ご覧になりました?", "en": "her face after the accident?", "src": "open_mantra_test:boureisougi:p7:t1"}
+{"jp": "それはそうでしょうねぇ", "en": "of course not.", "src": "open_mantra_test:boureisougi:p7:t2"}
+{"jp": "...いえ", "en": "no ...", "src": "open_mantra_test:boureisougi:p7:t3"}
+{"jp": "病院の方から", "en": "The doctors told me", "src": "open_mantra_test:boureisougi:p7:t4"}
+{"jp": "あまり見ない方がいいと言われて...", "en": "it would be better not to ...", "src": "open_mantra_test:boureisougi:p7:t5"}
+{"jp": "今の桜野ツバメさんは", "en": "Now,\nyour sister Tsubame Sakurano ...", "src": "open_mantra_test:boureisougi:p7:t6"}
+{"jp": "貴女の知っているお顔じゃありませんから", "en": "does not look like she used to be\nat all ...", "src": "open_mantra_test:boureisougi:p7:t7"}
+{"jp": "車の事故", "en": "the car accident", "src": "open_mantra_test:boureisougi:p8:t0"}
+{"jp": "それもスピード超過によるガードレールへの正面衝突", "en": "a head-on crash into guardrails from overspeed", "src": "open_mantra_test:boureisougi:p8:t1"}
+{"jp": "顔は割れたフロントガラスでズタズタに引き裂かれ", "en": "her face was seriously injured by the broken windscreen...", "src": "open_mantra_test:boureisougi:p8:t2"}
+{"jp": "折れた骨が皮膚を突き破っている", "en": "...and the broken bone pierced her skin", "src": "open_mantra_test:boureisougi:p8:t3"}
+{"jp": "病院で簡単な処置はされていますが", "en": "The doctor did some treatment in the hospital,", "src": "open_mantra_test:boureisougi:p8:t4"}
+{"jp": "生前のお姉さんとは誰が見ても気づかないでしょう", "en": "but nobody will find that it's your sister", "src": "open_mantra_test:boureisougi:p8:t5"}
+{"jp": "お顔を見てから「やっぱり出来ません」", "en": "you can't refuse putting on makeup", "src": "open_mantra_test:boureisougi:p8:t6"}
+{"jp": "では困るんです", "en": "after seeing her face.", "src": "open_mantra_test:boureisougi:p8:t7"}
+{"jp": ".....私は", "en": "I", "src": "open_mantra_test:boureisougi:p8:t8"}
+{"jp": "どうです?", "en": "what do you think?", "src": "open_mantra_test:boureisougi:p9:t0"}
+{"jp": "それでも", "en": "have you changed your mind?", "src": "open_mantra_test:boureisougi:p9:t1"}
+{"jp": "今のお姉さんと向き合う覚悟はありますか?", "en": "Or, are you ready to face your sister?", "src": "open_mantra_test:boureisougi:p9:t2"}
+{"jp": "ちょっと葬儀屋さんッ!", "en": "hey,\nMr. undertaker!", "src": "open_mantra_test:boureisougi:p9:t3"}
+{"jp": "あんまりすずめをいじめないでくれる!?", "en": "will you stop bullying Suzume?", "src": "open_mantra_test:boureisougi:p9:t5"}
+{"jp": "アタシの妹なんだから!", "en": "she's my sister!", "src": "open_mantra_test:boureisougi:p9:t6"}
+{"jp": "...ツバメさん", "en": "Tsubame-\nsan...", "src": "open_mantra_test:boureisougi:p10:t0"}
+{"jp": "アナタが私に依頼してきたんでしょ", "en": "you are the one who asked me", "src": "open_mantra_test:boureisougi:p10:t1"}
+{"jp": "当たり前じゃない!", "en": "Yes,\nof course!", "src": "open_mantra_test:boureisougi:p10:t2"}
+{"jp": "あんなヒドイ顔をすずめには見られたくないもの!", "en": "I can't let Suzume see my ugly face!", "src": "open_mantra_test:boureisougi:p10:t3"}
+{"jp": "他人から嫌われるのには慣れてるッ", "en": "I'm used to being hated by others", "src": "open_mantra_test:boureisougi:p10:t4"}
+{"jp": "でも妹には引かれたくないの", "en": "but i can't stand being hated by my sister!", "src": "open_mantra_test:boureisougi:p10:t5"}
+{"jp": "そういうもんですかねぇ...", "en": "Hmm...", "src": "open_mantra_test:boureisougi:p10:t6"}
+{"jp": "すずめさんに自分のメイクをさせるな", "en": "to stop your sister from putting on your makeup", "src": "open_mantra_test:boureisougi:p10:t7"}
+{"jp": "って", "en": "aren't you?", "src": "open_mantra_test:boureisougi:p10:t8"}
+{"jp": "ですがすずめさんの気持ちも考えてあげたらどうです?", "en": "but how\nabout taking suzume-\nsan's feelings\ninto account?", "src": "open_mantra_test:boureisougi:p10:t9"}
+{"jp": "たった二人の家族なんですし", "en": "You are her only family", "src": "open_mantra_test:boureisougi:p10:t10"}
+{"jp": "…アンタに", "en": "what", "src": "open_mantra_test:boureisougi:p11:t0"}
+{"jp": "何がわかるのよッ", "en": "do you know ?!", "src": "open_mantra_test:boureisougi:p11:t1"}
+{"jp": "とにかく!", "en": "anyway!", "src": "open_mantra_test:boureisougi:p11:t2"}
+{"jp": "アタシは認めないわ!!", "en": "I'm not allowing her to make me up!", "src": "open_mantra_test:boureisougi:p11:t3"}
+{"jp": "他の代理を立てて頂戴!", "en": "get someone else!", "src": "open_mantra_test:boureisougi:p11:t4"}
+{"jp": "それと...", "en": "And ...", "src": "open_mantra_test:boureisougi:p11:t5"}
+{"jp": "それと?", "en": "and what ?", "src": "open_mantra_test:boureisougi:p11:t6"}
+{"jp": "...何でもないわ!!", "en": "...no, nothing.", "src": "open_mantra_test:boureisougi:p11:t7"}
+{"jp": "......誰だって", "en": "well", "src": "open_mantra_test:boureisougi:p11:t8"}
+{"jp": "後悔だらけのお別れは", "en": "A farewell full of regrets", "src": "open_mantra_test:boureisougi:p12:t0"}
+{"jp": "寂しいもんですよねぇ", "en": "that's sad for everybody", "src": "open_mantra_test:boureisougi:p12:t1"}
+{"jp": "らっしゃい!", "en": "welcome!", "src": "open_mantra_test:boureisougi:p12:t2"}
+{"jp": "美人女優である桜野ツバメの交通事故死", "en": "actress tsubame sakurano's death in a traffic accident", "src": "open_mantra_test:boureisougi:p12:t3"}
+{"jp": "世の中では様々な噂に溢れていますが", "en": "there are many rumors about it...", "src": "open_mantra_test:boureisougi:p12:t4"}
+{"jp": "皆様はどうお考えですか?", "en": "what do you think?", "src": "open_mantra_test:boureisougi:p12:t5"}
+{"jp": "誰かに殺されたという噂も立っていますよね", "en": "Some people say that she was murdered...", "src": "open_mantra_test:boureisougi:p12:t6"}
+{"jp": "彼女は芸能界の中でも変わり者でしたから", "en": "she was kind of eccentric in the entertainment industry", "src": "open_mantra_test:boureisougi:p12:t7"}
+{"jp": "というと?", "en": "What do you mean?", "src": "open_mantra_test:boureisougi:p12:t8"}
+{"jp": "まぁいわゆる枕とか....新人漬しとかですね", "en": "sleeping around for business and bullying young actresses ...", "src": "open_mantra_test:boureisougi:p12:t9"}
+{"jp": "あくまで噂ですが", "en": "but they're only rumors.", "src": "open_mantra_test:boureisougi:p12:t10"}
+{"jp": "ぶっちゃけ好感度も良くないでしょ?", "en": "actually, many people didn't like her", "src": "open_mantra_test:boureisougi:p12:t11"}
+{"jp": "顔と演技力は確かですけど", "en": "though she had the looks and good acting", "src": "open_mantra_test:boureisougi:p12:t12"}
+{"jp": "中身が......ねぇ?", "en": "but her personality ...", "src": "open_mantra_test:boureisougi:p12:t13"}
+{"jp": "ーの後は引き続き", "en": "Stay tuned.", "src": "open_mantra_test:boureisougi:p12:t14"}
+{"jp": "桜野ツバメさんの死の真相に迫っていきた", "en": "...the program continues after the commercial break", "src": "open_mantra_test:boureisougi:p12:t15"}
+{"jp": "あ!", "en": "Ah!", "src": "open_mantra_test:boureisougi:p13:t0"}
+{"jp": "見てたのにぃ", "en": "i was watching it!", "src": "open_mantra_test:boureisougi:p13:t1"}
+{"jp": "すずめちゃん!", "en": "Suzume-\nchan!", "src": "open_mantra_test:boureisougi:p13:t2"}
+{"jp": "これ4番テーブルに持ってって!", "en": "take this to table-4!", "src": "open_mantra_test:boureisougi:p13:t3"}
+{"jp": "お待たせしました!", "en": "thanks for waiting!", "src": "open_mantra_test:boureisougi:p13:t4"}
+{"jp": "はいっ", "en": "Okay!", "src": "open_mantra_test:boureisougi:p13:t5"}
+{"jp": "...って", "en": "....", "src": "open_mantra_test:boureisougi:p13:t6"}
+{"jp": "あれ?", "en": "huh?", "src": "open_mantra_test:boureisougi:p13:t7"}
+{"jp": "葬儀屋さん?", "en": "Mr. Undertaker?", "src": "open_mantra_test:boureisougi:p14:t0"}
+{"jp": "ドウモ", "en": "Hi.", "src": "open_mantra_test:boureisougi:p14:t1"}
+{"jp": "ラーメン美味しかったです", "en": "the ramen was delicious!", "src": "open_mantra_test:boureisougi:p14:t2"}
+{"jp": "でしょう?", "en": "right?", "src": "open_mantra_test:boureisougi:p14:t3"}
+{"jp": "当店自慢の味なんですよ!", "en": "It's our signature taste!", "src": "open_mantra_test:boureisougi:p14:t4"}
+{"jp": "自分で稼ぎながら専門学校に通っているんですね", "en": "Are you working to earn your own tuition?", "src": "open_mantra_test:boureisougi:p14:t5"}
+{"jp": "学校に通うのにもお金が要りますから!1日だって休めませんっ", "en": "yeah. the school costs a lot, so I need to work hard!", "src": "open_mantra_test:boureisougi:p14:t6"}
+{"jp": "できるだけお姉ちゃんに負担がかからないように...", "en": "I don't want to put a burden on my sister", "src": "open_mantra_test:boureisougi:p14:t7"}
+{"jp": "....", "en": "....", "src": "open_mantra_test:boureisougi:p14:t8"}
+{"jp": "あ...", "en": "oh", "src": "open_mantra_test:boureisougi:p14:t9"}
+{"jp": "!", "en": "!", "src": "open_mantra_test:boureisougi:p15:t0"}
+{"jp": "行きましょうか", "en": "let's go", "src": "open_mantra_test:boureisougi:p15:t1"}
+{"jp": "えっ", "en": "huh ?", "src": "open_mantra_test:boureisougi:p15:t2"}
+{"jp": "どこに!?", "en": "where ?", "src": "open_mantra_test:boureisougi:p15:t3"}
+{"jp": "お姉さんが今いるトコロ", "en": "to your sister.", "src": "open_mantra_test:boureisougi:p15:t4"}
+{"jp": "ここって...", "en": "This is...", "src": "open_mantra_test:boureisougi:p15:t5"}
+{"jp": "幽霊はね", "en": "ghosts ...", "src": "open_mantra_test:boureisougi:p16:t0"}
+{"jp": "居場所が決まっているんです", "en": "... stay in three places", "src": "open_mantra_test:boureisougi:p16:t1"}
+{"jp": "一つ目は亡くなった場所", "en": "First, the place where they died", "src": "open_mantra_test:boureisougi:p16:t2"}
+{"jp": "二つ目は遺骨が埋葬されている場所", "en": "second, the place of their graves", "src": "open_mantra_test:boureisougi:p16:t3"}
+{"jp": "そして三つ目は", "en": "and third...", "src": "open_mantra_test:boureisougi:p16:t4"}
+{"jp": "大切な人のそば", "en": "close to someone they loved.", "src": "open_mantra_test:boureisougi:p16:t5"}
+{"jp": "ってね", "en": "...apparently", "src": "open_mantra_test:boureisougi:p16:t6"}
+{"jp": "実はここにいるんですよ", "en": "actually, your sister", "src": "open_mantra_test:boureisougi:p16:t7"}
+{"jp": "お姉さん", "en": "she's here now.", "src": "open_mantra_test:boureisougi:p16:t8"}
+{"jp": "ふふ", "en": "ha ha", "src": "open_mantra_test:boureisougi:p16:t9"}
+{"jp": "葬儀屋さんも冗談とか言うんですか", "en": "mr. undertaker. you are kidding me.", "src": "open_mantra_test:boureisougi:p16:t10"}
+{"jp": "どうぞ枢（くるる）と呼んでください", "en": "please call me Kururu.", "src": "open_mantra_test:boureisougi:p16:t11"}
+{"jp": "枢さん...", "en": "Kururu-\nsan", "src": "open_mantra_test:boureisougi:p17:t0"}
+{"jp": "は", "en": "you", "src": "open_mantra_test:boureisougi:p17:t1"}
+{"jp": "姉のことを悪く思っていたりしないんですか", "en": "don't you think ill of my sister?", "src": "open_mantra_test:boureisougi:p17:t2"}
+{"jp": "いろんな噂とかされてますけど...", "en": "There are lots of gosships about her...", "src": "open_mantra_test:boureisougi:p17:t3"}
+{"jp": "噂は噂でしょう?", "en": "gossips are gossips", "src": "open_mantra_test:boureisougi:p17:t4"}
+{"jp": "真実は本人に聞けばいいですから", "en": "I can always ask her the truth.", "src": "open_mantra_test:boureisougi:p17:t5"}
+{"jp": "枢さんって面白いですね", "en": "Kururusan,\nyou are　funny.", "src": "open_mantra_test:boureisougi:p17:t6"}
+{"jp": "......私も", "en": "I...", "src": "open_mantra_test:boureisougi:p17:t7"}
+{"jp": "直前まで乗っていたんです", "en": "...was in my sister's car", "src": "open_mantra_test:boureisougi:p17:t8"}
+{"jp": "事故を起こした姉の車に", "en": "right before the accident.", "src": "open_mantra_test:boureisougi:p17:t9"}
+{"jp": "バイトの帰りで", "en": "I was on my way home", "src": "open_mantra_test:boureisougi:p18:t0"}
+{"jp": "予報が曇りのち大雨で...", "en": "it was forecasted to rain heavily", "src": "open_mantra_test:boureisougi:p18:t1"}
+{"jp": "自分だって仕事で忙しいのに", "en": "I knew she was so busy,", "src": "open_mantra_test:boureisougi:p18:t2"}
+{"jp": "「私の誕生日だからどこかに食べに行こう」ってって", "en": "yet she came to give me a ride to celebrate my birthday", "src": "open_mantra_test:boureisougi:p18:t3"}
+{"jp": "迎えに来てくれたの", "en": "right to my workplace", "src": "open_mantra_test:boureisougi:p18:t4"}
+{"jp": "でも私お姉ちゃんと喧嘩しちゃった", "en": "but we had a quarrel", "src": "open_mantra_test:boureisougi:p18:t5"}
+{"jp": "...学費の事で", "en": "about my tuition fee", "src": "open_mantra_test:boureisougi:p18:t6"}
+{"jp": "私は自分で貯めたお金で学校に通いたかったの", "en": "i wanted to pay it by myself", "src": "open_mantra_test:boureisougi:p18:t7"}
+{"jp": "だけど", "en": "but", "src": "open_mantra_test:boureisougi:p18:t8"}
+{"jp": "お姉ちゃんが全部払うって聞かなくて", "en": "she insisted that she would pay all.", "src": "open_mantra_test:boureisougi:p18:t9"}
+{"jp": "両親が死んで", "en": "my sister\n...", "src": "open_mantra_test:boureisougi:p18:t10"}
+{"jp": "親代わりになってくれたお姉ちゃんに", "en": "...raised me up after our parents had died", "src": "open_mantra_test:boureisougi:p18:t11"}
+{"jp": "これ以上迷惑をかけたくなかったのに...", "en": "i didn't want to trouble her anymore", "src": "open_mantra_test:boureisougi:p18:t12"}
+{"jp": "アンタはまだまだ子供なんだから", "en": "\"You're still a little child.\"", "src": "open_mantra_test:boureisougi:p19:t0"}
+{"jp": "そう言われて", "en": "she said", "src": "open_mantra_test:boureisougi:p19:t1"}
+{"jp": "ムカついて", "en": "and I was  so irritated...", "src": "open_mantra_test:boureisougi:p19:t2"}
+{"jp": "ちょっと!すずめッ", "en": "Wait! Suzume!", "src": "open_mantra_test:boureisougi:p19:t3"}
+{"jp": "車から飛び出しちゃった", "en": "and jumped out of the car.", "src": "open_mantra_test:boureisougi:p19:t4"}
+{"jp": "大っ嫌いッ", "en": "!!!", "src": "open_mantra_test:boureisougi:p19:t5"}
+{"jp": "お姉ちゃんなんて", "en": "I hate you!", "src": "open_mantra_test:boureisougi:p19:t6"}
+{"jp": "それが", "en": "and that", "src": "open_mantra_test:boureisougi:p19:t7"}
+{"jp": "私がお姉ちゃんに言った最後の言葉だった", "en": "was the last conversation we had before she died.", "src": "open_mantra_test:boureisougi:p19:t8"}
+{"jp": "お姉ちゃんの事故", "en": "The reason of the accident...", "src": "open_mantra_test:boureisougi:p19:t9"}
+{"jp": "スピードの出し過ぎが原因だったでしょう?", "en": "was overspeeding, right?", "src": "open_mantra_test:boureisougi:p19:t10"}
+{"jp": "たぶん私を追いかけてくれていたんだと思う", "en": "she was probably trying to catch up with me", "src": "open_mantra_test:boureisougi:p20:t0"}
+{"jp": "私が車を出て走った後に", "en": "since after i left the car", "src": "open_mantra_test:boureisougi:p20:t1"}
+{"jp": "すごい雨が降ってきたから", "en": "it started raining heavily.", "src": "open_mantra_test:boureisougi:p20:t2"}
+{"jp": "...私の夢は", "en": "my dream", "src": "open_mantra_test:boureisougi:p20:t3"}
+{"jp": "舞台に立つお姉ちゃんのメイクを担当することだったの", "en": "...was to help my sister wear makeup when she acts on the stage.", "src": "open_mantra_test:boureisougi:p20:t4"}
+{"jp": "でも", "en": "but now", "src": "open_mantra_test:boureisougi:p20:t5"}
+{"jp": "もう叶わなくなっちゃった", "en": "the dream would never come true.", "src": "open_mantra_test:boureisougi:p20:t6"}
+{"jp": "私のせいで", "en": "it's my fault ...", "src": "open_mantra_test:boureisougi:p21:t0"}
+{"jp": "私のせいで...", "en": "because of\nme", "src": "open_mantra_test:boureisougi:p21:t1"}
+{"jp": "お姉ちゃん死んじゃった", "en": "My sister died...", "src": "open_mantra_test:boureisougi:p21:t2"}
+{"jp": "最期まで", "en": "I", "src": "open_mantra_test:boureisougi:p21:t3"}
+{"jp": "お姉ちゃんに迷惑をかけて...っ", "en": "I troubled my sister until the end of her life...", "src": "open_mantra_test:boureisougi:p21:t4"}
+{"jp": "...迷惑かどうかなんて", "en": "are you sure you troubled your sister?", "src": "open_mantra_test:boureisougi:p21:t5"}
+{"jp": "自分で決めつけるもんじゃないでしょ", "en": "that's not something you decide", "src": "open_mantra_test:boureisougi:p21:t6"}
+{"jp": "実際はどうです?", "en": "how was it actually", "src": "open_mantra_test:boureisougi:p22:t0"}
+{"jp": "ツバメさん", "en": "Tsubame-\nsan?", "src": "open_mantra_test:boureisougi:p22:t1"}
+{"jp": "迷惑だった?", "en": "were you troubled by her\n?", "src": "open_mantra_test:boureisougi:p22:t2"}
+{"jp": "....?", "en": "....?", "src": "open_mantra_test:boureisougi:p22:t3"}
+{"jp": "「迷惑なんて思っていたら」", "en": "\"If I thought i was troubled.\"", "src": "open_mantra_test:boureisougi:p22:t4"}
+{"jp": "「私は側になんていてやらない」", "en": "\"I wouldn't have been on your side\"", "src": "open_mantra_test:boureisougi:p22:t5"}
+{"jp": "「妹のアンタが一番よくわかっているでしょう?」", "en": "\"you know how I feel, right? You are my sister.\"", "src": "open_mantra_test:boureisougi:p22:t6"}
+{"jp": "ですって", "en": "that's what she says", "src": "open_mantra_test:boureisougi:p22:t7"}
+{"jp": "......不思議です", "en": "...It's strange.", "src": "open_mantra_test:boureisougi:p24:t0"}
+{"jp": "今一瞬お姉ちゃんが見えました", "en": "i just saw my sister", "src": "open_mantra_test:boureisougi:p24:t1"}
+{"jp": "枢さん...", "en": "Kururu-\nsan", "src": "open_mantra_test:boureisougi:p24:t2"}
+{"jp": "改めてお願いしてもいいですか", "en": "can i ask a favor of you again?", "src": "open_mantra_test:boureisougi:p24:t3"}
+{"jp": "お姉ちゃんのすべてを受け止める覚悟なら", "en": "I'm ready to accept everything about my sister", "src": "open_mantra_test:boureisougi:p25:t0"}
+{"jp": "できました", "en": "i'm ready for\nit", "src": "open_mantra_test:boureisougi:p25:t1"}
+{"jp": "ねぇ〜", "en": "hey", "src": "open_mantra_test:boureisougi:p26:t0"}
+{"jp": "もう目開けていい?", "en": "Can I open my eyes now?", "src": "open_mantra_test:boureisougi:p27:t0"}
+{"jp": "うん!", "en": "yeah!", "src": "open_mantra_test:boureisougi:p27:t1"}
+{"jp": "今日のメイクはね", "en": "today's make up...", "src": "open_mantra_test:boureisougi:p27:t2"}
+{"jp": "自信あるんだ!", "en": "I\nthink i did a pretty good job!", "src": "open_mantra_test:boureisougi:p27:t3"}
+{"jp": "...ぶ", "en": "ha", "src": "open_mantra_test:boureisougi:p27:t4"}
+{"jp": "あはは!", "en": "ahaha!", "src": "open_mantra_test:boureisougi:p27:t5"}
+{"jp": "下手ッ", "en": "This is terrible!", "src": "open_mantra_test:boureisougi:p27:t6"}
+{"jp": "...頑張ったのにぃ", "en": "I\ntried my best...", "src": "open_mantra_test:boureisougi:p27:t7"}
+{"jp": "私の専属メイクになれるのはまだまだ先ね", "en": "you need more practice ...", "src": "open_mantra_test:boureisougi:p27:t8"}
+{"jp": "私もなれる!?", "en": "Do\nyou think", "src": "open_mantra_test:boureisougi:p27:t9"}
+{"jp": "お姉ちゃんのメイク担当!", "en": "I can be your beautician?", "src": "open_mantra_test:boureisougi:p27:t10"}
+{"jp": "こら", "en": "hey", "src": "open_mantra_test:boureisougi:p28:t0"}
+{"jp": "人生はそんなに甘くはないの", "en": "life is not that easy", "src": "open_mantra_test:boureisougi:p28:t1"}
+{"jp": "私を満足させるメイクができるようになったら", "en": "When you become skilled enough...", "src": "open_mantra_test:boureisougi:p28:t2"}
+{"jp": "考えてあげてもいいわ", "en": "i'll think about it.", "src": "open_mantra_test:boureisougi:p28:t3"}
+{"jp": "その時が来たらご褒美あげるわよ", "en": "when the time comes, i'll reward you!", "src": "open_mantra_test:boureisougi:p28:t4"}
+{"jp": "ホント!?", "en": "Really?", "src": "open_mantra_test:boureisougi:p28:t5"}
+{"jp": "だからせいぜい", "en": "Yes!", "src": "open_mantra_test:boureisougi:p28:t6"}
+{"jp": "腕を磨きなさい!", "en": "So keep on practicing!", "src": "open_mantra_test:boureisougi:p28:t7"}
+{"jp": "ツバメさん", "en": "Tsubame-\nsan", "src": "open_mantra_test:boureisougi:p29:t0"}
+{"jp": "綺麗でしたねぇ", "en": "You were so beautiful", "src": "open_mantra_test:boureisougi:p30:t0"}
+{"jp": ".....私はいつだって綺麗よ", "en": "I am always beautiful!", "src": "open_mantra_test:boureisougi:p30:t1"}
+{"jp": "何を拗ねているんですか", "en": "Why\nare you being sulky?", "src": "open_mantra_test:boureisougi:p30:t2"}
+{"jp": "すずめさんの側にもいなかったですし", "en": "You weren't with Suzume-san during funeral.", "src": "open_mantra_test:boureisougi:p30:t3"}
+{"jp": "当たり前でしょ!", "en": "of course not!", "src": "open_mantra_test:boureisougi:p30:t4"}
+{"jp": "すずめにはあんな顔見られたくなかったのにツ", "en": "i didn't want Suzume to see my face like that!", "src": "open_mantra_test:boureisougi:p30:t5"}
+{"jp": "最初から私の依頼を叶える気なんて", "en": "you were not going to stop her...", "src": "open_mantra_test:boureisougi:p31:t0"}
+{"jp": "なかったんじゃない", "en": "...from the beginning.", "src": "open_mantra_test:boureisougi:p31:t1"}
+{"jp": "あなたの本当の依頼なら", "en": "Please don't worry.", "src": "open_mantra_test:boureisougi:p31:t2"}
+{"jp": "叶えましたよ", "en": "I complied with your wish.", "src": "open_mantra_test:boureisougi:p31:t3"}
+{"jp": "え...?", "en": "my wish?", "src": "open_mantra_test:boureisougi:p31:t4"}
+{"jp": "枢さんっ", "en": "Kururu-san!", "src": "open_mantra_test:boureisougi:p31:t5"}
+{"jp": "ありがとうございました!", "en": "thank you very much!", "src": "open_mantra_test:boureisougi:p31:t6"}
+{"jp": "おかげで", "en": "The makeup brushes you\nlent me.", "src": "open_mantra_test:boureisougi:p31:t7"}
+{"jp": "後悔なくお姉ちゃんを送れます", "en": "i can say farewell to my sister without regret", "src": "open_mantra_test:boureisougi:p31:t8"}
+{"jp": "あの...", "en": "and ...", "src": "open_mantra_test:boureisougi:p31:t9"}
+{"jp": "これ", "en": "I...", "src": "open_mantra_test:boureisougi:p31:t10"}
+{"jp": "お借りした化粧筆", "en": "I'll give these back to you.", "src": "open_mantra_test:boureisougi:p31:t11"}
+{"jp": "お返しします", "en": "The makeup brushes you\nlent me.", "src": "open_mantra_test:boureisougi:p31:t12"}
+{"jp": "!", "en": "!", "src": "open_mantra_test:boureisougi:p32:t0"}
+{"jp": "それ..", "en": "oh", "src": "open_mantra_test:boureisougi:p32:t1"}
+{"jp": "これは貴女のものですよすずめさん", "en": "These brushes belong to you, Suzume-\nsan.", "src": "open_mantra_test:boureisougi:p32:t2"}
+{"jp": "?", "en": "?", "src": "open_mantra_test:boureisougi:p32:t3"}
+{"jp": "......お姉ちゃん", "en": "a present", "src": "open_mantra_test:boureisougi:p32:t4"}
+{"jp": "が...?", "en": "from my sister ...?", "src": "open_mantra_test:boureisougi:p32:t5"}
+{"jp": "貴女に贈ろうとしていた誕生日プレゼントです", "en": "Tsubame-san was going to give these to you as birthday present.", "src": "open_mantra_test:boureisougi:p32:t6"}
+{"jp": "ツバメさんが", "en": "Your sister ...", "src": "open_mantra_test:boureisougi:p32:t7"}
+{"jp": "きっと夕食を共にするときに渡そうとしていたんですね", "en": "she was probably going to hand these to you during the dinner", "src": "open_mantra_test:boureisougi:p32:t8"}
+{"jp": "車外から見つかって", "en": "the police found them,", "src": "open_mantra_test:boureisougi:p33:t0"}
+{"jp": "お姉さんの遺品としてこちらで預かっていました", "en": "and we were keeping them.", "src": "open_mantra_test:boureisougi:p33:t1"}
+{"jp": "事故にあった中でも", "en": "This box was the only thing", "src": "open_mantra_test:boureisougi:p33:t2"}
+{"jp": "これだけは奇跡的に無傷だったんです", "en": "that was undamaged in that terrible accident", "src": "open_mantra_test:boureisougi:p33:t3"}
+{"jp": "きっと", "en": "Maybe", "src": "open_mantra_test:boureisougi:p33:t4"}
+{"jp": "お姉さんが守ってくれていたんですね", "en": "it was protected by your sister.", "src": "open_mantra_test:boureisougi:p33:t5"}
+{"jp": ".....私はお礼なんて言わないから", "en": "i won't thank you...", "src": "open_mantra_test:boureisougi:p35:t0"}
+{"jp": "貴女も強情ですねぇ", "en": "you are so stubborn", "src": "open_mantra_test:boureisougi:p35:t1"}
+{"jp": "アンタが大きなお世話なのよッ", "en": "None of your business!", "src": "open_mantra_test:boureisougi:p35:t2"}
+{"jp": "ハイハイ", "en": "Okay\nOkay", "src": "open_mantra_test:boureisougi:p35:t3"}
+{"jp": ".....なんで", "en": "why ...", "src": "open_mantra_test:boureisougi:p35:t4"}
+{"jp": "しんどくない?", "en": "don't you feel tired?", "src": "open_mantra_test:boureisougi:p35:t5"}
+{"jp": "アンタはこんな仕事やってるの", "en": "why do you do this kind of work?", "src": "open_mantra_test:boureisougi:p35:t6"}
+{"jp": "毎日毎日誰かの泣き顔見て", "en": "everyday, you see others crying...", "src": "open_mantra_test:boureisougi:p35:t7"}
+{"jp": "よくも知らない人にお悔やみの言葉なんてかけて", "en": "...And express sympathy to people they don't know...", "src": "open_mantra_test:boureisougi:p35:t8"}
+{"jp": "...そうでもないですよ", "en": "not really", "src": "open_mantra_test:boureisougi:p35:t9"}
+{"jp": "貴女は", "en": "at least", "src": "open_mantra_test:boureisougi:p36:t0"}
+{"jp": "笑顔になれるでしょう?", "en": "I can help you smile, right?", "src": "open_mantra_test:boureisougi:p36:t1"}
+{"jp": "...ホント", "en": "that's", "src": "open_mantra_test:boureisougi:p36:t2"}
+{"jp": "おせっかいな葬儀屋さん", "en": "none of your business", "src": "open_mantra_test:boureisougi:p36:t3"}
+{"jp": "...ありがと", "en": "but thanks", "src": "open_mantra_test:boureisougi:p36:t4"}
+{"jp": "文明開化の音が響き", "en": "The sound of the opening of civilization howls", "src": "open_mantra_test:rasetugari:p1:t0"}
+{"jp": "闇夜の帳が払われるとて", "en": "The veil of night is swept away", "src": "open_mantra_test:rasetugari:p1:t1"}
+{"jp": "悪鬼羅刹の絶えることなし", "en": "But no end to the evil spirits", "src": "open_mantra_test:rasetugari:p1:t2"}
+{"jp": "否", "en": "no.", "src": "open_mantra_test:rasetugari:p1:t3"}
+{"jp": "人の灯が世を覆うほど", "en": "the more \"hope\" covers the world ...", "src": "open_mantra_test:rasetugari:p1:t4"}
+{"jp": "悪鬼の源たる妄執は世に蔓延るのだ", "en": "the demons deeprooted obsessions spreads across this world.", "src": "open_mantra_test:rasetugari:p1:t5"}
+{"jp": "呉葉", "en": "Kureha", "src": "open_mantra_test:rasetugari:p2:t0"}
+{"jp": "...", "en": "...", "src": "open_mantra_test:rasetugari:p2:t1"}
+{"jp": "...御意", "en": "..Yes, sir.", "src": "open_mantra_test:rasetugari:p2:t2"}
+{"jp": "そのための", "en": "that is why", "src": "open_mantra_test:rasetugari:p2:t3"}
+{"jp": "我ら羅刹狩り", "en": "we demon hunters exist.", "src": "open_mantra_test:rasetugari:p2:t4"}
+{"jp": "羅刹狩り討伐士", "en": "I,", "src": "open_mantra_test:rasetugari:p2:t5"}
+{"jp": "在藤宏也", "en": "hiroya arifuji,", "src": "open_mantra_test:rasetugari:p2:t6"}
+{"jp": "推して参る", "en": "shall welcome the demons myself.", "src": "open_mantra_test:rasetugari:p2:t7"}
+{"jp": "朽鷹みつき", "en": "mitsuki kuchitaka", "src": "open_mantra_test:rasetugari:p3:t1"}
+{"jp": "また在藤の奴が一人でやっちまったらしい", "en": "i heard that arifuji guy did it alone again.", "src": "open_mantra_test:rasetugari:p4:t0"}
+{"jp": "辺りを漂う悪鬼の璋気", "en": "The spirit of demons drifting around...", "src": "open_mantra_test:rasetugari:p4:t1"}
+{"jp": "なんという怨嗟だ", "en": "i can feel the grudge!", "src": "open_mantra_test:rasetugari:p4:t2"}
+{"jp": "よほど強力な悪鬼だったろうに", "en": "must have been a pretty powerful one", "src": "open_mantra_test:rasetugari:p4:t3"}
+{"jp": "しかし", "en": "but...", "src": "open_mantra_test:rasetugari:p4:t4"}
+{"jp": "さすがは大陰陽師家出身の羅刹狩り", "en": "as expected from the demon hunter of the great onmyoji family", "src": "open_mantra_test:rasetugari:p4:t5"}
+{"jp": "あの巨大悪鬼が丸焼けとは", "en": "the giant demon's burned down to a crisp...", "src": "open_mantra_test:rasetugari:p5:t0"}
+{"jp": "まさに鬼神の如き強さ", "en": "his strength is demon like", "src": "open_mantra_test:rasetugari:p5:t1"}
+{"jp": "おい本人に鬼神などと言ったら殺されるぞ", "en": "shut it. He'll kill you if he ever heard you say that.", "src": "open_mantra_test:rasetugari:p5:t2"}
+{"jp": "家族を悪鬼に喰われて以来", "en": "ever since his family was devoured,", "src": "open_mantra_test:rasetugari:p5:t3"}
+{"jp": "生粋の鬼嫌いだ", "en": "demons disgust him", "src": "open_mantra_test:rasetugari:p5:t4"}
+{"jp": "だがあながち間違いじゃない", "en": "but you're right", "src": "open_mantra_test:rasetugari:p5:t5"}
+{"jp": "あの眼", "en": "those eyes", "src": "open_mantra_test:rasetugari:p5:t6"}
+{"jp": "奴の心にゃ確かに鬼が巣食っとるよ", "en": "his spirit is that of a demon.", "src": "open_mantra_test:rasetugari:p5:t7"}
+{"jp": "心に鬼が巣食ったというならば...", "en": "the origin of his \"demon\" spirits...", "src": "open_mantra_test:rasetugari:p6:t0"}
+{"jp": "それはーー", "en": "it ...", "src": "open_mantra_test:rasetugari:p6:t1"}
+{"jp": "やっやめろ!", "en": "nooo! stop!", "src": "open_mantra_test:rasetugari:p6:t2"}
+{"jp": "きっとあの日に違いない", "en": "must have come from that day.", "src": "open_mantra_test:rasetugari:p6:t3"}
+{"jp": "和音を離せ!!", "en": "let go of kazune!!", "src": "open_mantra_test:rasetugari:p6:t4"}
+{"jp": "にい...", "en": "bb...", "src": "open_mantra_test:rasetugari:p7:t0"}
+{"jp": "さま...", "en": "brother..", "src": "open_mantra_test:rasetugari:p7:t1"}
+{"jp": "やめろ...", "en": "Stop...", "src": "open_mantra_test:rasetugari:p7:t2"}
+{"jp": "頼むやめてくれ...", "en": "don't...", "src": "open_mantra_test:rasetugari:p7:t3"}
+{"jp": "あっ...", "en": "uh...", "src": "open_mantra_test:rasetugari:p7:t4"}
+{"jp": "ああっ...", "en": "ahhh ...", "src": "open_mantra_test:rasetugari:p8:t0"}
+{"jp": "あああああああああ", "en": "aaaaaaaahhhhh", "src": "open_mantra_test:rasetugari:p8:t1"}
+{"jp": "よくも", "en": "... dare you", "src": "open_mantra_test:rasetugari:p8:t2"}
+{"jp": "よくも...", "en": "how dare you...", "src": "open_mantra_test:rasetugari:p8:t3"}
+{"jp": "父上を...", "en": "father...", "src": "open_mantra_test:rasetugari:p8:t4"}
+{"jp": "母上を...", "en": "mother...", "src": "open_mantra_test:rasetugari:p8:t5"}
+{"jp": "和音を...!!", "en": "and kazune...!!", "src": "open_mantra_test:rasetugari:p8:t6"}
+{"jp": "やめにしないか", "en": "let's stop it.", "src": "open_mantra_test:rasetugari:p9:t0"}
+{"jp": "このような墓参り", "en": "visiting the dead like this", "src": "open_mantra_test:rasetugari:p9:t1"}
+{"jp": "呉葉か", "en": "kureha", "src": "open_mantra_test:rasetugari:p9:t2"}
+{"jp": "そのような供え物...", "en": "and such offerings ...", "src": "open_mantra_test:rasetugari:p9:t3"}
+{"jp": "悪鬼を討つたびに", "en": "every demon you slay,", "src": "open_mantra_test:rasetugari:p10:t0"}
+{"jp": "指を墓に供えるなど...!!", "en": "you bring their fingers as offerings..!!", "src": "open_mantra_test:rasetugari:p10:t1"}
+{"jp": "....", "en": "...I...", "src": "open_mantra_test:rasetugari:p10:t2"}
+{"jp": "家族への手向けだ", "en": "..dedicate these fingers to my family", "src": "open_mantra_test:rasetugari:p10:t3"}
+{"jp": "璋気にまみれた墓前を見ろ", "en": "feel the oddness surrounding the tomb?!", "src": "open_mantra_test:rasetugari:p10:t4"}
+{"jp": "これが手向けか...!", "en": "is this the way you show your respects...?!", "src": "open_mantra_test:rasetugari:p10:t5"}
+{"jp": "両親と妹の心が安らぐと思っているのか!?", "en": "do you think your parents and your sister will be able to rest in peace?", "src": "open_mantra_test:rasetugari:p11:t0"}
+{"jp": "呉葉", "en": "kureha", "src": "open_mantra_test:rasetugari:p11:t1"}
+{"jp": "式神として代々の在藤当主に仕えできたお前には感謝している", "en": "I am truly grateful to you, serving and watching over my family for generations", "src": "open_mantra_test:rasetugari:p11:t2"}
+{"jp": "だが", "en": "but...", "src": "open_mantra_test:rasetugari:p11:t3"}
+{"jp": "この手の傷と亡き家族に誓った仇討ち供養", "en": "i swore to this scar on my hand and my deceased family. I will avenge.", "src": "open_mantra_test:rasetugari:p11:t4"}
+{"jp": "お前では止めることはできぬ", "en": "you can't stop me.", "src": "open_mantra_test:rasetugari:p11:t5"}
+{"jp": "傷の疼きを知らぬ", "en": "you don't feel the throbbing of my wound", "src": "open_mantra_test:rasetugari:p11:t6"}
+{"jp": "お前では", "en": "you will never", "src": "open_mantra_test:rasetugari:p11:t7"}
+{"jp": "言ってくれる...", "en": "so be it...", "src": "open_mantra_test:rasetugari:p11:t8"}
+{"jp": "私とて", "en": "I..", "src": "open_mantra_test:rasetugari:p12:t0"}
+{"jp": "悪鬼が憎い", "en": "hate the demons as much as you do", "src": "open_mantra_test:rasetugari:p12:t1"}
+{"jp": "あの日不意を突かれてお前たちを守れなかったこと", "en": "the day we were attacked, i couldn't protect all of you.", "src": "open_mantra_test:rasetugari:p12:t2"}
+{"jp": "今でも悔しさに身を焼かれそうだ", "en": "even now, i'm overcome with the regret and pain.", "src": "open_mantra_test:rasetugari:p12:t3"}
+{"jp": "だが", "en": "but...", "src": "open_mantra_test:rasetugari:p12:t4"}
+{"jp": "それ以上に不安なのだ", "en": "it's not my biggest concern", "src": "open_mantra_test:rasetugari:p12:t5"}
+{"jp": "宏也", "en": "my biggest concern is you, Hiroya", "src": "open_mantra_test:rasetugari:p12:t6"}
+{"jp": "お前の瞳が濁っていくのが", "en": "your eyes are losing light by the day", "src": "open_mantra_test:rasetugari:p12:t7"}
+{"jp": "なあ、宏也ーー", "en": "hey, hiroya", "src": "open_mantra_test:rasetugari:p13:t0"}
+{"jp": "伝令!", "en": "BEEp", "src": "open_mantra_test:rasetugari:p13:t1"}
+{"jp": "伝令!", "en": "beep", "src": "open_mantra_test:rasetugari:p13:t2"}
+{"jp": "どうした", "en": "what's wrong?", "src": "open_mantra_test:rasetugari:p13:t3"}
+{"jp": "悪鬼発生被害拡大中!", "en": "demon alert! damage is spreading! seeking support!", "src": "open_mantra_test:rasetugari:p13:t4"}
+{"jp": "至急応援求ム!!", "en": "demon alert! damage is spreading! seeking support!", "src": "open_mantra_test:rasetugari:p13:t5"}
+{"jp": "了解した", "en": "copy that.", "src": "open_mantra_test:rasetugari:p13:t6"}
+{"jp": "直ちに向かう", "en": "we're on our way.", "src": "open_mantra_test:rasetugari:p13:t7"}
+{"jp": "くっ...", "en": "...", "src": "open_mantra_test:rasetugari:p13:t8"}
+{"jp": "ナオ尚ーー", "en": "furthermore", "src": "open_mantra_test:rasetugari:p13:t9"}
+{"jp": "対象ハ十年前ニ帝都ヲ襲撃シタ悪鬼ト同定", "en": "the target has been confirmed identical with the demon which attacked the capital 10 years ago", "src": "open_mantra_test:rasetugari:p13:t10"}
+{"jp": "対象鬼号ーー", "en": "the demon's target ID is", "src": "open_mantra_test:rasetugari:p13:t11"}
+{"jp": "華鏡丸", "en": "Kakyomaru", "src": "open_mantra_test:rasetugari:p14:t0"}
+{"jp": "丸...", "en": "kakyo\n,,,", "src": "open_mantra_test:rasetugari:p14:t1"}
+{"jp": "華鏡...筆鏡...", "en": "maru", "src": "open_mantra_test:rasetugari:p14:t2"}
+{"jp": "ああ、宏也", "en": "hiroya...", "src": "open_mantra_test:rasetugari:p14:t3"}
+{"jp": "お前の眼は", "en": "your eyes.", "src": "open_mantra_test:rasetugari:p14:t4"}
+{"jp": "まるでーー", "en": "it's like...", "src": "open_mantra_test:rasetugari:p14:t5"}
+{"jp": "大本命だ", "en": "big shot", "src": "open_mantra_test:rasetugari:p14:t6"}
+{"jp": "行くぞ呉葉", "en": "let's go, kureha", "src": "open_mantra_test:rasetugari:p14:t7"}
+{"jp": "今宵、俺の悲願を果たす", "en": "tonight, i shall get my revenge", "src": "open_mantra_test:rasetugari:p14:t8"}
+{"jp": "まるで鬼のようだ", "en": "a demon.", "src": "open_mantra_test:rasetugari:p14:t9"}
+{"jp": "ばっ", "en": "What", "src": "open_mantra_test:rasetugari:p15:t0"}
+{"jp": "馬鹿な...", "en": "impossible ...", "src": "open_mantra_test:rasetugari:p15:t1"}
+{"jp": "精鋭の討伐士が一二人がかりだぞ...", "en": "12 elite demon hunters were hunting him down", "src": "open_mantra_test:rasetugari:p15:t2"}
+{"jp": "それが全滅だと...?", "en": "what do you mean they're all dead?", "src": "open_mantra_test:rasetugari:p15:t3"}
+{"jp": "こ、このーー", "en": "...you", "src": "open_mantra_test:rasetugari:p15:t4"}
+{"jp": "化け物め!!", "en": "you monster!", "src": "open_mantra_test:rasetugari:p15:t5"}
+{"jp": "久々にに帝都に来てみれば", "en": "it's been a while since i've come to the capital", "src": "open_mantra_test:rasetugari:p16:t0"}
+{"jp": "まるで歯ごたえがない", "en": "merely a child's play.", "src": "open_mantra_test:rasetugari:p16:t1"}
+{"jp": "これでは喰い放題ではないか", "en": "isn't it like a Buffet?", "src": "open_mantra_test:rasetugari:p16:t2"}
+{"jp": "ひぐっ", "en": "guh!", "src": "open_mantra_test:rasetugari:p16:t3"}
+{"jp": "おや?", "en": "Oh?", "src": "open_mantra_test:rasetugari:p16:t4"}
+{"jp": "喰い残しか", "en": "must have slipped away from my plate", "src": "open_mantra_test:rasetugari:p17:t0"}
+{"jp": "ひっ", "en": "huh..!", "src": "open_mantra_test:rasetugari:p17:t1"}
+{"jp": "ここら一帯の人間は", "en": "the humans in this area ...", "src": "open_mantra_test:rasetugari:p17:t2"}
+{"jp": "あらかた俺が喰い尽くした", "en": "i devoured them all.", "src": "open_mantra_test:rasetugari:p17:t3"}
+{"jp": "お前の家族も俺の腹の中だ", "en": "Your family is in my stomach, too", "src": "open_mantra_test:rasetugari:p17:t4"}
+{"jp": "俺が憎いか?", "en": "you hate me?", "src": "open_mantra_test:rasetugari:p17:t5"}
+{"jp": "憎め憎め", "en": "hate all you want", "src": "open_mantra_test:rasetugari:p17:t6"}
+{"jp": "憎悪こそが俺をもっとも愉しませる", "en": "hatred is the best entertainment for me", "src": "open_mantra_test:rasetugari:p17:t7"}
+{"jp": "ーーた", "en": "ーhelp", "src": "open_mantra_test:rasetugari:p17:t8"}
+{"jp": "助けて...", "en": "help me..", "src": "open_mantra_test:rasetugari:p17:t9"}
+{"jp": "ふん", "en": "hmph", "src": "open_mantra_test:rasetugari:p17:t10"}
+{"jp": "興醒めだ", "en": "oh, kill-joy", "src": "open_mantra_test:rasetugari:p17:t11"}
+{"jp": "何奴!?", "en": "who are you?", "src": "open_mantra_test:rasetugari:p18:t0"}
+{"jp": "羅刹狩り討伐士", "en": "demon hunter", "src": "open_mantra_test:rasetugari:p19:t0"}
+{"jp": "在藤宏也", "en": "hiroya arifuji", "src": "open_mantra_test:rasetugari:p19:t1"}
+{"jp": "十年待った家族の仇だ", "en": "i have waited 10 years to wreak vengeance on you", "src": "open_mantra_test:rasetugari:p19:t2"}
+{"jp": "お前は俺が地獄へ送ってやる", "en": "I'll send you to hell", "src": "open_mantra_test:rasetugari:p19:t3"}
+{"jp": "華鏡丸!!", "en": "kakyomaru!!", "src": "open_mantra_test:rasetugari:p19:t4"}
+{"jp": "在藤...?", "en": "arifuji..?", "src": "open_mantra_test:rasetugari:p19:t5"}
+{"jp": "お前", "en": "you're", "src": "open_mantra_test:rasetugari:p20:t0"}
+{"jp": "あの在藤か!!", "en": "\"the\" arifuji?!", "src": "open_mantra_test:rasetugari:p20:t1"}
+{"jp": "十年前に喰い残した小童が", "en": "The little kid I forgot to devour 10 years ago", "src": "open_mantra_test:rasetugari:p20:t2"}
+{"jp": "随分と旨そうになりおった", "en": "you've become quite a tasty meal.", "src": "open_mantra_test:rasetugari:p20:t3"}
+{"jp": "うれしくて涎が止まらんぞ", "en": "ohh\nmy mouth won't stop watering", "src": "open_mantra_test:rasetugari:p20:t4"}
+{"jp": "在藤ぃ...", "en": "arifujii", "src": "open_mantra_test:rasetugari:p20:t5"}
+{"jp": "呉葉", "en": "kureha", "src": "open_mantra_test:rasetugari:p20:t6"}
+{"jp": "御意", "en": "yes, my lord", "src": "open_mantra_test:rasetugari:p20:t7"}
+{"jp": "ぐおっ", "en": "guh!", "src": "open_mantra_test:rasetugari:p21:t0"}
+{"jp": "おおおおおおおおお!?", "en": "aaaaahhhhhh!?", "src": "open_mantra_test:rasetugari:p21:t1"}
+{"jp": "貴様を葬るために身につけた呉葉の「極焔」", "en": "kureha acquired this skill \"Goku-en\" in order to  defeat you.", "src": "open_mantra_test:rasetugari:p21:t2"}
+{"jp": "その痛み容易には引かんぞ", "en": "the pain won't be easy to get rid of", "src": "open_mantra_test:rasetugari:p21:t3"}
+{"jp": "十年前に刻まれたこの手の傷", "en": "this wound was carved on to my hand 10 years ago", "src": "open_mantra_test:rasetugari:p21:t4"}
+{"jp": "この疼きがおさまるまで", "en": "until the throbbing fades", "src": "open_mantra_test:rasetugari:p21:t5"}
+{"jp": "思う存分味わうがいい!!", "en": "take this!!", "src": "open_mantra_test:rasetugari:p22:t0"}
+{"jp": "宏也興奮しすぎだ少し落ち着け", "en": "Hiroya, you're using too much energy.\ncalm down.", "src": "open_mantra_test:rasetugari:p22:t1"}
+{"jp": "相手は十年前に私とお前の父の不意をついた狡猾な悪鬼だ", "en": "the thing in front of you took both your father and i by surprise.he's pure evil.", "src": "open_mantra_test:rasetugari:p22:t2"}
+{"jp": "気をつけーー", "en": "be careful...", "src": "open_mantra_test:rasetugari:p22:t3"}
+{"jp": "一一一一!?", "en": "?!?!?!", "src": "open_mantra_test:rasetugari:p22:t4"}
+{"jp": "心配無用", "en": "no worries.", "src": "open_mantra_test:rasetugari:p23:t0"}
+{"jp": "十年越しの怒り", "en": "ten years of hatred", "src": "open_mantra_test:rasetugari:p23:t1"}
+{"jp": "そう容易くはない", "en": "it's not that easy to conquer", "src": "open_mantra_test:rasetugari:p23:t2"}
+{"jp": "かっ...", "en": "ka...", "src": "open_mantra_test:rasetugari:p23:t3"}
+{"jp": "かかかっ", "en": "kah! kah!", "src": "open_mantra_test:rasetugari:p23:t4"}
+{"jp": "かかっ", "en": "ka\nka\nka!", "src": "open_mantra_test:rasetugari:p23:t5"}
+{"jp": "よくぞ...", "en": "well well", "src": "open_mantra_test:rasetugari:p23:t6"}
+{"jp": "よくぞここまで", "en": "oh  my", "src": "open_mantra_test:rasetugari:p24:t0"}
+{"jp": "憎しみを育てた", "en": "you nurtured your hatred well!", "src": "open_mantra_test:rasetugari:p24:t1"}
+{"jp": "あの時唾を付けるにとどめた甲斐があった", "en": "At that time, it was worthwhile to hold back", "src": "open_mantra_test:rasetugari:p24:t2"}
+{"jp": "ここまで熟成された憎悪は初めてだ", "en": "this is the first time i've come across such matured hatred", "src": "open_mantra_test:rasetugari:p24:t3"}
+{"jp": "まさに最高の食材", "en": "the best treat.", "src": "open_mantra_test:rasetugari:p24:t4"}
+{"jp": "在藤...", "en": "arifuji", "src": "open_mantra_test:rasetugari:p24:t5"}
+{"jp": "俺はお前を最高の方法で喰らいたい", "en": "i want to devour you in the best way possible.", "src": "open_mantra_test:rasetugari:p24:t6"}
+{"jp": "ふん", "en": "hmph", "src": "open_mantra_test:rasetugari:p25:t0"}
+{"jp": "その願い", "en": "that wish", "src": "open_mantra_test:rasetugari:p25:t1"}
+{"jp": "決して叶わぬと知れ!", "en": "will never come true!", "src": "open_mantra_test:rasetugari:p25:t2"}
+{"jp": "ならば", "en": "in that case,", "src": "open_mantra_test:rasetugari:p25:t3"}
+{"jp": "こういう趣向はどうだ?", "en": "how's this to your liking?", "src": "open_mantra_test:rasetugari:p25:t4"}
+{"jp": "兄さま...", "en": "brother...", "src": "open_mantra_test:rasetugari:p25:t5"}
+{"jp": "幻術で妹を...まずい!", "en": "giving an illusion of his sister...damn it!", "src": "open_mantra_test:rasetugari:p25:t6"}
+{"jp": "宏也!!", "en": "hiroya!!", "src": "open_mantra_test:rasetugari:p25:t7"}
+{"jp": "戯けが", "en": "stupid", "src": "open_mantra_test:rasetugari:p26:t0"}
+{"jp": "そのような惑わしに", "en": "that sort of idiocity", "src": "open_mantra_test:rasetugari:p26:t1"}
+{"jp": "今さら俺の刀は鈍らぬ", "en": "not nearly enough to slow down my sword", "src": "open_mantra_test:rasetugari:p26:t2"}
+{"jp": "幻術とはいえ妹の顔を...", "en": "fake, yes, but slicing his own sister's face..?", "src": "open_mantra_test:rasetugari:p26:t3"}
+{"jp": "凄まじき意志...!", "en": "such will..!", "src": "open_mantra_test:rasetugari:p26:t4"}
+{"jp": "しかしーー", "en": "but...", "src": "open_mantra_test:rasetugari:p26:t5"}
+{"jp": "こうも躊躇いなくーー!?", "en": "without a hint of hesitation?!", "src": "open_mantra_test:rasetugari:p27:t0"}
+{"jp": "キヒッ", "en": "khee hee!", "src": "open_mantra_test:rasetugari:p27:t1"}
+{"jp": "キヒヒッ", "en": "hee hee hee!", "src": "open_mantra_test:rasetugari:p27:t2"}
+{"jp": "いいぞ在藤", "en": "good, arifuji", "src": "open_mantra_test:rasetugari:p27:t3"}
+{"jp": "最高だ!!", "en": "this is great!", "src": "open_mantra_test:rasetugari:p27:t4"}
+{"jp": "お前の妄執", "en": "Your obsession", "src": "open_mantra_test:rasetugari:p27:t5"}
+{"jp": "最高に旨そうだ!!", "en": "It's awfully appealing", "src": "open_mantra_test:rasetugari:p27:t6"}
+{"jp": "これは妄執などではない!", "en": "this isn't about obsession!", "src": "open_mantra_test:rasetugari:p27:t7"}
+{"jp": "これは義!", "en": "this is about justice!", "src": "open_mantra_test:rasetugari:p27:t8"}
+{"jp": "家族への義だ!!", "en": "for my family!", "src": "open_mantra_test:rasetugari:p27:t9"}
+{"jp": "どの口で家族愛を語る", "en": "who are you to speak of love?", "src": "open_mantra_test:rasetugari:p28:t0"}
+{"jp": "妹の姿をここまで切り刻める者が", "en": "you slashed your sister's body to this extent.", "src": "open_mantra_test:rasetugari:p28:t1"}
+{"jp": "在藤", "en": "arifuji", "src": "open_mantra_test:rasetugari:p28:t2"}
+{"jp": "見ろ", "en": "look.", "src": "open_mantra_test:rasetugari:p28:t3"}
+{"jp": "俺だけを見ろ", "en": "just look at me.", "src": "open_mantra_test:rasetugari:p28:t4"}
+{"jp": "お前の妄執", "en": "your blind obsession", "src": "open_mantra_test:rasetugari:p28:t5"}
+{"jp": "俺にすべて曝け出せ", "en": "expose everything to me.", "src": "open_mantra_test:rasetugari:p28:t6"}
+{"jp": "くっ", "en": "guh!", "src": "open_mantra_test:rasetugari:p29:t0"}
+{"jp": "おっ...", "en": "wha...", "src": "open_mantra_test:rasetugari:p29:t1"}
+{"jp": "おおおおおおおおーー！！", "en": "a a a a a a a h h h h h h h h h h h h h h h h h h h h !!", "src": "open_mantra_test:rasetugari:p29:t2"}
+{"jp": "宏也", "en": "hiroya", "src": "open_mantra_test:rasetugari:p29:t3"}
+{"jp": "一体どうした!?", "en": "what the hell is going on?", "src": "open_mantra_test:rasetugari:p29:t4"}
+{"jp": "これはーー", "en": "this is...", "src": "open_mantra_test:rasetugari:p29:t5"}
+{"jp": "璋気が古傷に吸い込まれている!?", "en": "the  devilish air is being sucked in to his scar!?", "src": "open_mantra_test:rasetugari:p29:t6"}
+{"jp": "俺は在藤をーー", "en": "i want to devour arifuji --", "src": "open_mantra_test:rasetugari:p29:t7"}
+{"jp": "最高の方法で喰らいたい", "en": "in the best way possible", "src": "open_mantra_test:rasetugari:p29:t8"}
+{"jp": "おのれ...", "en": "son of a...", "src": "open_mantra_test:rasetugari:p29:t9"}
+{"jp": "宏也を悪鬼に堕とすつもりか!!", "en": "you're planning to turn hiroya into a demon!", "src": "open_mantra_test:rasetugari:p30:t0"}
+{"jp": "華鏡丸ーー!!", "en": "kakyomaru--!!", "src": "open_mantra_test:rasetugari:p30:t1"}
+{"jp": "情念がもっとも熱を帯びるのは人がそれに呑まれた瞬間だ", "en": "people get so indulged in their obsession when they are taken over by it.", "src": "open_mantra_test:rasetugari:p30:t2"}
+{"jp": "宏也私の声を聞け!", "en": "Hiroya Listen to my voice!", "src": "open_mantra_test:rasetugari:p30:t3"}
+{"jp": "憎悪の刃が俺を貫き復讐の妄執がお前を支配したときーー", "en": "When the blade of hatred pierces me and the obsession for revenge dominates you--", "src": "open_mantra_test:rasetugari:p30:t4"}
+{"jp": "お前は悪鬼となり果て俺と一つになるのだ在藤ぃ!!", "en": "you will become a demon... and become one with me...arifuji!!", "src": "open_mantra_test:rasetugari:p30:t5"}
+{"jp": "しっかりしろ宏也!", "en": "hang in there, hiroya!", "src": "open_mantra_test:rasetugari:p30:t6"}
+{"jp": "おおおおおおおおおおーー!!", "en": "ooooo!", "src": "open_mantra_test:rasetugari:p31:t0"}
+{"jp": "そうだ来い", "en": "that's it. come on.", "src": "open_mantra_test:rasetugari:p31:t1"}
+{"jp": "次の一太刀だ", "en": "the next sword, the glory.", "src": "open_mantra_test:rasetugari:p31:t2"}
+{"jp": "次の一太刀でーー", "en": "with the next sword...", "src": "open_mantra_test:rasetugari:p31:t3"}
+{"jp": "妄執ごと", "en": "obsession.", "src": "open_mantra_test:rasetugari:p31:t4"}
+{"jp": "お前を喰らってやる!!", "en": "i'll eat you!", "src": "open_mantra_test:rasetugari:p31:t5"}
+{"jp": "あああああ", "en": "aaaaaahh!", "src": "open_mantra_test:rasetugari:p31:t6"}
+{"jp": "ぐっ...", "en": "unh...", "src": "open_mantra_test:rasetugari:p32:t0"}
+{"jp": "あっ", "en": "ah!", "src": "open_mantra_test:rasetugari:p33:t0"}
+{"jp": "くれ", "en": "kure...", "src": "open_mantra_test:rasetugari:p33:t1"}
+{"jp": "はっ...", "en": "hmg..", "src": "open_mantra_test:rasetugari:p33:t2"}
+{"jp": "あ...", "en": "uh...", "src": "open_mantra_test:rasetugari:p33:t3"}
+{"jp": "ああっ", "en": "ahh!", "src": "open_mantra_test:rasetugari:p33:t4"}
+{"jp": "あああああああああああーー!!", "en": "aaaaa\naaa\naaaaaa\naaaah !!", "src": "open_mantra_test:rasetugari:p33:t5"}
+{"jp": "興醒めだ", "en": "killjoy", "src": "open_mantra_test:rasetugari:p34:t0"}
+{"jp": "式神風情が悪あがきを", "en": "fighting for your master, but in vain...", "src": "open_mantra_test:rasetugari:p34:t1"}
+{"jp": "身を挺して主の気を俺から逸らしたか", "en": "sacrificing yourself for loyalty", "src": "open_mantra_test:rasetugari:p34:t2"}
+{"jp": "まあいい...", "en": "well..", "src": "open_mantra_test:rasetugari:p34:t3"}
+{"jp": "さっさと堕ちろ", "en": "fall to the dark side", "src": "open_mantra_test:rasetugari:p34:t4"}
+{"jp": "羅刹狩り", "en": "demon hunter", "src": "open_mantra_test:rasetugari:p34:t5"}
+{"jp": "十年前につけた呪い", "en": "the curse i put on you ten years ago", "src": "open_mantra_test:rasetugari:p34:t6"}
+{"jp": "そう簡単に取れるものではない", "en": "it's not something that you can easily get rid of", "src": "open_mantra_test:rasetugari:p34:t7"}
+{"jp": "父上", "en": "father.", "src": "open_mantra_test:rasetugari:p35:t0"}
+{"jp": "母上", "en": "mother.", "src": "open_mantra_test:rasetugari:p35:t1"}
+{"jp": "和音...", "en": "kazune\n..", "src": "open_mantra_test:rasetugari:p35:t2"}
+{"jp": "どうしたのです?", "en": "what's the matter?", "src": "open_mantra_test:rasetugari:p35:t3"}
+{"jp": "鬼の面などつけて", "en": "wearing masks like that", "src": "open_mantra_test:rasetugari:p35:t4"}
+{"jp": "そんなもの取って", "en": "take it off.", "src": "open_mantra_test:rasetugari:p35:t5"}
+{"jp": "早くお顔を...", "en": "please show me your fac.....", "src": "open_mantra_test:rasetugari:p35:t6"}
+{"jp": "お...に...", "en": "de..mon..", "src": "open_mantra_test:rasetugari:p36:t0"}
+{"jp": "お、お前は...", "en": "you're...", "src": "open_mantra_test:rasetugari:p36:t1"}
+{"jp": "鬼...殺す!", "en": "Demon ... kill!", "src": "open_mantra_test:rasetugari:p36:t2"}
+{"jp": "ーーー！？", "en": "---!?", "src": "open_mantra_test:rasetugari:p37:t0"}
+{"jp": "や、やめろ!", "en": "no, no!", "src": "open_mantra_test:rasetugari:p37:t1"}
+{"jp": "はっ...", "en": "g..", "src": "open_mantra_test:rasetugari:p37:t2"}
+{"jp": "はな、", "en": "get off ...", "src": "open_mantra_test:rasetugari:p37:t3"}
+{"jp": "せ...", "en": "get off of...", "src": "open_mantra_test:rasetugari:p37:t4"}
+{"jp": "だめだ...", "en": "I can't...", "src": "open_mantra_test:rasetugari:p37:t5"}
+{"jp": "呑み込まれーー", "en": "i'm falling...", "src": "open_mantra_test:rasetugari:p38:t0"}
+{"jp": "こ", "en": "y...", "src": "open_mantra_test:rasetugari:p38:t1"}
+{"jp": "の", "en": "...you", "src": "open_mantra_test:rasetugari:p38:t2"}
+{"jp": "痴れ者がぁ!!", "en": "bastard!!", "src": "open_mantra_test:rasetugari:p39:t0"}
+{"jp": "がっ...あ!?", "en": "ga!", "src": "open_mantra_test:rasetugari:p39:t1"}
+{"jp": "くだらん呪いなんぞに引っかかりおって", "en": "falling for the curse like that..!", "src": "open_mantra_test:rasetugari:p39:t2"}
+{"jp": "それでも在藤家の嫡男か!!", "en": "and you call yourself the rightful bloodline of house arifuji??", "src": "open_mantra_test:rasetugari:p39:t3"}
+{"jp": "馬鹿な", "en": "impossible", "src": "open_mantra_test:rasetugari:p39:t4"}
+{"jp": "斬られた貴様がなぜ...!", "en": "you got slashed!", "src": "open_mantra_test:rasetugari:p39:t5"}
+{"jp": "…", "en": "...", "src": "open_mantra_test:rasetugari:p39:t6"}
+{"jp": "ははっ", "en": "ha, ha.", "src": "open_mantra_test:rasetugari:p39:t7"}
+{"jp": "なぜ?おかしなことを聞く", "en": "why, you say?\nsuch a funny question", "src": "open_mantra_test:rasetugari:p39:t8"}
+{"jp": "ー!?", "en": "--!?", "src": "open_mantra_test:rasetugari:p39:t9"}
+{"jp": "主の危機に", "en": "how can i be absent", "src": "open_mantra_test:rasetugari:p40:t0"}
+{"jp": "一太刀程度で寝ていられるか", "en": "for my master's crisis", "src": "open_mantra_test:rasetugari:p40:t1"}
+{"jp": "傷口を", "en": "she's burning..", "src": "open_mantra_test:rasetugari:p40:t2"}
+{"jp": "焼いたーー!?", "en": "her wound--!?", "src": "open_mantra_test:rasetugari:p40:t3"}
+{"jp": "気付けだ", "en": "healing hack", "src": "open_mantra_test:rasetugari:p40:t4"}
+{"jp": "まあ...", "en": "well...", "src": "open_mantra_test:rasetugari:p40:t5"}
+{"jp": "少々堪えたがな", "en": "it was a pretty big blow, though...", "src": "open_mantra_test:rasetugari:p40:t6"}
+{"jp": "く...くれは...", "en": "ku..kureha...", "src": "open_mantra_test:rasetugari:p40:t7"}
+{"jp": "正気に戻り始めている", "en": "oh no ...\nhe's gaining back his sanity", "src": "open_mantra_test:rasetugari:p40:t8"}
+{"jp": "おのれ...", "en": "you", "src": "open_mantra_test:rasetugari:p40:t9"}
+{"jp": "式神如きが", "en": "the likes of you...", "src": "open_mantra_test:rasetugari:p40:t10"}
+{"jp": "百年を生きるこの華鏡丸の邪魔をするか!!", "en": "i'm kakyomaru, a century's worth like You do no to interfere with me!!", "src": "open_mantra_test:rasetugari:p40:t11"}
+{"jp": "単独でもここまでの術行使を", "en": "so much  power coming from him solely", "src": "open_mantra_test:rasetugari:p41:t0"}
+{"jp": "百年?", "en": "a century?", "src": "open_mantra_test:rasetugari:p41:t1"}
+{"jp": "百年程度で調子づくなよ華鏡丸", "en": "don't get too carried away for a hundred years.", "src": "open_mantra_test:rasetugari:p41:t2"}
+{"jp": "こちとら平安の世より式神を続けて千年だ", "en": "i've been the house god for a millenium, since the heian era", "src": "open_mantra_test:rasetugari:p41:t3"}
+{"jp": "力でお前に劣るとしても", "en": "you may be superior in power", "src": "open_mantra_test:rasetugari:p41:t4"}
+{"jp": "この愛は", "en": "this love...", "src": "open_mantra_test:rasetugari:p41:t5"}
+{"jp": "妄執などに負けはせぬ", "en": "will not lose to obsession", "src": "open_mantra_test:rasetugari:p41:t6"}
+{"jp": "妄執はあらゆる想いを覆ってしまう", "en": "obsession can take over all kinds of thoughts", "src": "open_mantra_test:rasetugari:p42:t0"}
+{"jp": "そんなものに呑まれるんじゃない", "en": "don't give in to such things", "src": "open_mantra_test:rasetugari:p42:t1"}
+{"jp": "私を見ろ", "en": "look at me.", "src": "open_mantra_test:rasetugari:p42:t2"}
+{"jp": "私を感じろ", "en": "feel me.", "src": "open_mantra_test:rasetugari:p42:t3"}
+{"jp": "この身に刻まれた匂いで家族のことを思い出せ", "en": "breathe in this inscribed smell and remember your family", "src": "open_mantra_test:rasetugari:p42:t4"}
+{"jp": "ゆめゆめ忘れてくれるな", "en": "you can't have forgotten", "src": "open_mantra_test:rasetugari:p42:t5"}
+{"jp": "その心にあった想いを", "en": "the thoughts you had in your heart", "src": "open_mantra_test:rasetugari:p42:t6"}
+{"jp": "そして...", "en": "remember...", "src": "open_mantra_test:rasetugari:p43:t0"}
+{"jp": "私がいつもそばにいることを", "en": "i'll always be there for you.", "src": "open_mantra_test:rasetugari:p43:t1"}
+{"jp": "くだらん...", "en": "bollocks..", "src": "open_mantra_test:rasetugari:p43:t2"}
+{"jp": "許さんぞ", "en": "this is", "src": "open_mantra_test:rasetugari:p43:t3"}
+{"jp": "このような茶番", "en": "unacceptable", "src": "open_mantra_test:rasetugari:p43:t4"}
+{"jp": "ーっ!?", "en": "what?", "src": "open_mantra_test:rasetugari:p44:t0"}
+{"jp": "華鏡丸", "en": "kakyomaru", "src": "open_mantra_test:rasetugari:p44:t1"}
+{"jp": "悪いが...", "en": "don't feel bad", "src": "open_mantra_test:rasetugari:p44:t2"}
+{"jp": "ここからは", "en": "but from here on", "src": "open_mantra_test:rasetugari:p44:t3"}
+{"jp": "お前の一人相撲だ", "en": "you'll be battling against nothing but yourself", "src": "open_mantra_test:rasetugari:p44:t4"}
+{"jp": "すまない呉葉", "en": "sorry, kureha", "src": "open_mantra_test:rasetugari:p45:t0"}
+{"jp": "傷...痛むか", "en": "you must be in so much pain", "src": "open_mantra_test:rasetugari:p45:t1"}
+{"jp": "証めるな", "en": "don't underestimate me.", "src": "open_mantra_test:rasetugari:p45:t2"}
+{"jp": "ここで踏ん張れぬほど柔な鍛え方はしておらん", "en": "i wasn't that soft training on myself, you know", "src": "open_mantra_test:rasetugari:p45:t3"}
+{"jp": "そうかならーー", "en": "well... then...", "src": "open_mantra_test:rasetugari:p45:t4"}
+{"jp": "頼む", "en": "now", "src": "open_mantra_test:rasetugari:p45:t5"}
+{"jp": "お、おい待て待て", "en": "wait", "src": "open_mantra_test:rasetugari:p45:t6"}
+{"jp": "何をするつもりだ", "en": "what are you doing", "src": "open_mantra_test:rasetugari:p45:t7"}
+{"jp": "まさかーー", "en": "wait...", "src": "open_mantra_test:rasetugari:p45:t8"}
+{"jp": "御意", "en": "yes, sir", "src": "open_mantra_test:rasetugari:p45:t9"}
+{"jp": "やめーー", "en": "stop!", "src": "open_mantra_test:rasetugari:p45:t10"}
+{"jp": "ぐっ...", "en": "unh...", "src": "open_mantra_test:rasetugari:p45:t11"}
+{"jp": "おあーー!!", "en": "aaaahhhhhhhhhhhhhhhh!!!!", "src": "open_mantra_test:rasetugari:p45:t12"}
+{"jp": "ああ...", "en": "oh, god.", "src": "open_mantra_test:rasetugari:p46:t0"}
+{"jp": "呪いがーー", "en": "the curse...", "src": "open_mantra_test:rasetugari:p46:t1"}
+{"jp": "境気が", "en": "the evil spirit", "src": "open_mantra_test:rasetugari:p46:t2"}
+{"jp": "妄執が燃えていく...", "en": "the obsession, it's burning away...", "src": "open_mantra_test:rasetugari:p46:t3"}
+{"jp": "もったいない", "en": "what a waste.", "src": "open_mantra_test:rasetugari:p46:t4"}
+{"jp": "もったいないもったいない", "en": "what a waste. what a waste.", "src": "open_mantra_test:rasetugari:p46:t5"}
+{"jp": "もったいないもったいないもったいない...", "en": "what a waste, what a waste, what a waste...", "src": "open_mantra_test:rasetugari:p46:t6"}
+{"jp": "おのれぇぇえええええ!!", "en": "damn you!", "src": "open_mantra_test:rasetugari:p46:t7"}
+{"jp": "この上なき憎悪を果てしなき怨睦を", "en": "all the splendid hatred", "src": "open_mantra_test:rasetugari:p46:t8"}
+{"jp": "極上の妄執を", "en": "the wonderful obsession\n...", "src": "open_mantra_test:rasetugari:p46:t9"}
+{"jp": "お前が無駄にしたものの味", "en": "you've wasted all my precious food", "src": "open_mantra_test:rasetugari:p46:t10"}
+{"jp": "とくと", "en": "do ...", "src": "open_mantra_test:rasetugari:p47:t0"}
+{"jp": "味わうがいい！！", "en": "have a little taste!!!", "src": "open_mantra_test:rasetugari:p47:t1"}
+{"jp": "妄執の味なら", "en": "i already know", "src": "open_mantra_test:rasetugari:p47:t2"}
+{"jp": "もう知った", "en": "that taste of obsession", "src": "open_mantra_test:rasetugari:p47:t3"}
+{"jp": "痛みを忘れて憎悪に酔うのは", "en": "getting drunk in hatred, and forgetting the pain", "src": "open_mantra_test:rasetugari:p47:t4"}
+{"jp": "確かに甘美だったぞ華鏡丸", "en": "indeed it was sweet and easy, kakyomaru", "src": "open_mantra_test:rasetugari:p47:t5"}
+{"jp": "だが", "en": "but...", "src": "open_mantra_test:rasetugari:p47:t6"}
+{"jp": "もうやめだ", "en": "I won't fall for it", "src": "open_mantra_test:rasetugari:p47:t7"}
+{"jp": "俺はもう", "en": "i will not", "src": "open_mantra_test:rasetugari:p48:t0"}
+{"jp": "想いを見失わぬ", "en": "not any more.", "src": "open_mantra_test:rasetugari:p49:t0"}
+{"jp": "ーー呉葉", "en": "--kureha", "src": "open_mantra_test:rasetugari:p50:t0"}
+{"jp": "...なんだ", "en": "...\nwhat?", "src": "open_mantra_test:rasetugari:p50:t1"}
+{"jp": "重い", "en": "you're heavy", "src": "open_mantra_test:rasetugari:p51:t0"}
+{"jp": "お前言うに事欠いてそれかぁーー!!", "en": "is that all you've got to say?", "src": "open_mantra_test:rasetugari:p51:t1"}
+{"jp": "事欠くもなにも腕の火傷は痛むしもうヘトヘトだ", "en": "i mean, the burns on my arm hurt, and i'm exhausted.", "src": "open_mantra_test:rasetugari:p51:t2"}
+{"jp": "せめて霊体化してくれ...", "en": "can't you turn into your spirit form?", "src": "open_mantra_test:rasetugari:p51:t3"}
+{"jp": "ふん", "en": "hmm", "src": "open_mantra_test:rasetugari:p51:t4"}
+{"jp": "これは罰だ", "en": "this is a punishment.", "src": "open_mantra_test:rasetugari:p51:t5"}
+{"jp": "私に刃を向けた罰", "en": "you pointed your blade at me", "src": "open_mantra_test:rasetugari:p51:t6"}
+{"jp": "家まではこうさせてもらうぞ", "en": "your punishment is to take me home like this", "src": "open_mantra_test:rasetugari:p51:t7"}
+{"jp": "しばらくは尻に敷かせてもらわんとな", "en": "you have to take my orders for a while", "src": "open_mantra_test:rasetugari:p51:t8"}
+{"jp": "呉葉...", "en": "kureha...", "src": "open_mantra_test:rasetugari:p51:t9"}
+{"jp": "俺は弱い", "en": "i'm weak.", "src": "open_mantra_test:rasetugari:p52:t0"}
+{"jp": "華鏡丸を討ったときには見栄を張ったが", "en": "i was ostentatious today, facing kakyomaru,", "src": "open_mantra_test:rasetugari:p52:t1"}
+{"jp": "いつまた己を見失いお前を傷つけるかわからぬ", "en": "but i could lose sanity anytime.\nI could even hurt you again.", "src": "open_mantra_test:rasetugari:p52:t2"}
+{"jp": "俺にはもう", "en": "i can't...", "src": "open_mantra_test:rasetugari:p52:t3"}
+{"jp": "お前を扱う資格などーー", "en": "i have no right to be your master", "src": "open_mantra_test:rasetugari:p52:t4"}
+{"jp": "たわけ", "en": "idiot", "src": "open_mantra_test:rasetugari:p52:t5"}
+{"jp": "今さら小童の軟弱さなど承知の上だ", "en": "i'm well aware of your weaknesses.", "src": "open_mantra_test:rasetugari:p52:t6"}
+{"jp": "月なき夜に道を外れてしまうこともあろう", "en": "at times, you may lose the track on a moonless night", "src": "open_mantra_test:rasetugari:p53:t0"}
+{"jp": "そんなときのために私がいる", "en": "but that is what i'm here for", "src": "open_mantra_test:rasetugari:p53:t1"}
+{"jp": "平安の世より在藤に仕えて", "en": "I've served the house of arifuji since the heian period", "src": "open_mantra_test:rasetugari:p53:t2"}
+{"jp": "早千年", "en": "for a thousand years.", "src": "open_mantra_test:rasetugari:p53:t3"}
+{"jp": "千歳の想いが", "en": "the millennium's worth affection", "src": "open_mantra_test:rasetugari:p53:t4"}
+{"jp": "お前の審火だ!", "en": "will be your beacon of light!", "src": "open_mantra_test:rasetugari:p53:t5"}
+{"jp": "なるほど...", "en": "i see...", "src": "open_mantra_test:rasetugari:p54:t0"}
+{"jp": "こりゃかなわん", "en": "you beat me", "src": "open_mantra_test:rasetugari:p54:t1"}
+{"jp": "さて", "en": "well!", "src": "open_mantra_test:rasetugari:p54:t2"}
+{"jp": "さて明日は墓掃除だ!", "en": "tomorrow we clean the graves!", "src": "open_mantra_test:rasetugari:p54:t3"}
+{"jp": "こ、こら", "en": "hey!!!", "src": "open_mantra_test:rasetugari:p54:t4"}
+{"jp": "急に走るな!", "en": "don't start running all of a sudden!", "src": "open_mantra_test:rasetugari:p54:t5"}

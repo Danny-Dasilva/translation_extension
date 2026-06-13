@@ -1,0 +1,64 @@
+model:
+  # Base for v10.5 CPO is the merged v10-it (LoRA folded into the base).
+  # We stack a fresh LoRA on top — Unsloth doesn't reliably stack two LoRAs,
+  # so the canonical CPO chain pattern is: merge first, then re-LoRA.
+  name_or_path: backend/training/runs/manga-bubbles/gemma4_e4b_v10it/merged
+  dtype: bfloat16
+  # max_seq_length used for tokenizer/encoding sanity; CPOTrainer uses
+  # max_length / max_prompt_length below for training.
+  max_seq_length: 1024
+  load_in_4bit: false
+  full_finetuning: false
+
+lora:
+  # Same shape as v10-it. r raised would be ideal but we keep parity for
+  # apples-to-apples ablation against v10-it.
+  r: 16
+  alpha: 32
+  dropout: 0.0
+  bias: none
+  # CRITICAL: regex scoped to language_model.* ONLY (258 modules)
+  target_modules_regex: '^model\.language_model\.layers\.\d+\.(self_attn|mlp)\.(q_proj|k_proj|v_proj|o_proj|gate_proj|up_proj|down_proj)$'
+  expected_module_count: 258
+
+data:
+  preference_path: backend/scripts/data/cpo/v10_5_preferences.parquet
+  eval_size: 1000  # 1k held-out preference pairs
+
+cpo:
+  # CPO-SimPO joint per Xu et al. and the v10 synthesis recipe
+  loss_type: simpo
+  cpo_alpha: 1.0
+  simpo_gamma: 0.5
+  beta: 2.0
+  max_length: 768
+  max_prompt_length: 384
+
+train:
+  num_train_epochs: 1
+  per_device_train_batch_size: 2
+  gradient_accumulation_steps: 32   # effective batch 64
+  learning_rate: 1.0e-6
+  lr_scheduler_type: cosine
+  warmup_ratio: 0.05
+  max_grad_norm: 1.0
+  weight_decay: 0.0
+  bf16: true
+  optim: adamw_8bit
+  attn_implementation: sdpa  # required on Blackwell sm_120 for Gemma 4 hybrid attention
+  logging_steps: 10
+  save_steps_pct: 0.25
+  eval_steps_pct: 0.05
+  save_total_limit: 4
+  seed: 42
+  dataloader_num_workers: 2
+  report_to: none
+
+output:
+  dir: backend/training/runs/manga-bubbles/gemma4_e4b_v10_5
+  log_file: backend/training/runs/manga-bubbles/gemma4_e4b_v10_5/training.log
+
+dry_run:
+  enable: true
+  fraction: 0.01
+  max_steps: 100

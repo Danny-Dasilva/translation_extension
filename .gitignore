@@ -33,3 +33,34 @@ unsloth_compiled_cache/
 
 # Secrets / scratch — never commit
 exhentai_cookies.txt
+
+# ===== Model weights / inference binaries (regenerable via download scripts) =====
+backend/app/weights/hymt15-2bit/
+backend/models/
+
+# ===== Datasets & pipeline state (large, regenerable; never commit) =====
+/data/
+backend/scripts/data/manga109/
+backend/scripts/data/cpo/*.parquet
+backend/scripts/data/cpo/*.json
+backend/scripts/data/lippmann_love_hina/*.jsonl
+backend/scripts/data/lippmann_love_hina/multimodal-manga-translation/
+backend/scripts/data/**/*.parquet
+backend/scripts/data/**/*.log
+backend/scripts/data/**/*.stdout
+backend/scripts/data/**/*.stdout.*
+
+# ===== Eval run outputs / scorecards / indexes (regenerable) =====
+backend/scripts/eval/bench_out/
+backend/scripts/eval/scorecards/
+backend/scripts/eval/openmantra_v10it/
+backend/scripts/eval/rag_index_v10/
+backend/scripts/eval/data/
+backend/scripts/eval/*.json
+backend/scripts/eval/*.jsonl
+
+# ===== Python bytecode caches (recursive) =====
+__pycache__/
+
+# ===== Machine-generated manifest =====
+filepaths.txt

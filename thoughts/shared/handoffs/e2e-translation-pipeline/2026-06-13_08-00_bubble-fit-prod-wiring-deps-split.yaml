@@ -1,0 +1,76 @@
+---
+session: e2e-translation-pipeline
+date: 2026-06-13
+status: partial
+outcome: PARTIAL_PLUS
+---
+
+goal: Wire bubble-fit into production /translate API, split training deps so uv.lock resolves, push main to GitHub (was blocked by 2GiB pack limit), gitignore cleanup
+now: All shipped + pushed (origin/main @ 8080fe5). Resume open polish items - typeset overspill on small bubbles, batch PARSeq line-crops
+test: cd backend && SKIP_MERGE=1 GPU_UTIL=0.60 GAMMA=2 bash scripts/eval/serve_v10it_vllm.sh  # wait ~20-80s; then .venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8001 (other terminal); then .venv/bin/python /tmp/bubblefit_test/smoke_test.py /tmp/bubblefit_test/010.webp
+
+done_this_session:
+  - task: Wired bubble-fit into production /translate API (new non-breaking response field)
+    files: [backend/app/config.py, backend/app/models/response.py, backend/app/routers/translate.py]
+  - task: Split SFT training stack out of inference deps so uv.lock resolves (113 pkgs; drops stale llama-cpp pin, persists onnxruntime-gpu)
+    files: [backend/pyproject.toml, backend/uv.lock, backend/requirements-training.txt]
+  - task: Stripped runs/ (2.57GiB YOLO checkpoints) from git history to get under GitHub 2GiB pack limit; force-pushed cleaned main
+    files: [.gitignore]
+  - task: gitignore cleanup + untracked machine-gen caches (tsc-cache, .tldr, scheduled_tasks.lock, unsloth_compiled_cache, .benchmark, exhentai_cookies.txt)
+    files: [.gitignore]
+  - task: Live smoke test of bubble-fit on 4 nhentai gallery 637653 pages - PASSED (10/11, 8/8, 6/6 bubbleRect; 1/1 correct None-fallback)
+    files: [/tmp/bubblefit_test/smoke_test.py]
+
+blockers: []
+
+questions:
+  - Commit the untracked source files (backend/scripts/, backend/tests/, training/configs/, docs/, scripts/)? Left untracked deliberately this session - separate content decision.
+
+decisions:
+  - bubbleRect as new TextBox field (not replacing textRegions) - non-breaking; frontend opts in. None when no qualifying bubble -> falls back to tight block bbox
+  - Training deps to requirements-training.txt (separate venv) NOT a uv extra - uv co-resolves extras with base in one universal lock; unsloth's transitive pins (transformers/datasets/torch) can't co-resolve with transformers>=4.60. Matches existing unbabel-comet "separate venv" pattern
+  - Dropped optimum[onnxruntime-gpu] extra -> optimum (line 22) - extra's transformers/ort pins conflict with transformers>=4.60+numpy>=2.3.3; PARSeq default uses top-level onnxruntime-gpu (line 21)
+  - Strip runs/ from history (not git-lfs) - GitHub free LFS quota only 1GB vs 2.4GB of .pt; filter-repo strip keeps weights on disk untracked
+
+findings:
+  - GitHub rejects packs >2.00 GiB; commit 9fc9edb alone added 2.6GB (90 YOLO .pt checkpoints) - single-commit too big for chunked push, only history rewrite works
+  - bubble_detector (YOLOv10n) is SEPARATE from CTD text detector (create_detector) - app/services/detector_service.py:44 detect_bubbles; loaded at translate.py module init gated by settings.enable_bubble_fit
+  - Production translate.py ALREADY had GPU-LaMa wired (LamaInpaintService); only bubble-fit was missing
+  - vLLM ready in ~20s (not 80s) with SKIP_MERGE=1; backend warms up in ~0.8s, talks to vLLM at 127.0.0.1:8000/v1
+  - bubbleRect matched bubbles are 1.8x-3.7x the tight block area (vertical-JP column -> balloon interior) - exactly the intended expansion
+
+worked:
+  - match_blocks_to_bubbles (ctd_utils.py:11) reused as-is from visualizer; fit_rects computed on POST-filter kept blocks before response loop
+  - git-filter-repo via `uv tool install git-filter-repo` (PEP668 blocks pip; ~/.local/bin); mv runs/ aside -> filter-repo -> re-add origin -> gitignore -> mv back
+  - GPU_UTIL=0.60 vLLM (~19.5GB) + backend (~7GB) + 4.7GB existing fit in 32GB at page-concurrency 1
+  - serve on 8000 (vLLM) + 8001 (backend uvicorn --port 8001); pkill by pattern missed vllm, had to kill by PID
+
+failed:
+  - optimum>=1.19.0 with [onnxruntime-gpu] extra - unsatisfiable with transformers>=4.60
+  - Training as uv optional-dependency extra (training=[...]) - still co-resolved with base, unsloth datasets<4.4.0 vs declared datasets>=4.8.4 conflict
+  - Chunked incremental push - impossible, single 2.6GB commit exceeds 2GiB limit
+
+next:
+  - Typeset polish - small bubbles w/ long EN text slightly overspill; shrink-to-fit-with-floor or comic font (Wild Words/Anime Ace)
+  - Batch PARSeq line-crops - OCR now largest remaining stage (~0.3-1.4s/page); translate ~0.2s, GPU-LaMa ~50ms
+  - Decide whether to commit untracked source (backend/scripts/, tests/, training/configs/, docs/)
+  - Frontend: consume bubbleRect to typeset translation to bubble interior (currently API-only; frontend still uses textRegions)
+
+files:
+  created:
+    - backend/requirements-training.txt
+    - thoughts/shared/handoffs/e2e-translation-pipeline/2026-06-13_08-00_bubble-fit-prod-wiring-deps-split.yaml
+    - /tmp/bubblefit_test/smoke_test.py (+ 99 page copies; /tmp, not committed)
+  modified:
+    - backend/app/config.py (enable_bubble_fit default True)
+    - backend/app/models/response.py (TextBox.bubbleRect Optional[TextRegion])
+    - backend/app/routers/translate.py (lazy YOLOv10n bubble detector, detect_bubbles in GPU semaphore, match_blocks_to_bubbles -> bubbleRect)
+    - backend/pyproject.toml (optimum extra dropped; training stack removed)
+    - backend/uv.lock (regenerated clean, 113 pkgs)
+    - .gitignore (runs/, caches, secrets; untracked tsc-cache/.tldr/scheduled_tasks.lock)
+  commits_pushed:
+    - 68e735a Wire bubble-fit typesetting into production translate API
+    - cccfc70 Split SFT training stack out of inference deps (post-rewrite SHA)
+    - 51cb33c gitignore runs/ (post-rewrite)
+    - bac742d gitignore machine-gen caches + secrets
+    - 8080fe5 Untrack machine-gen cache/lock/state files (HEAD = origin/main)

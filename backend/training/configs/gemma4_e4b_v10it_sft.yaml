@@ -1,0 +1,65 @@
+model:
+  # NOTE: -it (instruction-tuned), NOT -pt. Path A: pair with gemma-4-E4B-it-assistant
+  # MTP drafter at deploy. A clean language-only LoRA on -it is required for drafter
+  # compatibility (per v10 synthesis research).
+  name_or_path: unsloth/gemma-4-E4B-it
+  dtype: bfloat16
+  max_seq_length: 1024
+  load_in_4bit: false
+  full_finetuning: false
+
+lora:
+  r: 16
+  alpha: 32
+  dropout: 0.0  # locked: completion_only_loss + cleaner LoRA wants 0.0
+  bias: none
+  # CRITICAL: target_modules scoped to language_model.* ONLY.
+  # v9c accidentally hit 406 modules (vision_tower 112 + audio_tower 36 + language_model 258)
+  # because bare suffixes like "q_proj" matched everywhere. v10 uses an anchored regex
+  # so only the 258 language-model layers receive LoRA. This is required so the
+  # gemma-4-E4B-it-assistant MTP drafter remains compatible at deploy time.
+  target_modules_regex: '^model\.language_model\.layers\.\d+\.(self_attn|mlp)\.(q_proj|k_proj|v_proj|o_proj|gate_proj|up_proj|down_proj)$'
+  expected_module_count: 258  # safety check at runtime
+
+data:
+  train_path: backend/scripts/data/manga109/data_v10.parquet
+  # No held-out dev parquet for v10 yet — slice 1k rows as eval at runtime.
+  eval_size: 1000  # in-distribution eval slice taken from train tail
+  prompt_user_template: |
+    Translate the following Japanese to English. Output only the translation.
+
+    Japanese: {jp}
+  completion_field: en
+  # use the Gemma 4 -it chat template via tokenizer.apply_chat_template
+  use_chat_template: true
+
+train:
+  num_train_epochs: 1
+  per_device_train_batch_size: 4
+  gradient_accumulation_steps: 4   # eff batch = 16
+  learning_rate: 2.0e-4            # fresh -it train (not 5e-5 continuation)
+  lr_scheduler_type: cosine
+  warmup_ratio: 0.03
+  max_grad_norm: 1.0
+  weight_decay: 0.01
+  bf16: true
+  optim: adamw_8bit                # paged_adamw_8bit if Unsloth defaults to it
+  packing: false
+  completion_only_loss: true       # NEW v10 (TRL >=0.20)
+  logging_steps: 20
+  save_steps_pct: 0.25             # ~4 checkpoints + final
+  eval_steps_pct: 0.05             # ~20 evals across the run
+  save_total_limit: 5
+  seed: 42                         # matches v9c
+  dataloader_num_workers: 4
+  report_to: none                  # tensorboard not installed; rely on training.log
+
+output:
+  dir: backend/training/runs/manga-bubbles/gemma4_e4b_v10it
+  log_file: backend/training/runs/manga-bubbles/gemma4_e4b_v10it/training.log
+
+dry_run:
+  # 100-step smoke run on 1% of data to validate before launching 3-5h job
+  enable: true
+  fraction: 0.01
+  max_steps: 100

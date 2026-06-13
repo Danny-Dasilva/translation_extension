@@ -1,0 +1,91 @@
+---
+session: manga-pair-corpus
+date: 2026-05-16
+status: partial
+outcome: PARTIAL_PLUS
+---
+
+goal: Built EN/JP manga pair corpus (4,663 verified pairs + 134k aligned page-pairs exported); exhentai backfill of unmappable/expunged pairs running ban-safe
+now: Let exsafe grind unmappable pairs at 4k/day; run `mctl scan && mctl status` for instant snapshots; raise --daily-cap if account is donor
+
+test: cd /home/danny/Documents/personal/extension/data/manga_datasets/merged && /home/danny/.local/venvs/ehentai/bin/python mctl.py status
+
+done_this_session:
+  - task: Built unified e-hentai gallery DB (3.03M galleries, 56,561 EN/JP strict pairs) + nhentai metadata map
+    files: [data/manga_datasets/merged/build_merged.py, data/manga_datasets/merged/build_nhentai_map.py]
+  - task: Fixed language-blind mapping bug (en+jp mapped to same nh_id 92%); rebuilt language-aware -> 43,771 mapped
+    files: [data/manga_datasets/merged/build_nhentai_map.py]
+  - task: nhentai bulk downloader (offline media_id map, VPN netns, throttled inflight cap)
+    files: [data/manga_datasets/merged/download_pairs_offline_map.py]
+  - task: pHash + full-NxM LIS alignment scoring; auto-tagger (good/dup/mismatch/partial)
+    files: [data/manga_datasets/merged/viewer/compute_aligned_phashes.py, data/manga_datasets/merged/viewer/auto_tag.py]
+  - task: Flask viewer with page-aligned side-by-side view + dedup + tag buttons
+    files: [data/manga_datasets/merged/viewer/app.py]
+  - task: Deleted 26,673 duplicate dirs (~750GB) from old language-blind bug
+    files: [/tmp/cleanup_duplicates.py]
+  - task: Exported training manifest (3,591 pairs, 134,016 aligned page-pairs)
+    files: [data/manga_datasets/merged/export_manifest.py, data/manga_datasets/merged/export/manifest_pairs.jsonl, data/manga_datasets/merged/export/manifest_pages.jsonl]
+  - task: Built mctl CLI - instant corpus status/search via cached local index (no NAS scan)
+    files: [data/manga_datasets/merged/mctl.py, data/manga_datasets/merged/mctl_index.sqlite]
+  - task: Ban-safe exhentai downloader for unmappable/expunged pairs (cookies, 4k/day cap, Hath-retry, resumable)
+    files: [data/manga_datasets/merged/download_exhentai_safe.py, data/manga_datasets/merged/exhentai_state.json]
+
+blockers:
+  - NAS (/mnt/nas/drive_2 CIFS) periodically saturated by ~52 unrelated ffmpeg/yt-dlp procs; full-dir listdir stalls (single-path stats stay fast)
+
+questions:
+  - Is the exhentai account (member 4207686) a donor? If yes, raise exsafe --daily-cap above 4000
+  - Keep grinding 21,799 unmappable gallery-sides at 4k/day (~months) or accept current dataset?
+
+decisions:
+  - language-aware nh mapping: en_gid only matches english-tagged nh, jp_gid only matches japanese-only (no bilingual). Eliminated 92% dup bug
+  - full NxM LIS alignment over greedy window: handles JP-has-extras correctly (e.g. 100p EN vs 212p JP, 96 aligned)
+  - strict classifier - good requires cov_max>=0.6 AND aligned>=8 AND aligned_avg<=20: kills same-artist-serial false positives
+  - exhentai over hentairead - hentairead only serves 350px thumbs (unusable); exhentai full-res, has expunged content
+  - ban-safety over speed - single-conn, 3s/page, 4k/day cap, hard-stop on ban/sad-panda/dead-cookie marker
+
+findings:
+  - pair_strict gids ARE e-hentai gallery IDs (gid+token in `gallery` table) - no fuzzy matching needed for exhentai
+  - 18,485 unmapped gids; 11,117 had (stale) torrentcount but API shows torrents mostly dead
+  - high-pop unmappable pairs are unmappable BECAUSE expunged/DMCA'd everywhere - exhentai (login) is only source
+  - AppArmor on Ubuntu confines wg/wg-quick to /etc/wireguard/ - stripped conf MUST live there not /tmp (fopen EACCES)
+  - exhentai images served via ephemeral *.hath.network nodes - DNS/conn failures normal, must retry via ?nl= reload
+  - mctl scan one-time cost 57min under NAS contention; subsequent queries 0.4s
+
+worked:
+  - VPN per-process via `ip netns exec airvpn` (NOPASSWD sudo rule); switch endpoint when Cloudflare throttles (america3->LA)
+  - offline media_id map (NHDump.zip from archive.org) bypasses Cloudflare-blocked nhentai API; only image CDN needed
+  - quota state file (exhentai_state.json) for true resume across restarts/UTC days
+  - cached disk index (mctl) instead of re-scanning 70k-dir NAS folder every script
+
+failed:
+  - greedy windowed alignment - missed JP-with-extras; replaced with full NxM LIS
+  - language-blind title/artist nh mapping - 92% pairs mapped both sides to same nh_id
+  - nhentai.to/.com mirrors - no i.nhentai.to CDN, different API paths
+  - torrent path - no client installed, torrentcount stale, old galleries dead-seeded
+  - exsafe v1 crashed on Hath DNS error (uncaught) - fixed with try/except + nl-reload retry
+
+next:
+  - Monitor exsafe (/tmp/exsafe.log); it self-paces 4k/day, resumes daily. Restart cmd in decisions if it dies
+  - Periodically: pkill stale dup auto_tag/pHash watchers; ensure ONE of each runs
+  - When NAS quiet: re-run `mctl scan` to refresh index; `cleanup_duplicates.py` pattern to purge any new dup-tagged dirs
+  - Re-run export_manifest.py to refresh training manifest as exsafe adds pairs
+  - If account donor: bump exsafe --daily-cap
+
+files:
+  created:
+    - data/manga_datasets/merged/mctl.py
+    - data/manga_datasets/merged/download_exhentai_safe.py
+    - data/manga_datasets/merged/download_ehentai_direct.py
+    - data/manga_datasets/merged/compute_full_alignment.py
+    - data/manga_datasets/merged/export_manifest.py
+    - data/manga_datasets/merged/viewer/compute_aligned_phashes.py
+    - data/manga_datasets/merged/viewer/auto_tag.py
+    - data/manga_datasets/merged/viewer/app.py
+    - data/manga_datasets/merged/export/manifest_pairs.jsonl
+    - data/manga_datasets/merged/export/manifest_pages.jsonl
+    - /home/danny/Documents/personal/exhentai_cookies.txt
+  modified:
+    - data/manga_datasets/merged/build_nhentai_map.py
+    - data/manga_datasets/merged/extract_ready_pairs.py
+    - /usr/local/sbin/netns-airvpn-up

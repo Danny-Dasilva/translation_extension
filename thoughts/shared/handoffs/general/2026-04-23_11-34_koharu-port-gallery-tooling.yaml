@@ -1,0 +1,91 @@
+---
+session: general
+date: 2026-04-23
+status: partial
+outcome: PARTIAL_PLUS
+---
+
+goal: Port koharu manga-translator improvements into the backend pipeline, wire full detect→ocr→inpaint→batched-translate flow, build reusable per-stage gallery tooling, and freeze a 28-item research backlog.
+now: Run the visualizer on user-supplied manga images to validate the pipeline end-to-end; then pick top backlog items (R6-2 uppercase, master #7 repeat_penalty, master #8 CTD thresholds) to implement.
+test: cd backend && uv run python scripts/visualize_e2e_pipeline.py --help
+
+done_this_session:
+  - task: 10-worktree parallel port of koharu improvements (rounds 1-2)
+    files: [backend/app/services/ctd_service.py, backend/app/services/parseq_ocr_service.py, backend/app/services/lama_inpaint_service.py, backend/app/services/local_translation_service.py, backend/app/utils/ocr_postprocess.py, backend/app/utils/image_processing.py, backend/app/utils/progress_bus.py, backend/app/routers/inpaint.py, backend/app/routers/events.py, backend/app/registry.py, src/services/overlay-renderer.ts, src/services/overlay-styles.ts, src/content/content-script.ts]
+  - task: Wire inpaint + batched LLM + SSE into /translate router
+    files: [backend/app/routers/translate.py, backend/app/models/response.py, backend/app/config.py]
+  - task: Build e2e visualizer that emits 11 per-stage PNG artefacts per page
+    files: [backend/scripts/visualize_e2e_pipeline.py, backend/scripts/refit_final_composites.py, backend/scripts/gallery_analysis.py, backend/scripts/collect_finals.py]
+  - task: Koharu-style composite renderer with Anton/Bangers fonts + binary-search fit + auto-contrast
+    files: [backend/scripts/refit_final_composites.py, backend/fonts/Anton-Regular.ttf, backend/fonts/Bangers-Regular.ttf, backend/fonts/Oswald-Bold.ttf, backend/fonts/ComicNeue-Bold.ttf]
+  - task: FP16 CTD export + LaMa ONNX download infra
+    files: [backend/scripts/export_ctd_fp16.py, backend/scripts/download_lama_onnx.py, backend/models/comictextdetector.fp16.onnx, backend/models/lama.onnx]
+  - task: 9 oracle research rounds → 28-item backlog with file:line citations + port plans
+    files: [thoughts/koharu-improvements/round2-research/RESEARCH.md, thoughts/koharu-improvements/round3-research/RESEARCH.md, thoughts/koharu-improvements/round4-research/RESEARCH.md, thoughts/koharu-improvements/round5-research/RESEARCH.md, thoughts/koharu-improvements/round6-research/RESEARCH.md, thoughts/koharu-improvements/round7-research/RESEARCH.md, thoughts/koharu-improvements/round8-research/RESEARCH.md, thoughts/koharu-improvements/round9-research/RESEARCH.md, KOHARU_COMPARISON.md]
+  - task: Final cleanup pass — cleared historical gallery, deleted 41 per-round visualize scripts
+    files: [thoughts/koharu-improvements/pipeline-e2e/SUMMARY.md]
+
+blockers: []
+
+questions:
+  - Which backlog tier to pick up first — the ~45-LOC observed-failure fixes (R6-2, R7-1, master #7, master #8) or the ~270-LOC top-3 quality chain (font_detector regression, LaMa window merge, per-bubble ID mask)?
+
+decisions:
+  - single_reusable_visualizer: Consolidated 41 per-round scripts into one CLI (visualize_e2e_pipeline.py) accepting explicit image paths + --out, --final-only, --skip-features
+  - research_saturation: Round 9 formally declared saturation (0 novel findings after 7 corners audited); stop research rounds, implement from frozen 28-item backlog
+  - cleared_historical_gallery: All historical per-page gallery dirs removed; pipeline-e2e/ is empty except for SUMMARY.md (a how-to-run reference) — ready to accept any user-provided filepath
+  - composite_font_choice: Anton (narration/dialogue) + Bangers (short SFX/exclamations) via heuristic pick_font() — mirrors koharu's named_font selection w/o a prediction model
+  - binary_fit_range: [6, 96] px with koharu's line_height = max(ascent+descent+leading, font_size) — exact port of layout.rs:133-186
+
+findings:
+  - inpaint_is_cpu_bottleneck: Gallery baseline 11.4s p50 / 55s p95 per page for LaMa on CPU; GPU (once onnxruntime-gpu reinstated) expected 10-30x faster. R6-1 pad_mod=8 + native-res small crops is the highest-ROI inpaint speedup.
+  - raw_jp_fallback_rate_16pct: Across 163 images sampled, ~16% of pages had the batched LLM return raw Japanese instead of English — consistent production bug, addressed by master #7 (repeat_penalty=1.2 + streaming trim) + master #11 (per-image warning recovery).
+  - zero_detect_rate_5pct: CTD threshold 0.3 misses pages with large display text (e.g. ドールズ cover). Koharu uses 0.235 binary / 0.35 NMS — master #8, 30 LOC fix validated by animetext_1104718.
+  - font_detector_regression_unused: Our pipeline ignores regression[4-9] outputs (stroke_width_px, stroke_color, line_height, angle_deg) that the model already emits. Zero inference cost to thread through overlay-renderer — round-3 #1+#2+#10 (consolidated to master #1).
+  - saturation_curve: Novel-items-per-round dropped 10→10→9→0+5→3→3→2→0 across 9 oracle rounds; clean geometric decay confirming research is done.
+
+worked:
+  - 10_parallel_worktree_launch: Spawned 10 kraken agents in parallel worktrees for rounds 1-2 — each agent owned 1-2 files, minimal merge conflicts
+  - wip_commit_before_branching: Committing dirty working tree as 'WIP' baseline let all 10 worktrees branch from a consistent known state
+  - oracle_strict_novelty_check: Rounds 6-9 explicitly told oracle "zero novel items is preferred over padding" — produced genuinely useful new findings in 6/7/8, clean saturation in 9
+  - koharu_file_line_citations: Every backlog entry has concrete file:line refs in /tmp/koharu — easy to reconfirm or port
+
+failed:
+  - embedded_git_repo_warning: training/comic-text-detector is its own git repo inside the main repo; shows up as a submodule warning on every git add. Not broken but noisy.
+  - cpu_only_inference: onnxruntime-gpu wheel was shadowed by the cpu wheel in the venv — 'uv pip uninstall onnxruntime && uv pip install --force-reinstall onnxruntime-gpu==1.23.2' needed once to reclaim GPU path
+
+next:
+  - Implement the 4 observed-failure quick wins in order of LOC/impact — R6-2 (10 LOC uppercase-Latin), R7-1 (4 LOC CTD vertical-merge threshold), master #7 (15 LOC LLM repeat_penalty), master #8 (30 LOC CTD threshold alignment). Total ~60 LOC fixes every observed failure.
+  - Then master #1 (~40 LOC font_detector regression outputs) + R6-1 (~110 LOC LaMa pad_mod=8 + unmasked restore) for the biggest visible-quality jump.
+  - Run visualize_e2e_pipeline.py on user-supplied test manga to confirm each change produces visible improvement.
+  - Reinstate onnxruntime-gpu wheel to drop per-page latency from tens of seconds to seconds.
+  - Consider a history rewrite (git-filter-repo) to reclaim the ~700 MB of old gallery blobs in .git — separate destructive op, not automatic.
+
+files:
+  created:
+    - KOHARU_COMPARISON.md
+    - backend/app/registry.py
+    - backend/app/routers/events.py
+    - backend/app/routers/inpaint.py
+    - backend/app/services/lama_inpaint_service.py
+    - backend/app/services/parseq_ocr_service.py
+    - backend/app/utils/ocr_postprocess.py
+    - backend/app/utils/progress_bus.py
+    - backend/fonts/{Anton,Bangers,Oswald,ComicNeue}-{Regular,Bold}.ttf
+    - backend/scripts/{visualize_e2e_pipeline,refit_final_composites,gallery_analysis,collect_finals,export_ctd_fp16,download_lama_onnx,benchmark_ctd_fp16,benchmark_image_decode,koharu_integration_test,test_batched_translate,test_ctd_mask_refinement,test_lama_e2e,test_lazy_registry,test_ocr_normalizer,test_sse_progress}.py
+    - thoughts/koharu-improvements/round{2..9}-research/RESEARCH.md
+    - thoughts/koharu-improvements/pipeline-e2e/SUMMARY.md
+  modified:
+    - backend/app/config.py
+    - backend/app/main.py
+    - backend/app/models/response.py
+    - backend/app/routers/translate.py
+    - backend/app/services/ctd_service.py
+    - backend/app/services/local_translation_service.py
+    - backend/app/utils/image_processing.py
+    - src/services/overlay-renderer.ts
+    - src/services/overlay-styles.ts
+    - src/content/content-script.ts
+    - src/types/api.ts
+    - backend/.gitignore
+    - .gitignore

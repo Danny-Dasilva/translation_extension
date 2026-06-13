@@ -1,0 +1,46 @@
+{
+  "files": [
+    {
+      "file": "vntl128.jsonl",
+      "row_count": 128,
+      "source": "lmg-anon/VNTL-v3.1-1k val split",
+      "license": "unspecified (research use)",
+      "status": "OK"
+    },
+    {
+      "file": "flores_ja_en.jsonl",
+      "row_count": 0,
+      "source": "facebook/flores jpn_Jpan-eng_Latn devtest",
+      "license": "CC-BY-SA 4.0",
+      "status": "MISSING"
+    },
+    {
+      "file": "open_mantra_test.jsonl",
+      "row_count": 631,
+      "source": "mantra-inc/open-mantra-dataset (2 held-out volumes)",
+      "license": "CC-BY-NC-SA 4.0",
+      "status": "OK"
+    },
+    {
+      "file": "probes.jsonl",
+      "row_count": 31,
+      "source": "hand-built (stub; expand to 300)",
+      "license": "project-internal",
+      "status": "OK"
+    },
+    {
+      "file": "regression_canary.jsonl",
+      "row_count": 500,
+      "source": "Helsinki-NLP/news_commentary ja-en",
+      "license": "CC-BY-SA 3.0",
+      "status": "OK"
+    },
+    {
+      "file": "custom_manga_1500.jsonl",
+      "row_count": 0,
+      "source": "OCR pipeline output (not yet produced)",
+      "license": "project-internal",
+      "status": "ABSENT_BY_DESIGN"
+    }
+  ]
+}

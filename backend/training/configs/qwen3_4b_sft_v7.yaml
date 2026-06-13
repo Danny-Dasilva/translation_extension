@@ -1,0 +1,51 @@
+model:
+  name_or_path: Qwen/Qwen3-4B-Base
+  dtype: bfloat16
+  max_seq_length: 512  # most bubbles <40 tokens; 512 is huge headroom
+  load_in_4bit: false
+
+lora:
+  r: 16          # smaller than v6's r=32 — 4B has more inherent capacity
+  alpha: 32
+  dropout: 0.05
+  target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
+  bias: none
+
+data:
+  train_path: backend/training/runs/manga-bubbles/data_v7.parquet
+  dev_path: backend/training/runs/manga-bubbles/dev_200_v7.parquet
+  prompt_template: |
+    Translate the following Japanese to English. Output only the translation.
+
+    Japanese: {jp}
+    English:
+  completion_field: en
+
+train:
+  num_train_epochs: 2
+  per_device_train_batch_size: 8   # 4B bf16 + LoRA fits easily on 32GB
+  gradient_accumulation_steps: 2   # eff batch 16
+  learning_rate: 8.0e-5            # lower than 1e-4 — 4B needs gentler LR
+  lr_scheduler_type: cosine
+  warmup_ratio: 0.03
+  logging_steps: 20
+  save_steps: 500
+  eval_steps: 500
+  save_total_limit: 3
+  seed: 42
+  dataloader_num_workers: 8
+  dataset_num_proc: 16
+  packing: false                   # pre-tokenized w/ response-only masking
+
+output:
+  dir: backend/training/runs/manga-bubbles/qwen3_4b_sft_v7
+  wandb_project: manga-translator
+  wandb_run_name: qwen3-4b-sft-v7
+
+thinking_mode:
+  disable: true
+
+eval:
+  l1_dev_size: 200
+  l1_every_n_steps: 500
+  probe_every_checkpoint: true
