@@ -1,5 +1,6 @@
 """YOLOv10n bubble detection service for manga pages."""
 
+import asyncio
 import logging
 from pathlib import Path
 from typing import Dict, List
@@ -61,12 +62,16 @@ class DetectorService:
 
             Sorted in manga reading order (right-to-left, top-to-bottom).
         """
-        # Run inference (YOLOv10 is NMS-free)
-        results = self.model.predict(
+        # Run inference (YOLOv10 is NMS-free). ultralytics predict() is a
+        # blocking sync call (Torch CUDA forward); offload to a worker thread so
+        # it runs concurrently with the CTD text detector instead of stalling
+        # the event loop.
+        results = await asyncio.to_thread(
+            self.model.predict,
             image,
             imgsz=imgsz,
             conf=conf,
-            verbose=False
+            verbose=False,
         )
 
         boxes = []

@@ -1,4 +1,5 @@
 """FastAPI application entry point"""
+import asyncio
 import logging
 import time
 from fastapi import FastAPI, Request
@@ -37,12 +38,38 @@ async def lifespan(app: FastAPI):
         dummy_size = settings.ctd_input_size
         dummy_image = np.zeros((dummy_size, dummy_size, 3), dtype=np.uint8)
 
-        # Warmup detector
+        # Warmup detector (CTD text)
         detector_start = time.time()
         await translate.detector_service.detect(dummy_image)
         logger.info(f"Detector warmup: {(time.time() - detector_start)*1000:.1f}ms")
 
-        # Warmup OCR (manga-ocr) with small crop
+        # Warmup YOLOv10n speech-bubble detector (separate CUDA forward) so the
+        # first real page doesn't pay its cold-start cost in the detect stage.
+        if translate.bubble_detector is not None:
+            try:
+                yolo_start = time.time()
+                await translate.bubble_detector.detect_bubbles(dummy_image)
+                logger.info(f"Bubble detector warmup: {(time.time() - yolo_start)*1000:.1f}ms")
+            except Exception as e:
+                logger.warning(f"Bubble detector warmup failed (non-fatal): {e}")
+
+        # Warmup LaMa inpaint with a small synthetic masked region (the ONNX
+        # session is warmed at load, but this also primes the cv2/numpy router
+        # paths and a real forward at crop scale).
+        if translate.inpaint_service is not None:
+            try:
+                lama_start = time.time()
+                lama_dummy = np.zeros((256, 256, 3), dtype=np.uint8)
+                lama_mask = np.zeros((256, 256), dtype=np.uint8)
+                lama_mask[100:150, 100:150] = 255
+                await asyncio.to_thread(
+                    translate.inpaint_service.inpaint, lama_dummy, lama_mask
+                )
+                logger.info(f"LaMa inpaint warmup: {(time.time() - lama_start)*1000:.1f}ms")
+            except Exception as e:
+                logger.warning(f"LaMa warmup failed (non-fatal): {e}")
+
+        # Warmup OCR (PARSeq ONNX) with small crop
         ocr_start = time.time()
         dummy_crop = dummy_image[:100, :100]
         await translate.ocr_service.recognize_text_batch([dummy_crop], batch_size=1)

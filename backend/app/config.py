@@ -78,7 +78,11 @@ class Settings(BaseSettings):
     detection_confidence: float = 0.25
     detection_image_size: int = 640
     parallel_image_processing: bool = True  # Process multiple images in parallel
-    max_parallel_images: int = 3  # Max concurrent image processing
+    # Max concurrent image pipelines. RTX 5090 (32GB) comfortably holds CTD +
+    # YOLO + PARSeq + LaMa working sets for 4 in-flight pages; vLLM runs
+    # out-of-process so it is not bounded by this. Raise further only with a VRAM
+    # headroom check.
+    max_parallel_images: int = 4
 
     # Translation parallelization
     translation_use_parallel: bool = True  # Use parallel translation with asyncio.gather
@@ -90,13 +94,43 @@ class Settings(BaseSettings):
     # When enabled, run LaMa inpainting after OCR/translate and return inpainted PNG
     enable_inpainting: bool = True
     lama_model_path: str = "models/lama.onnx"
+    # Encode the inpainted "plate" as WebP (lossy, q=82) instead of uncompressed
+    # PNG base64. Cuts the per-page plate payload ~91% (PNG 3.38MB -> WebP ~0.28MB)
+    # with no visible quality loss on manga line-art. WebP decodes natively in the
+    # browser canvas, so no frontend change is needed. Set False to restore PNG.
+    plate_encode_webp: bool = True
+    plate_webp_quality: int = 82
+    # bubbleRect-gated interior solid-fill inpaint tier (R1 hybrid). When on, the
+    # LaMa service fills flat speech-bubble interiors with their robust median
+    # background and skips the neural forward for those components. Purely
+    # additive + gated; False instantly restores the prior 3-tier behaviour.
+    enable_bubble_solid_fill: bool = True
+    # Overlap LaMa inpaint with OCR+translate. Inpainting only needs the detection
+    # mask (not translated text), so it can run concurrently with the OCR/translate
+    # stage instead of serially after it. Runs in a worker thread so the event loop
+    # stays free to drive the vLLM translate calls.
+    overlap_inpaint: bool = True
     # When enabled, detect speech bubbles (YOLOv10n) and expose the matched
     # bubble interior per text box (bubbleRect) so the frontend can typeset the
     # translation to the bubble rather than the tight (vertical-JP) text column.
     enable_bubble_fit: bool = True
     # When enabled, use page-level [N]-tagged batched translation (coherence win)
     # instead of per-bubble parallel calls. Fallback to parallel on failure.
+    # NOTE: the current vLLM translate_batched fans out concurrent single-bubble
+    # calls — it does NOT pack bubbles into one prompt. See batch_translate below
+    # for the true single-call numbered-block path.
     use_batched_translation: bool = True
+
+    # TRUE single-call numbered-block translation: pack all of a page's bubbles
+    # into ONE vLLM generate call (1.,2.,3.… prompt, numbered output parsed back).
+    # QUALITY-GATED + OFF by default — production behaviour is unchanged. Enable
+    # only after a chrF++ holdout A/B confirms no regression vs the per-bubble path.
+    batch_translate: bool = False
+
+    # Per-bubble translation generation budget. Manga lines are short; 64 tokens
+    # comfortably covers a translated bubble (~measured outputs well under this).
+    # Lower = fewer decode steps on overlong generations. Raise if truncation seen.
+    translate_max_tokens: int = 64
 
     # Japanese text filter (post-OCR)
     # Filters out non-Japanese text that MangaOCR may hallucinate from English

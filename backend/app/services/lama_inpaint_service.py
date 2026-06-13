@@ -73,6 +73,42 @@ _RING_TOLERANCE = 12.0
 # them); at or above, they're textured/screentone and go to the LaMa model.
 _CLASSICAL_STD_MAX = 20.0
 
+# bubbleRect interior solid-fill tier (R1 hybrid). For a masked component whose
+# center falls inside a matched speech-bubble rect, sample the bubble interior
+# pixels that are NOT under the erase mask, drop dark glyph remnants (they are a
+# minority of a flat balloon), take the robust median, and fill iff ≥ this
+# fraction of the trimmed pixels sit within ±tolerance of the median. Tuned so
+# only genuinely flat balloon interiors fire; tinted/screentoned bubbles fail
+# the uniformity test and fall through to classical/LaMa.
+_BUBBLEFILL_UNIFORM_FRACTION = 0.88
+_BUBBLEFILL_TOLERANCE = 22.0
+# Pixels darker than this luminance are treated as un-erased glyph remnants and
+# dropped from the background estimator — but only while they remain a minority
+# (≤ this fraction) of the sample, so a genuinely dark balloon is not mistaken
+# for "white-with-text".
+_DARK_LUMA_THRESHOLD = 128.0
+_DARK_REMNANT_MAX_FRACTION = 0.70
+
+
+def _luma(px: np.ndarray) -> np.ndarray:
+    """Rec.601 luminance of an (N,3) RGB float array."""
+    return px[:, 0] * 0.299 + px[:, 1] * 0.587 + px[:, 2] * 0.114
+
+
+def _trim_dark_remnants(px: np.ndarray) -> np.ndarray:
+    """Drop dark glyph-remnant pixels from a background sample when they are a
+    minority. Returns the trimmed sample (or the original if dark pixels are the
+    majority, i.e. the background itself is dark)."""
+    if px.size == 0:
+        return px
+    dark = _luma(px) < _DARK_LUMA_THRESHOLD
+    frac_dark = float(dark.mean())
+    if 0.0 < frac_dark <= _DARK_REMNANT_MAX_FRACTION:
+        kept = px[~dark]
+        if kept.size:
+            return kept
+    return px
+
 
 def _ring_std_max(crop_img: np.ndarray, crop_msk: np.ndarray) -> float | None:
     """Max per-channel std of the ~12px ring around the mask. None if no ring.
@@ -194,6 +230,7 @@ class LamaInpaintService:
         mask_gray: np.ndarray,
         *,
         max_side: int | None = None,
+        bubble_rects: List[Tuple[int, int, int, int]] | List[None] | None = None,
     ) -> np.ndarray:
         """Inpaint masked regions of `image_rgb`.
 
@@ -208,6 +245,11 @@ class LamaInpaintService:
                 crop itself is always downsampled to 512; this cap only
                 matters for memory/timing of the resize step. Defaults to
                 `self.default_max_side`.
+            bubble_rects: optional list of (minX,minY,maxX,maxY) speech-bubble
+                interiors in FULL-image coords (None entries allowed). When a
+                masked component's center falls inside one, the interior
+                solid-fill tier (R1 hybrid) tries to skip the neural forward.
+                None disables the tier.
 
         Returns:
             (H, W, 3) uint8 RGB with masked pixels inpainted.
@@ -249,6 +291,7 @@ class LamaInpaintService:
             self.last_stats = {
                 "components": 0,
                 "fastpath_hits": 0,
+                "bubblefill_hits": 0,
                 "classical_hits": 0,
                 "forward_calls": 0,
                 "forward_ms": 0.0,
@@ -271,8 +314,34 @@ class LamaInpaintService:
 
         t_total_forward = 0.0
         fastpath_hits = 0
+        bubblefill_hits = 0
         classical_hits = 0
         forward_calls = 0
+
+        # Scale provided bubble rects into the (possibly downscaled) working
+        # coordinate space, dropping None entries.
+        scaled_rects: List[Tuple[int, int, int, int]] = []
+        if bubble_rects:
+            for rect in bubble_rects:
+                if rect is None:
+                    continue
+                rx0, ry0, rx1, ry1 = rect
+                if downscale != 1.0:
+                    rx0 = int(round(rx0 * downscale)); ry0 = int(round(ry0 * downscale))
+                    rx1 = int(round(rx1 * downscale)); ry1 = int(round(ry1 * downscale))
+                if rx1 > rx0 and ry1 > ry0:
+                    scaled_rects.append((rx0, ry0, rx1, ry1))
+
+        def _rect_for_component(cx: float, cy: float) -> Tuple[int, int, int, int] | None:
+            """Smallest scaled bubble rect containing (cx,cy), or None."""
+            best = None
+            best_area = None
+            for rx0, ry0, rx1, ry1 in scaled_rects:
+                if rx0 <= cx <= rx1 and ry0 <= cy <= ry1:
+                    area = (rx1 - rx0) * (ry1 - ry0)
+                    if best_area is None or area < best_area:
+                        best, best_area = (rx0, ry0, rx1, ry1), area
+            return best
 
         for bx, by, bw, bh in boxes:
             # crop_box with margin (strategy.rs:331 — expand on all sides
@@ -286,6 +355,25 @@ class LamaInpaintService:
 
             if not crop_msk.any():
                 continue
+
+            # Tier 0 — bubbleRect interior solid-fill (R1 hybrid). If this
+            # component's center sits inside a matched bubble, try to fill its
+            # flat interior background and skip everything downstream.
+            if scaled_rects:
+                ccx = bx + bw / 2.0
+                ccy = by + bh / 2.0
+                rect = _rect_for_component(ccx, ccy)
+                if rect is not None:
+                    # Convert the full-image rect to crop-local coords.
+                    local_rect = (rect[0] - l, rect[1] - t, rect[2] - l, rect[3] - t)
+                    bf_img, bf_msk, bf_count = _apply_bubble_interior_fill(
+                        crop_img, crop_msk, local_rect
+                    )
+                    if bf_count > 0:
+                        _composite_masked(out, bf_img, crop_msk, l, t)
+                        bubblefill_hits += 1
+                        _clear_region_in_mask(working_mask, binary_mask, l, t, r, b)
+                        continue
 
             # Balloon-fill fast path.
             filled_img, filled_msk, filled_count = _apply_bubble_fastpath(
@@ -343,6 +431,7 @@ class LamaInpaintService:
         self.last_stats = {
             "components": len(boxes),
             "fastpath_hits": fastpath_hits,
+            "bubblefill_hits": bubblefill_hits,
             "classical_hits": classical_hits,
             "forward_calls": forward_calls,
             "forward_ms": t_total_forward * 1000.0,
@@ -431,6 +520,52 @@ def _expand_and_clamp(
     return int(l), int(t), int(r), int(b)
 
 
+def _apply_bubble_interior_fill(
+    crop_img: np.ndarray,
+    crop_msk: np.ndarray,
+    interior_rect: Tuple[int, int, int, int],
+) -> Tuple[np.ndarray, np.ndarray, int]:
+    """bubbleRect-gated interior solid-fill (R1 hybrid tier 0).
+
+    `interior_rect` is the matched bubble rect in CROP-LOCAL coords (l,t,r,b).
+    Estimate the background from the bubble-interior pixels that are NOT under
+    the erase mask, drop dark glyph remnants (minority), take the robust median,
+    and if ≥ _BUBBLEFILL_UNIFORM_FRACTION of the trimmed interior sits within
+    ±_BUBBLEFILL_TOLERANCE of it, fill the masked pixels with that median.
+
+    Returns (filled_image, remaining_mask, filled_pixel_count). filled_count==0
+    means the gate rejected this component (it stays on the downstream tiers).
+    """
+    l, t, r, b = interior_rect
+    h, w = crop_msk.shape
+    l = max(0, min(l, w)); r = max(0, min(r, w))
+    t = max(0, min(t, h)); b = max(0, min(b, h))
+    if r <= l or b <= t:
+        return crop_img, crop_msk, 0
+
+    interior_msk = crop_msk[t:b, l:r]
+    interior_img = crop_img[t:b, l:r]
+    unmasked = interior_msk == 0
+    if not unmasked.any():
+        return crop_img, crop_msk, 0
+
+    sample = interior_img[unmasked].astype(np.float32)  # (N,3)
+    trimmed = _trim_dark_remnants(sample)
+    if trimmed.size == 0:
+        return crop_img, crop_msk, 0
+
+    med = np.median(trimmed, axis=0)
+    within = (np.abs(trimmed - med) <= _BUBBLEFILL_TOLERANCE).all(axis=1)
+    if float(within.mean()) < _BUBBLEFILL_UNIFORM_FRACTION:
+        return crop_img, crop_msk, 0
+
+    fill = np.clip(np.round(med), 0, 255).astype(np.uint8)
+    filled = crop_img.copy()
+    masked_pixels = crop_msk > 0
+    filled[masked_pixels] = fill
+    return filled, np.zeros_like(crop_msk), int(masked_pixels.sum())
+
+
 def _apply_bubble_fastpath(
     crop_img: np.ndarray, crop_msk: np.ndarray
 ) -> Tuple[np.ndarray, np.ndarray, int]:
@@ -464,6 +599,12 @@ def _apply_bubble_fastpath(
     ring = (cv2.dilate(crop_msk, ring_kernel, iterations=1) > 0) & (crop_msk == 0)
     if ring.any():
         ring_px = crop_img[ring].astype(np.float32)  # (N, 3)
+        # Drop residual dark stroke remnants (anti-aliased glyph edges the tight
+        # erase mask did not fully cover) before estimating the background, but
+        # only while they are a minority — otherwise the ring is genuinely dark.
+        # This widens the path to catch white-box / bubble text it previously
+        # missed (measured: fired on only 6/75 components without the trim).
+        ring_px = _trim_dark_remnants(ring_px)
         med = np.median(ring_px, axis=0)
         # Trimmed uniformity: tolerate a small fraction of outliers (stray
         # screentone dots, neighbouring stroke tips) instead of a global std.

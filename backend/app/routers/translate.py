@@ -21,7 +21,8 @@ from app.utils.image_processing import (
     calculate_font_size,
     decode_base64_to_numpy,
     decode_base64_to_pil,
-    extract_text_region_background
+    detect_font_colors,
+    extract_text_region_background,
 )
 from app.utils.ctd_utils import build_text_regions, build_inpaint_mask, match_blocks_to_bubbles
 from app.utils.japanese_text_filter import is_japanese_text, filter_japanese_texts
@@ -106,6 +107,25 @@ def _encode_png_base64(image_rgb: np.ndarray) -> str:
     return "data:image/png;base64," + base64.b64encode(buf.tobytes()).decode("ascii")
 
 
+def _encode_plate_base64(image_rgb: np.ndarray) -> str:
+    """Encode the inpainted plate as a browser-renderable data URL.
+
+    Defaults to WebP (lossy, configurable quality) which shrinks the plate
+    payload ~91% vs uncompressed PNG (3.38MB -> ~0.28MB/page) with no visible
+    loss on manga line-art. WebP decodes natively in the browser canvas, so the
+    frontend needs no change. Falls back to PNG if WebP is disabled or the
+    encoder is unavailable in this OpenCV build.
+    """
+    if settings.plate_encode_webp:
+        bgr = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2BGR)
+        quality = int(settings.plate_webp_quality)
+        ok, buf = cv2.imencode(".webp", bgr, [int(cv2.IMWRITE_WEBP_QUALITY), quality])
+        if ok:
+            return "data:image/webp;base64," + base64.b64encode(buf.tobytes()).decode("ascii")
+        logger.warning("WebP plate encode failed; falling back to PNG")
+    return _encode_png_base64(image_rgb)
+
+
 def _build_inpaint_mask(
     image_shape: Tuple[int, int],
     blocks: List[dict],
@@ -117,6 +137,101 @@ def _build_inpaint_mask(
     list so dropped detections keep their original text instead of being
     erased without replacement."""
     return build_inpaint_mask(image_shape, blocks, text_lines, detector_mask)
+
+
+def _fit_rects_to_bubble_rects(
+    fit_rects: List[Optional[dict]],
+) -> Optional[List[Optional[Tuple[int, int, int, int]]]]:
+    """Convert matched bubble dicts to (minX,minY,maxX,maxY) int tuples for the
+    LaMa interior solid-fill tier. None entries (no qualifying bubble) pass
+    through as None so those components stay on the neural/classical tiers."""
+    if not settings.enable_bubble_solid_fill:
+        return None
+    rects: List[Optional[Tuple[int, int, int, int]]] = []
+    any_rect = False
+    for fr in fit_rects:
+        if fr is None:
+            rects.append(None)
+        else:
+            rects.append(
+                (int(fr["minX"]), int(fr["minY"]), int(fr["maxX"]), int(fr["maxY"]))
+            )
+            any_rect = True
+    return rects if any_rect else None
+
+
+def _run_inpaint_sync(
+    image_np: np.ndarray,
+    blocks: List[dict],
+    text_lines: List[dict],
+    detector_mask: Optional[np.ndarray],
+    bubble_rects: Optional[List[Optional[Tuple[int, int, int, int]]]],
+) -> Optional[str]:
+    """Build the erase mask, run the inpaint router (interior fill → ring fast
+    path → classical → LaMa) and return the encoded plate data URL. Runs in a
+    worker thread (see overlap_inpaint) so it can overlap OCR+translate."""
+    inpaint_mask = _build_inpaint_mask(
+        image_np.shape, blocks, text_lines, detector_mask
+    )
+    inpainted_rgb = inpaint_service.inpaint(
+        image_np, inpaint_mask, bubble_rects=bubble_rects
+    )
+    return _encode_plate_base64(inpainted_rgb)
+
+
+def _maybe_start_inpaint_task(
+    idx: int,
+    image_np: np.ndarray,
+    blocks: List[dict],
+    text_lines: List[dict],
+    detector_mask: Optional[np.ndarray],
+    fit_rects: List[Optional[dict]],
+    emit,
+) -> Optional["asyncio.Task"]:
+    """Kick off the inpaint in a worker thread so it overlaps OCR+translate.
+
+    Returns the task (await it after translation) or None when inpainting is
+    disabled. When settings.overlap_inpaint is False the thread still runs but
+    is awaited immediately by the caller, preserving serial behaviour.
+    """
+    if inpaint_service is None or not settings.enable_inpainting:
+        return None
+    bubble_rects = _fit_rects_to_bubble_rects(fit_rects)
+    return asyncio.create_task(
+        asyncio.to_thread(
+            _run_inpaint_sync,
+            image_np,
+            blocks,
+            text_lines,
+            detector_mask,
+            bubble_rects,
+        )
+    )
+
+
+async def _await_inpaint_task(
+    idx: int, inpaint_task: Optional["asyncio.Task"]
+) -> Optional[str]:
+    """Await the inpaint worker; failures are non-fatal (no plate returned)."""
+    if inpaint_task is None:
+        return None
+    inpaint_start = time.time()
+    try:
+        b64 = await inpaint_task
+        stats = getattr(inpaint_service, "last_stats", {}) or {}
+        logger.info(
+            f"Image {idx + 1}: inpaint completed in "
+            f"{(time.time() - inpaint_start)*1000:.1f}ms "
+            f"(components={stats.get('components')}, "
+            f"bubblefill={stats.get('bubblefill_hits')}, "
+            f"fastpath={stats.get('fastpath_hits')}, "
+            f"classical={stats.get('classical_hits')}, "
+            f"forwards={stats.get('forward_calls')})"
+        )
+        return b64
+    except Exception as exc:
+        logger.warning(f"Image {idx + 1}: inpaint failed ({exc}); continuing without plate")
+        return None
 
 
 async def process_single_image(
@@ -161,10 +276,30 @@ async def process_single_image(
             image_np = decode_base64_to_numpy(base64_image)
             logger.debug(f"Image {idx + 1} decoded: {image_np.shape}")
 
-            # Step 2: Detect text blocks (CTD)
+            # Step 2: Detect text blocks (CTD) and speech bubbles (YOLOv10n)
+            # CONCURRENTLY. CTD's session.run and YOLO's predict both offload to
+            # worker threads, so gathering them overlaps the two GPU forwards
+            # instead of running them back-to-back (saved ~YOLO latency/page).
+            # Bubble detect failure is non-fatal — we fall back to tight block
+            # bboxes downstream.
             await emit("detect", 1, 5)
             detect_start = time.time()
-            ctd_result = await detector_service.detect(image_np)
+
+            async def _detect_bubbles_safe() -> List[dict]:
+                if bubble_detector is None:
+                    return []
+                try:
+                    return await bubble_detector.detect_bubbles(image_np)
+                except Exception as exc:
+                    logger.warning(
+                        f"Image {idx + 1}: bubble detect failed ({exc}); using text blocks"
+                    )
+                    return []
+
+            ctd_result, bubbles = await asyncio.gather(
+                detector_service.detect(image_np),
+                _detect_bubbles_safe(),
+            )
             detect_time = time.time() - detect_start
 
             blocks = ctd_result["blocks"]
@@ -173,24 +308,14 @@ async def process_single_image(
 
             logger.info(
                 f"Image {idx + 1}: Detected {len(blocks)} blocks, "
-                f"{len(text_lines)} text lines in {detect_time*1000:.1f}ms"
+                f"{len(text_lines)} text lines, {len(bubbles)} bubbles "
+                f"in {detect_time*1000:.1f}ms"
             )
 
             if not blocks:
                 logger.warning(f"No text blocks detected in image {idx + 1}")
                 await emit("done", 5, 5, note="no_blocks")
                 return (idx, [], None)
-
-            # Step 2b: Detect speech bubbles (YOLOv10n) for bubble-fit typesetting.
-            # Run inside the GPU semaphore alongside detection; failures are
-            # non-fatal (we just fall back to tight block bboxes downstream).
-            if bubble_detector is not None:
-                try:
-                    bubbles = await bubble_detector.detect_bubbles(image_np)
-                    logger.info(f"Image {idx + 1}: Detected {len(bubbles)} speech bubbles")
-                except Exception as exc:
-                    logger.warning(f"Image {idx + 1}: bubble detect failed ({exc}); using text blocks")
-                    bubbles = []
 
             # Step 3: Crop block regions
             crops = detector_service.crop_regions(image_np, blocks)
@@ -275,6 +400,18 @@ async def process_single_image(
                     logger.info(f"Image {idx + 1}: Pipelined OCR+Translation completed in {ocr_time*1000:.1f}ms ({len(crops)} kept, {filtered_count} filtered)")
                 else:
                     logger.info(f"Image {idx + 1}: Pipelined OCR+Translation completed in {ocr_time*1000:.1f}ms ({len(crops)} crops)")
+
+                # Match kept blocks to bubbles ONCE (reused below). In this fused
+                # mode OCR+translate already completed, so inpaint cannot overlap
+                # translation; run it now (still uses the interior-fill tier).
+                fit_rects = (
+                    match_blocks_to_bubbles(blocks, bubbles)
+                    if bubbles else [None] * len(blocks)
+                )
+                inpaint_task = _maybe_start_inpaint_task(
+                    idx, image_np, blocks, text_lines, detector_mask, fit_rects, emit
+                )
+                inpainted_b64 = await _await_inpaint_task(idx, inpaint_task)
             else:
                 # BATCH MODE: All OCR first, then filter, then all translation
                 if prefetched_texts is not None:
@@ -310,6 +447,28 @@ async def process_single_image(
                     crops = [crops[i] for i in valid_indices]
                     all_text_regions = [all_text_regions[i] for i in valid_indices]
 
+                # Match kept blocks to bubbles ONCE (reused for both the inpaint
+                # interior-fill tier and the response build below).
+                fit_rects = (
+                    match_blocks_to_bubbles(blocks, bubbles)
+                    if bubbles else [None] * len(blocks)
+                )
+
+                # Step 5b: LaMa inpaint. Inpainting needs only the detection mask
+                # (not translated text), so launch it as a background thread task
+                # and let it OVERLAP with OCR+translate. The worker thread frees
+                # the event loop to drive the concurrent vLLM translate calls.
+                await emit("inpaint", 4, 5, note=f"{len(blocks)} regions")
+                inpaint_task = _maybe_start_inpaint_task(
+                    idx, image_np, blocks, text_lines, detector_mask, fit_rects, emit
+                )
+
+                # When overlap is disabled, finish inpaint before translating so
+                # the two GPU stages stay serial (exact prior behaviour).
+                if not settings.overlap_inpaint:
+                    inpainted_b64 = await _await_inpaint_task(idx, inpaint_task)
+                    inpaint_task = None
+
                 # Translation (batched page-level [N] protocol, or parallel/sequential fallback)
                 await emit("translate", 3, 5, note=f"{len(ocr_texts)} bubbles")
                 translate_start = time.time()
@@ -317,31 +476,13 @@ async def process_single_image(
                 translate_time = time.time() - translate_start
                 logger.info(f"Image {idx + 1}: Translation completed in {translate_time*1000:.1f}ms ({len(ocr_texts)} texts)")
 
+                if inpaint_task is not None:
+                    inpainted_b64 = await _await_inpaint_task(idx, inpaint_task)
+
             # Calculate per-crop timing (distribute evenly)
             num_items = len(crops) if crops else 1
             ocr_time_per_crop = (ocr_time * 1000) / num_items
             translate_time_per_text = (translate_time * 1000) / num_items
-
-            # Step 5b: LaMa inpaint — produce a clean plate the frontend can
-            # render translated text onto, replacing the white-rect mask.
-            if inpaint_service is not None and settings.enable_inpainting:
-                await emit("inpaint", 4, 5, note=f"{len(blocks)} regions")
-                inpaint_start = time.time()
-                try:
-                    inpaint_mask = _build_inpaint_mask(
-                        image_np.shape, blocks, text_lines, detector_mask
-                    )
-                    inpainted_rgb = await asyncio.to_thread(
-                        inpaint_service.inpaint, image_np, inpaint_mask
-                    )
-                    inpainted_b64 = _encode_png_base64(inpainted_rgb)
-                    logger.info(
-                        f"Image {idx + 1}: LaMa inpaint completed in "
-                        f"{(time.time() - inpaint_start)*1000:.1f}ms"
-                    )
-                except Exception as exc:
-                    logger.warning(f"Image {idx + 1}: inpaint failed ({exc}); continuing without plate")
-                    inpainted_b64 = None
 
         # Semaphore released - GPU slot available for other images
         # Note: all_text_regions was built and filtered inside the semaphore block
@@ -349,24 +490,22 @@ async def process_single_image(
         # Decode image once for all background extractions (avoids N base64 decodes)
         pil_image = decode_base64_to_pil(base64_image)
 
-        # Match each kept block to its enclosing speech bubble so the frontend
-        # can typeset the translation to the bubble interior (wide) instead of
-        # the tight vertical-JP column. None where no qualifying bubble exists.
-        fit_rects = (
-            match_blocks_to_bubbles(blocks, bubbles)
-            if bubbles else [None] * len(blocks)
-        )
-
         # Step 6: Build response
         text_boxes = []
         for block, ocr_text, translated_text, text_regions, fit_rect in zip(
             blocks, ocr_texts, translations, all_text_regions, fit_rects
         ):
-            # Calculate font size based on inset text region (where text will be rendered)
-            # Use the first text region (the inset box) for font sizing
-            region = text_regions[0] if text_regions else block
-            bbox_width = region['maxX'] - region['minX']
-            bbox_height = region['maxY'] - region['minY']
+            # Font sizing target: the translation is typeset to the bubble
+            # INTERIOR when one was matched (wide, horizontal) — not the tight
+            # vertical-JP column. Size against the bubbleRect so a roomy balloon
+            # yields a roomy font; fall back to the inset text region otherwise.
+            if fit_rect is not None:
+                bbox_width = int(fit_rect["maxX"]) - int(fit_rect["minX"])
+                bbox_height = int(fit_rect["maxY"]) - int(fit_rect["minY"])
+            else:
+                region = text_regions[0] if text_regions else block
+                bbox_width = region['maxX'] - region['minX']
+                bbox_height = region['maxY'] - region['minY']
             font_size = calculate_font_size(
                 bbox_width,
                 bbox_height,
@@ -383,9 +522,20 @@ async def process_single_image(
                 preloaded_image=pil_image,
             )
 
-            # Default font colors
-            font_color = "#000000"
-            stroke_color = "#FFFFFF"
+            # Content-aware font colors: sample the bubble/block background from
+            # the source page and pick dark-on-light vs light-on-dark so text on
+            # a black bubble renders white (and vice versa) instead of a fixed
+            # black/white default that vanishes on inverted balloons.
+            try:
+                cy0 = max(0, int(block['minY'])); cy1 = min(image_np.shape[0], int(block['maxY']))
+                cx0 = max(0, int(block['minX'])); cx1 = min(image_np.shape[1], int(block['maxX']))
+                sample = image_np[cy0:cy1, cx0:cx1]
+                if sample.size:
+                    font_color, stroke_color = detect_font_colors(sample)
+                else:
+                    font_color, stroke_color = "#000000", "#FFFFFF"
+            except Exception:
+                font_color, stroke_color = "#000000", "#FFFFFF"
 
             text_box = TextBox(
                 ocrText=ocr_text,
@@ -446,6 +596,21 @@ async def _run_translation(texts: List[str], target_language: str) -> List[str]:
     """
     if not texts:
         return []
+    # TRUE single-call numbered-block path (QUALITY-GATED, default OFF). Packs
+    # the whole page into one vLLM generate call. Falls back cleanly to the
+    # per-bubble paths below on empty/short/mismatched output.
+    if (
+        settings.batch_translate
+        and len(texts) > 1
+        and hasattr(translation_service, "translate_numbered_block")
+    ):
+        try:
+            blocked = await translation_service.translate_numbered_block(texts, target_language)
+            if len(blocked) == len(texts) and any(b.strip() for b in blocked):
+                return blocked
+            logger.warning("Numbered-block translate produced empty/mismatched output; falling back")
+        except Exception as exc:
+            logger.warning(f"Numbered-block translate raised {exc!r}; falling back")
     if settings.use_batched_translation and len(texts) > 1:
         try:
             batched = await translation_service.translate_batched(texts, target_language)
