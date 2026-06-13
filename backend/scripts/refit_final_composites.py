@@ -337,15 +337,21 @@ def compose_final(
     blocks: list[dict],
     translations: list[str],
     inset_margin: int = 4,
+    fit_rects: list | None = None,
 ) -> np.ndarray:
     """Render translated text onto the inpainted plate using koharu's layout
-    semantics: binary-search fit in [6, 96], real ink bbox, line_height =
+    semantics: binary-search fit, real ink bbox, line_height =
     max(ascent + descent + leading, font_size), and a stroke width scaled
     with font size for readability against noisy backgrounds.
 
-    Uses the full block bbox (the outer bubble interior) as the fit rect —
-    matching koharu's max_width/max_height which are set from the bubble's
-    interior, not the tighter per-line text_regions.
+    ``fit_rects`` (optional, parallel to ``blocks``): the speech-BUBBLE rect
+    each block lives in, as a dict with minX/minY/maxX/maxY, or None. When
+    present, text is fit and centered to the bubble interior — the correct
+    area for typesetting — instead of the tight (often tall-narrow, vertical-
+    JP) text-block bbox. This is what makes narrow columns render as readable
+    horizontal text without overlapping neighbors (bubbles are disjoint).
+    When None (e.g. SFX over art with no bubble), it falls back to the block's
+    own bbox and does NOT widen (blind widening overlaps neighbors).
 
     Auto-picks black-on-white vs white-on-black based on sampled luminance
     of the inpainted background inside the rect.
@@ -353,7 +359,8 @@ def compose_final(
     pil = Image.fromarray(inpainted).convert("RGB")
     draw = ImageDraw.Draw(pil)
     img_h, img_w = inpainted.shape[:2]
-    for block, text in zip(blocks, translations):
+    fit_rects = fit_rects or [None] * len(blocks)
+    for block, text, fit_rect in zip(blocks, translations, fit_rects):
         if not text:
             continue
         # Normalize to the ASCII subset our display fonts actually cover, then
@@ -363,8 +370,10 @@ def compose_final(
         text = normalize_for_display(text).strip().upper()
         if not text:
             continue
-        x0, y0 = int(block["minX"]), int(block["minY"])
-        x1, y1 = int(block["maxX"]), int(block["maxY"])
+        # Fit/center to the bubble interior when we matched one; else the block.
+        rect = fit_rect if fit_rect is not None else block
+        x0, y0 = int(rect["minX"]), int(rect["minY"])
+        x1, y1 = int(rect["maxX"]), int(rect["maxY"])
         bw, bh = x1 - x0, y1 - y0
         cx, cy = (x0 + x1) // 2, (y0 + y1) // 2
 

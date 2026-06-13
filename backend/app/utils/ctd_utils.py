@@ -8,6 +8,62 @@ import cv2
 import numpy as np
 
 
+def match_blocks_to_bubbles(
+    blocks: List[Dict],
+    bubbles: List[Dict],
+    min_expand: float = 1.15,
+) -> List[Optional[Dict]]:
+    """For each text block, return the speech-bubble rect it sits inside (so
+    translated text can be typeset to the *bubble* interior instead of the
+    tight text column), or None.
+
+    A bubble is only returned when it genuinely contains the block's center AND
+    is meaningfully larger than the block (area ≥ ``min_expand``×) — otherwise
+    fitting to it buys nothing. Among qualifying bubbles, the smallest is chosen
+    (tightest enclosure), so a block lands in its own bubble rather than a big
+    panel-spanning detection. Blocks with no bubble (SFX over art) get None and
+    the caller should fall back to the block's own bbox.
+    """
+    # Pass 1: best (smallest qualifying) bubble per block.
+    cand: List[Optional[int]] = []
+    areas: List[float] = []
+    for b in blocks:
+        bx0, by0, bx1, by1 = b["minX"], b["minY"], b["maxX"], b["maxY"]
+        cx, cy = (bx0 + bx1) / 2, (by0 + by1) / 2
+        b_area = max(1, (bx1 - bx0) * (by1 - by0))
+        areas.append(b_area)
+        best_i = None
+        best_area = None
+        for i, bub in enumerate(bubbles or []):
+            ux0, uy0, ux1, uy1 = bub["minX"], bub["minY"], bub["maxX"], bub["maxY"]
+            if not (ux0 <= cx <= ux1 and uy0 <= cy <= uy1):
+                continue
+            u_area = (ux1 - ux0) * (uy1 - uy0)
+            if u_area < b_area * min_expand:
+                continue
+            if best_area is None or u_area < best_area:
+                best_i, best_area = i, u_area
+        cand.append(best_i)
+
+    # Pass 2: a bubble serves at most ONE block — the largest (the main
+    # dialogue). Other blocks in the same bubble (e.g. orphan-paragraph
+    # fragments of the same balloon) fall back to their own bbox so two
+    # full-bubble renders don't overlap.
+    winner: Dict[int, int] = {}
+    for bi, bub_i in enumerate(cand):
+        if bub_i is None:
+            continue
+        if bub_i not in winner or areas[bi] > areas[winner[bub_i]]:
+            winner[bub_i] = bi
+    out: List[Optional[Dict]] = []
+    for bi, bub_i in enumerate(cand):
+        if bub_i is not None and winner.get(bub_i) == bi:
+            out.append(bubbles[bub_i])
+        else:
+            out.append(None)
+    return out
+
+
 def build_inpaint_mask(
     image_shape,
     blocks: List[Dict],

@@ -127,11 +127,14 @@ def draw_boxes(img: np.ndarray, boxes, color=(0, 255, 255),
     return np.array(pil)
 
 
-def composite_text_on_plate(plate_rgb: np.ndarray, boxes, translations) -> np.ndarray:
+def composite_text_on_plate(plate_rgb: np.ndarray, boxes, translations,
+                            fit_rects=None) -> np.ndarray:
     """Render translated text centered in each bbox on the inpainted plate.
 
     Delegates to refit_final_composites.compose_final so the two scripts
     stay in lock-step — single source of truth for layout semantics.
+    ``fit_rects`` (parallel to boxes) supplies the speech-bubble rect to typeset
+    into instead of the tight text block, or None per item.
     """
     try:
         from scripts.refit_final_composites import compose_final  # local dev import
@@ -145,7 +148,8 @@ def composite_text_on_plate(plate_rgb: np.ndarray, boxes, translations) -> np.nd
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
         compose_final = mod.compose_final
-    return compose_final(plate_rgb, list(boxes), list(translations))
+    return compose_final(plate_rgb, list(boxes), list(translations),
+                         fit_rects=list(fit_rects) if fit_rects is not None else None)
 
 
 # ---------------------------------------------------------------------------
@@ -295,6 +299,16 @@ class PipelineRunner:
     def __init__(self):
         print("  loading detector…")
         self.detector = create_detector()
+        # Speech-bubble detector (YOLOv10n). Used to typeset translated text to
+        # the bubble interior instead of the tight (vertical-JP) text column.
+        self.bubble_detector = None
+        try:
+            from app.services.detector_service import DetectorService
+            if Path(BACKEND_DIR, settings.yolo_model_path).exists():
+                print("  loading bubble detector (YOLOv10n)…")
+                self.bubble_detector = DetectorService()
+        except Exception as exc:
+            print(f"  bubble detector unavailable ({exc}); typesetting falls back to text blocks")
         print("  loading OCR (PARSeq)…")
         self.ocr = ParseqOCRService(model_path=settings.parseq_model_path)
         self.lama = None
@@ -368,6 +382,15 @@ class PipelineRunner:
         text_lines = ctd["text_lines"]
         stats["num_blocks"] = len(blocks)
         stats["num_text_lines"] = len(text_lines)
+
+        # Speech-bubble detection (for typesetting to the bubble interior).
+        bubbles = []
+        if self.bubble_detector is not None:
+            try:
+                bubbles = await self.bubble_detector.detect_bubbles(image_np)
+            except Exception as exc:
+                print(f"  bubble detect failed ({exc}); using text blocks for typesetting")
+        stats["num_bubbles"] = len(bubbles)
 
         annotate_image(draw_boxes(image_np, blocks, (0, 255, 255),
                                    lambda i, b: f"blk {i} ({int(b.get('confidence', 0) * 100)}%)"),
@@ -507,8 +530,14 @@ class PipelineRunner:
                        bg=(0, 200, 0), fg=(0, 0, 0))
         annotate_image(np.array(ann_pil), "10 — OCR + translation pairs").save(out_dir / "10_ocr_translate.png")
 
-        # 11: final composite (translated text on inpainted plate)
-        final = composite_text_on_plate(inpainted, kept_blocks, translations)
+        # 11: final composite (translated text on inpainted plate).
+        # Match each kept text block to its speech bubble so text is typeset to
+        # the bubble interior (wide) rather than the tight vertical-JP column.
+        from app.utils.ctd_utils import match_blocks_to_bubbles
+        fit_rects = match_blocks_to_bubbles(kept_blocks, bubbles) if bubbles else None
+        if fit_rects is not None:
+            stats["blocks_matched_to_bubbles"] = sum(1 for r in fit_rects if r is not None)
+        final = composite_text_on_plate(inpainted, kept_blocks, translations, fit_rects=fit_rects)
         annotate_image(final, "11 — final: translated text rendered on LaMa plate").save(out_dir / "11_final_composite.png")
 
         stats["ocr_samples"] = kept_texts[:8]
