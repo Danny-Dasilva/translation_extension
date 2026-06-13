@@ -17,14 +17,13 @@ from app.models.response import TranslateResponse, TextBox, TextRegion
 from app.services.detector_factory import create_detector
 from app.services.manga_ocr_service import MangaOCRService
 from app.services.parseq_ocr_service import ParseqOCRService
-from app.services.local_translation_service import LocalTranslationService, LocalTranslationPool
 from app.utils.image_processing import (
     calculate_font_size,
     decode_base64_to_numpy,
     decode_base64_to_pil,
     extract_text_region_background
 )
-from app.utils.ctd_utils import build_text_regions
+from app.utils.ctd_utils import build_text_regions, build_inpaint_mask
 from app.utils.japanese_text_filter import is_japanese_text, filter_japanese_texts
 from app.utils.zindex_utils import assign_smart_zindex
 from app.utils.progress_bus import bus as progress_bus
@@ -50,14 +49,26 @@ else:
     ocr_service = MangaOCRService()
 ocr_pool = None  # Pool deprecated in favor of batched inference
 
-if settings.translation_num_instances > 1:
-    logger.info(f"Using Translation Pool with {settings.translation_num_instances} instances")
-    translation_pool = LocalTranslationPool()
-    translation_service = None  # Not used when pool is available
+# Translation backend selection. The vLLM (+MTP) path is the production
+# default; "transformers" runs the Hy-MT1.5-2bit model in-process. Both
+# expose the same async translate_single / translate_batched surface.
+_translation_backend = settings.translation_backend.lower()
+if _translation_backend == "vllm-openai":
+    logger.info("Using vLLM (OpenAI-compatible) translation backend")
+    from app.services.vllm_openai_translation_service import VLLMOpenAITranslationService
+    translation_service = VLLMOpenAITranslationService(
+        base_url=settings.vllm_base_url,
+        model_name=settings.vllm_model_name,
+    )
+elif _translation_backend == "transformers":
+    logger.info("Using transformers (Hy-MT1.5) translation backend")
+    from app.services.hymt_transformers_service import HyMTTransformersService
+    translation_service = HyMTTransformersService()
 else:
-    logger.info("Using single Translation instance")
-    translation_pool = None
-    translation_service = LocalTranslationService()
+    raise ValueError(
+        f"Unknown translation_backend {settings.translation_backend!r}. "
+        "Use 'vllm-openai' or 'transformers'."
+    )
 
 # Lazy-init inpainting. Heavy model; only load if the feature is on.
 inpaint_service = None
@@ -88,33 +99,11 @@ def _build_inpaint_mask(
     text_lines: List[dict],
     detector_mask: Optional[np.ndarray],
 ) -> np.ndarray:
-    """Combine detector mask + line polygons into a binary 0/255 mask suitable
-    for LaMa. Prefers text_lines (tighter) and falls back to block bboxes.
-    """
-    h, w = image_shape[:2]
-    mask = np.zeros((h, w), dtype=np.uint8)
-
-    sources = text_lines if text_lines else blocks
-    for region in sources:
-        x0 = max(0, int(region.get("minX", 0)))
-        y0 = max(0, int(region.get("minY", 0)))
-        x1 = min(w, int(region.get("maxX", 0)))
-        y1 = min(h, int(region.get("maxY", 0)))
-        if x1 > x0 and y1 > y0:
-            cv2.rectangle(mask, (x0, y0), (x1, y1), 255, thickness=-1)
-
-    if detector_mask is not None and detector_mask.size:
-        # Detector mask may be smaller res; resize and OR with bbox-derived mask
-        dm = detector_mask
-        if dm.shape[:2] != (h, w):
-            dm = cv2.resize(dm, (w, h), interpolation=cv2.INTER_NEAREST)
-        _, dm_bin = cv2.threshold(dm, 127, 255, cv2.THRESH_BINARY)
-        mask = np.maximum(mask, dm_bin.astype(np.uint8))
-
-    # Dilate a few pixels so stroke edges are covered
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-    mask = cv2.dilate(mask, kernel, iterations=1)
-    return mask
+    """Mask only what will be re-rendered (kept blocks). See
+    app.utils.ctd_utils.build_inpaint_mask — `blocks` must be the post-filter
+    list so dropped detections keep their original text instead of being
+    erased without replacement."""
+    return build_inpaint_mask(image_shape, blocks, text_lines, detector_mask)
 
 
 async def process_single_image(
@@ -200,7 +189,7 @@ async def process_single_image(
                     batch_size=settings.parseq_batch_size,
                 )
 
-            if settings.use_pipeline_overlap and len(crops) > 1 and translation_pool:
+            if settings.use_pipeline_overlap and len(crops) > 1:
                 # PIPELINE OVERLAP with mini-batching: OCR crops in batches of 3,
                 # then fire translation tasks immediately for each batch.
                 # This preserves ONNX batching efficiency while overlapping OCR and translation.
@@ -231,7 +220,7 @@ async def process_single_image(
 
                             # Start translation immediately (non-blocking)
                             trans_task = asyncio.create_task(
-                                translation_pool.translate_single(text, target_language)
+                                translation_service.translate_single(text, target_language)
                             )
                             results.append((i, text, trans_task))
 
@@ -389,7 +378,7 @@ async def process_single_image(
         assign_smart_zindex(text_boxes, use_dict=False)
 
         image_time = time.time() - image_start
-        if settings.use_pipeline_overlap and len(crops) > 1 and translation_pool:
+        if settings.use_pipeline_overlap and len(crops) > 1:
             logger.info(
                 f"Image {idx + 1} completed: {len(text_boxes)} boxes in {image_time*1000:.1f}ms "
                 f"(detect: {detect_time*1000:.1f}ms, pipelined ocr+trans: {ocr_time*1000:.1f}ms)"
@@ -418,9 +407,7 @@ async def _run_translation(texts: List[str], target_language: str) -> List[str]:
         return []
     if settings.use_batched_translation and len(texts) > 1:
         try:
-            tgt = translation_pool or translation_service
-            assert tgt is not None
-            batched = await tgt.translate_batched(texts, target_language)
+            batched = await translation_service.translate_batched(texts, target_language)
             if len(batched) == len(texts) and any(b.strip() for b in batched):
                 return batched
             logger.warning("Batched translate produced empty/short output; falling back to parallel")
@@ -435,10 +422,7 @@ async def _translate_sequential(texts: List[str], target_language: str) -> List[
     """Translate texts sequentially (original behavior)."""
     translations = []
     for text in texts:
-        if translation_pool:
-            trans = await translation_pool.translate_single(text, target_language)
-        else:
-            trans = await translation_service.translate_single(text, target_language)
+        trans = await translation_service.translate_single(text, target_language)
         translations.append(trans)
     return translations
 
@@ -447,17 +431,13 @@ async def _translate_parallel(texts: List[str], target_language: str) -> List[st
     """
     OPTIMIZATION 2: Translate all texts in parallel.
 
-    Uses translation pool if available (true parallelism with multiple instances),
-    otherwise falls back to asyncio.gather with single instance.
+    Fans out per-bubble translate_single calls via asyncio.gather. The vLLM
+    backend handles concurrent requests with continuous batching; the
+    transformers backend serializes internally but stays correct.
     """
     if not texts:
         return []
 
-    # Use pool for true parallel translation
-    if translation_pool:
-        return await translation_pool.translate_parallel(texts, target_language)
-
-    # Fallback to single instance with asyncio.gather
     async def safe_translate(idx: int, text: str) -> Tuple[int, str]:
         """Wrapper that catches exceptions and returns index for ordering."""
         try:

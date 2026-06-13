@@ -48,14 +48,14 @@ async def lifespan(app: FastAPI):
         await translate.ocr_service.recognize_text_batch([dummy_crop], batch_size=1)
         logger.info(f"OCR warmup (ONNX): {(time.time() - ocr_start)*1000:.1f}ms")
 
-        # Warmup translation (HY-MT1.5) - warm up ALL instances in pool
+        # Warmup translation backend (vLLM client or transformers Hy-MT)
         translate_start = time.time()
-        if translate.translation_pool:
-            warmup_stats = await translate.translation_pool.warmup()
-            logger.info(f"Translation warmup ({warmup_stats['num_instances']} instances): {warmup_stats['total_warmup_ms']:.1f}ms")
+        warmup = getattr(translate.translation_service, "warmup", None)
+        if callable(warmup):
+            await warmup()
         else:
             await translate.translation_service.translate_single("テスト", "English")
-            logger.info(f"Translation warmup: {(time.time() - translate_start)*1000:.1f}ms")
+        logger.info(f"Translation warmup: {(time.time() - translate_start)*1000:.1f}ms")
 
         logger.info(f"All models warmed up in {(time.time() - warmup_start)*1000:.1f}ms")
     except Exception as e:

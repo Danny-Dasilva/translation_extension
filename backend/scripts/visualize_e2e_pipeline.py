@@ -39,9 +39,7 @@ if str(BACKEND_DIR) not in sys.path:
 from app.config import settings  # noqa: E402
 from app.services.detector_factory import create_detector  # noqa: E402
 from app.services.parseq_ocr_service import ParseqOCRService  # noqa: E402
-from app.services.local_translation_service import (  # noqa: E402
-    LocalTranslationService,
-    LocalTranslationPool,
+from app.services.translation_text_utils import (  # noqa: E402
     BATCHED_SYSTEM_PROMPT,
     format_sources,
 )
@@ -272,6 +270,28 @@ def all_feature_demos(features_dir: Path):
 # ---------------------------------------------------------------------------
 
 class PipelineRunner:
+    orphan_mode: str = "off"  # off | paragraph | sentence
+
+    async def _ocr_orphan_clusters(self, image_np, clusters) -> list[str]:
+        """OCR each cluster's lines in reading order; return joined text per cluster."""
+        h, w = image_np.shape[:2]
+        flat, owner = [], []
+        for ci, cluster in enumerate(clusters):
+            for ln in _order_cluster_lines(cluster):
+                x0 = max(0, int(ln["minX"]) - 2); y0 = max(0, int(ln["minY"]) - 2)
+                x1 = min(w, int(ln["maxX"]) + 2); y1 = min(h, int(ln["maxY"]) + 2)
+                if x1 > x0 and y1 > y0:
+                    flat.append(image_np[y0:y1, x0:x1])
+                    owner.append(ci)
+        if not flat:
+            return ["" for _ in clusters]
+        texts = await self.ocr.recognize_text_batch(flat, batch_size=settings.parseq_batch_size)
+        joined = [[] for _ in clusters]
+        for ci, t in zip(owner, texts):
+            if t:
+                joined[ci].append(t)
+        return ["".join(parts) for parts in joined]
+
     def __init__(self):
         print("  loading detector…")
         self.detector = create_detector()
@@ -286,20 +306,53 @@ class PipelineRunner:
                 print(f"  LaMa failed to load: {exc}; proceeding without plate")
         else:
             print("  LaMa unavailable — plate stage will be skipped")
-        self.translator: Optional[LocalTranslationPool | LocalTranslationService] = None
+        self.translator: Optional[object] = None
         try:
-            if settings.translation_num_instances > 1:
-                print(f"  loading LLM pool ({settings.translation_num_instances}×)…")
-                self.translator = LocalTranslationPool()
+            backend = getattr(settings, "translation_backend", "vllm-openai")
+            if backend == "transformers":
+                print("  loading LLM (transformers backend, Hy-MT1.5-2bit)…")
+                from app.services.hymt_transformers_service import (
+                    HyMTTransformersService,
+                )
+                self.translator = HyMTTransformersService()
+            elif backend == "vllm-openai":
+                from app.services.vllm_openai_translation_service import (
+                    VLLMOpenAITranslationService,
+                )
+                print(
+                    f"  using vLLM OpenAI backend at {settings.vllm_base_url} "
+                    f"(model={settings.vllm_model_name})"
+                )
+                self.translator = VLLMOpenAITranslationService(
+                    base_url=settings.vllm_base_url,
+                    model_name=settings.vllm_model_name,
+                )
             else:
-                print("  loading LLM single instance…")
-                self.translator = LocalTranslationService()
+                raise ValueError(
+                    f"Unknown translation_backend {backend!r}. "
+                    "Use 'vllm-openai' or 'transformers'."
+                )
         except Exception as exc:
             print(f"  LLM failed to load: {exc}; translation stage will emit empty strings")
 
-    async def run(self, image_path: Path, out_dir: Path) -> dict:
+        # Device diagnostics — surface the actual backends so a slow run is
+        # easy to diagnose (e.g. LaMa fell back to CPU).
+        lama_device = getattr(self.lama, "device", None) if self.lama else "unavailable"
+        translator_kind = type(self.translator).__name__ if self.translator else "unavailable"
+        translator_n = getattr(self.translator, "num_instances", 1) if self.translator else 0
+        self.device_info = {
+            "lama_device": lama_device,
+            "translator": translator_kind,
+            "translator_instances": translator_n,
+            "translation_backend": getattr(settings, "translation_backend", "vllm-openai"),
+        }
+        print(f"  devices: lama={lama_device} translator={translator_kind}"
+              f"(×{translator_n}) backend={self.device_info['translation_backend']}")
+
+    async def run(self, image_path: Path, out_dir: Path,
+                  lama_max_side: int | None = None) -> dict:
         out_dir.mkdir(parents=True, exist_ok=True)
-        stats: dict = {"image": image_path.name}
+        stats: dict = {"image": image_path.name, **getattr(self, "device_info", {})}
 
         # 01: original
         pil = Image.open(image_path).convert("RGB")
@@ -332,17 +385,6 @@ class PipelineRunner:
         else:
             Image.new("RGB", pil.size, (0, 0, 0)).save(out_dir / "04_mask_refined.png")
 
-        # Build the actual inpaint mask the router would construct
-        inpaint_mask = _build_inpaint_mask_vis(image_np.shape, blocks, text_lines, mask)
-        mask_rgb = cv2.cvtColor(inpaint_mask, cv2.COLOR_GRAY2RGB)
-        # overlay red on the original so the user sees what gets erased
-        overlay = image_np.copy()
-        red = np.zeros_like(overlay)
-        red[..., 0] = 255
-        alpha = (inpaint_mask > 0)[..., None].astype(np.float32) * 0.45
-        overlay = (overlay * (1 - alpha) + red * alpha).astype(np.uint8)
-        annotate_image(overlay, "05 — composed LaMa mask (text_lines ∪ detector_mask + dilate)").save(out_dir / "05_inpaint_mask.png")
-
         # 06: OCR crop montage
         print(f"  [{image_path.name}] OCR…")
         t0 = time.time()
@@ -354,6 +396,36 @@ class PipelineRunner:
             crops = self.detector.crop_regions(image_np, blocks)
             ocr_texts = await self.ocr.recognize_text_batch(crops)
         stats["ocr_ms"] = (time.time() - t0) * 1000
+
+        # Optional: recover text_lines that no detected block claims (dense
+        # paragraphs, chat-message boxes). "paragraph" clusters nearby orphans
+        # into one synthetic block; "sentence" makes one block per line.
+        orphan_mode = getattr(self, "orphan_mode", "off")
+        if orphan_mode != "off" and text_lines:
+            orphans = _find_orphan_lines(blocks, text_lines)
+            if orphans:
+                clusters = (_cluster_orphan_lines(orphans)
+                            if orphan_mode == "paragraph"
+                            else [[ln] for ln in orphans])
+                synth_texts = await self._ocr_orphan_clusters(image_np, clusters)
+                added = 0
+                for cluster, text in zip(clusters, synth_texts):
+                    if not text.strip():
+                        continue
+                    blocks.append({
+                        "minX": min(ln["minX"] for ln in cluster),
+                        "minY": min(ln["minY"] for ln in cluster),
+                        "maxX": max(ln["maxX"] for ln in cluster),
+                        "maxY": max(ln["maxY"] for ln in cluster),
+                        "confidence": 0.5, "orphan": True,
+                    })
+                    ocr_texts.append(text)
+                    added += 1
+                stats["orphan_mode"] = orphan_mode
+                stats["orphan_blocks_added"] = added
+                print(f"  [{image_path.name}] orphan-lines({orphan_mode}): "
+                      f"{len(orphans)} lines → {added} synthetic block(s)")
+
         _save_crop_montage(image_np, blocks, ocr_texts, out_dir / "06_ocr_crops.png")
 
         # Filter non-japanese for fairness
@@ -364,14 +436,31 @@ class PipelineRunner:
         kept_blocks = [blocks[i] for i in valid_idx]
         kept_texts = [p[1] for p in valid_pairs]
 
+        # 05: inpaint mask — built from KEPT blocks only, mirroring the router.
+        # Regions whose OCR failed the Japanese filter (or never merged into a
+        # block) are left untouched rather than erased-without-replacement.
+        inpaint_mask = _build_inpaint_mask_vis(image_np.shape, kept_blocks, text_lines, mask)
+        overlay = image_np.copy()
+        red = np.zeros_like(overlay)
+        red[..., 0] = 255
+        alpha = (inpaint_mask > 0)[..., None].astype(np.float32) * 0.45
+        overlay = (overlay * (1 - alpha) + red * alpha).astype(np.uint8)
+        annotate_image(overlay, "05 — composed LaMa mask (kept-block lines ∪ clipped detector_mask + dilate)").save(out_dir / "05_inpaint_mask.png")
+
         # 07: inpaint
         inpainted: Optional[np.ndarray] = None
         if self.lama is not None:
             print(f"  [{image_path.name}] inpaint…")
             t0 = time.time()
             try:
-                inpainted = await asyncio.to_thread(self.lama.inpaint, image_np, inpaint_mask)
+                inpaint_kwargs: dict = {}
+                if lama_max_side:
+                    inpaint_kwargs["max_side"] = lama_max_side
+                inpainted = await asyncio.to_thread(
+                    self.lama.inpaint, image_np, inpaint_mask, **inpaint_kwargs
+                )
                 stats["inpaint_ms"] = (time.time() - t0) * 1000
+                stats["inpaint_detail"] = getattr(self.lama, "last_stats", {})
                 annotate_image(inpainted, "07 — LaMa inpainted (clean plate)").save(out_dir / "07_inpainted.png")
             except Exception as exc:
                 print(f"  inpaint failed: {exc}")
@@ -424,32 +513,113 @@ class PipelineRunner:
 
         stats["ocr_samples"] = kept_texts[:8]
         stats["translations"] = translations[:8]
+        stats["ocr_all"] = kept_texts
+        stats["translations_all"] = translations
         (out_dir / "stats.json").write_text(json.dumps(stats, indent=2, ensure_ascii=False))
+
+        # translations.txt — JP (OCR) + EN (translation) pairs, full list, utf-8
+        _write_translations_txt(out_dir / "translations.txt",
+                                image_path.name, kept_texts, translations)
+
         print(f"  [{image_path.name}] ✓ wrote {out_dir}")
         return stats
 
 
+def _write_translations_txt(path: Path, image_name: str,
+                            jp_texts: list[str], translations: list[str]) -> None:
+    """Write a UTF-8 text file pairing JP OCR with EN translations for an image."""
+    lines = [f"# {image_name}",
+             f"# {len(jp_texts)} bubble(s)",
+             ""]
+    for i, jp in enumerate(jp_texts):
+        en = translations[i] if i < len(translations) else ""
+        lines.append(f"[{i + 1}]")
+        lines.append(f"  JP: {jp}")
+        lines.append(f"  EN: {en}")
+        lines.append("")
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
+def _write_aggregate_translations(out_root: Path, summaries: list[dict]) -> None:
+    """Write a single translations.txt at the gallery root pairing JP + EN per page."""
+    lines = ["# Aggregate OCR + translations",
+             f"# {len(summaries)} page(s)",
+             ""]
+    for s in summaries:
+        slug = s.get("slug", "?")
+        image = s.get("image", "?")
+        lines.append(f"## {slug}  ({image})")
+        if "error" in s:
+            lines.append(f"  ERROR: {s['error']}")
+            lines.append("")
+            continue
+        jps = s.get("ocr_all", s.get("ocr_samples", []))
+        ens = s.get("translations_all", s.get("translations", []))
+        for i, jp in enumerate(jps):
+            en = ens[i] if i < len(ens) else ""
+            lines.append(f"  [{i + 1}] JP: {jp}")
+            lines.append(f"      EN: {en}")
+        lines.append("")
+    (out_root / "translations.txt").write_text("\n".join(lines), encoding="utf-8")
+
+
 def _build_inpaint_mask_vis(image_shape, blocks, text_lines, detector_mask) -> np.ndarray:
-    """Mirror of router._build_inpaint_mask so visualization matches runtime."""
-    h, w = image_shape[:2]
-    mask = np.zeros((h, w), dtype=np.uint8)
-    sources = text_lines if text_lines else blocks
-    for region in sources:
-        x0 = max(0, int(region.get("minX", 0)))
-        y0 = max(0, int(region.get("minY", 0)))
-        x1 = min(w, int(region.get("maxX", 0)))
-        y1 = min(h, int(region.get("maxY", 0)))
-        if x1 > x0 and y1 > y0:
-            cv2.rectangle(mask, (x0, y0), (x1, y1), 255, -1)
-    if detector_mask is not None and detector_mask.size:
-        dm = detector_mask
-        if dm.shape[:2] != (h, w):
-            dm = cv2.resize(dm, (w, h), interpolation=cv2.INTER_NEAREST)
-        _, dm_bin = cv2.threshold(dm, 127, 255, cv2.THRESH_BINARY)
-        mask = np.maximum(mask, dm_bin.astype(np.uint8))
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-    mask = cv2.dilate(mask, kernel, iterations=1)
-    return mask
+    """Same mask the router builds — pass the post-filter (kept) blocks."""
+    from app.utils.ctd_utils import build_inpaint_mask
+    return build_inpaint_mask(image_shape, blocks, text_lines, detector_mask)
+
+
+def _find_orphan_lines(blocks: list[dict], text_lines: list[dict]) -> list[dict]:
+    """Lines whose center no block contains (mirrors OCR assignment rule)."""
+    orphans = []
+    for ln in text_lines:
+        cx = (ln["minX"] + ln["maxX"]) / 2
+        cy = (ln["minY"] + ln["maxY"]) / 2
+        if not any(b["minX"] <= cx <= b["maxX"] and b["minY"] <= cy <= b["maxY"]
+                   for b in blocks):
+            orphans.append(ln)
+    return orphans
+
+
+def _cluster_orphan_lines(orphans: list[dict]) -> list[list[dict]]:
+    """Union-find clustering: lines whose bboxes (expanded ~1.2 line-heights)
+    intersect belong to one paragraph."""
+    n = len(orphans)
+    parent = list(range(n))
+
+    def find(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    def expand(ln):
+        h = ln["maxY"] - ln["minY"]
+        w = ln["maxX"] - ln["minX"]
+        pad = 1.2 * min(h, w) if min(h, w) > 0 else 12
+        return (ln["minX"] - pad, ln["minY"] - pad, ln["maxX"] + pad, ln["maxY"] + pad)
+
+    boxes = [expand(ln) for ln in orphans]
+    for i in range(n):
+        for j in range(i + 1, n):
+            a, b = boxes[i], boxes[j]
+            if a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]:
+                parent[find(i)] = find(j)
+
+    groups: dict[int, list[dict]] = {}
+    for i in range(n):
+        groups.setdefault(find(i), []).append(orphans[i])
+    return list(groups.values())
+
+
+def _order_cluster_lines(cluster: list[dict]) -> list[dict]:
+    """Reading order. Horizontal lines (w > h): top-to-bottom. Vertical
+    columns: right-to-left, then top-to-bottom — matches manga convention."""
+    horiz = sum(1 for ln in cluster
+                if (ln["maxX"] - ln["minX"]) > (ln["maxY"] - ln["minY"]))
+    if horiz >= len(cluster) / 2:
+        return sorted(cluster, key=lambda ln: (ln["minY"], ln["minX"]))
+    return sorted(cluster, key=lambda ln: (-ln["minX"], ln["minY"]))
 
 
 def _save_crop_montage(image_np: np.ndarray, blocks, texts, out: Path, max_items: int = 8):
@@ -550,6 +720,21 @@ async def main():
                     help="Additionally copy every 11_final_composite.png into "
                          "this flat folder, named <slug>.png, for a "
                          "quick single-folder view of just the final output.")
+    ap.add_argument("--lama-max-side", type=int, default=None,
+                    help="If set, downsample input image+mask so that the "
+                         "longer side ≤ this many px before LaMa runs, "
+                         "then upsample the result back. Speeds up inpaint "
+                         "dramatically on large pages. Try 768 or 1024.")
+    ap.add_argument("--orphan-lines", choices=["off", "paragraph", "sentence"],
+                    default="off",
+                    help="Recover detector text_lines that belong to no block: "
+                         "'paragraph' clusters nearby lines into one synthetic "
+                         "block, 'sentence' treats each line standalone.")
+    ap.add_argument("--page-concurrency", type=int, default=1,
+                    help="Number of pages to process concurrently. >1 overlaps "
+                         "OCR/inpaint/translate across pages so the "
+                         "translation backend's concurrency is actually utilized. "
+                         "Default 1 (sequential).")
     args = ap.parse_args()
 
     _init_fonts()
@@ -565,6 +750,7 @@ async def main():
     # Pipeline runner (loads all services — slow)
     print("loading pipeline…")
     runner = PipelineRunner()
+    runner.orphan_mode = args.orphan_lines
 
     if args.images:
         images = [p for p in args.images if p.exists()]
@@ -581,21 +767,44 @@ async def main():
     if args.final_only:
         args.final_only.mkdir(parents=True, exist_ok=True)
 
-    summaries: list[dict] = []
+    originals_dir = out_root / "originals"
+    originals_dir.mkdir(parents=True, exist_ok=True)
+
+    # Pre-copy all originals up front (no model work, no contention with LaMa/LLM)
     for img in images:
-        slug = img.stem.replace(" ", "_")[:40]
         try:
-            stats = await runner.run(img, out_root / slug)
-            stats["slug"] = slug
-            summaries.append(stats)
-            if args.final_only:
-                src = out_root / slug / "11_final_composite.png"
-                if src.exists():
-                    dst = args.final_only / f"{slug}.png"
-                    dst.write_bytes(src.read_bytes())
+            dst_orig = originals_dir / img.name
+            if not dst_orig.exists():
+                dst_orig.write_bytes(img.read_bytes())
         except Exception as exc:
-            print(f"  [{img.name}] FAILED: {exc}")
-            summaries.append({"slug": slug, "image": img.name, "error": str(exc)})
+            print(f"  [{img.name}] original-copy failed: {exc}")
+
+    summaries: list[dict] = []
+    sem = asyncio.Semaphore(max(1, args.page_concurrency))
+
+    async def _process_one(img: Path) -> dict:
+        slug = img.stem.replace(" ", "_")[:40]
+        async with sem:
+            try:
+                stats = await runner.run(img, out_root / slug,
+                                         lama_max_side=args.lama_max_side)
+                stats["slug"] = slug
+                if args.final_only:
+                    src = out_root / slug / "11_final_composite.png"
+                    if src.exists():
+                        dst = args.final_only / f"{slug}.png"
+                        dst.write_bytes(src.read_bytes())
+                return stats
+            except Exception as exc:
+                print(f"  [{img.name}] FAILED: {exc}")
+                return {"slug": slug, "image": img.name, "error": str(exc)}
+
+    if args.page_concurrency > 1:
+        print(f"running {len(images)} pages with concurrency={args.page_concurrency}")
+        summaries = list(await asyncio.gather(*(_process_one(p) for p in images)))
+    else:
+        for img in images:
+            summaries.append(await _process_one(img))
 
     # Master SUMMARY.md
     md = ["# End-to-end koharu pipeline gallery\n",
@@ -631,7 +840,13 @@ async def main():
                 md.append(f"| {i} | {jp[:40]} | {en[:40]} |\n")
             md.append("\n")
     (out_root / "SUMMARY.md").write_text("".join(md), encoding="utf-8")
+
+    # Aggregate JP+EN text doc across all pages
+    _write_aggregate_translations(out_root, summaries)
+
     print(f"\nGallery written to {out_root}/SUMMARY.md")
+    print(f"Originals copied to {out_root}/originals/")
+    print(f"Aggregate translations at {out_root}/translations.txt")
 
 
 if __name__ == "__main__":

@@ -61,6 +61,13 @@ _SIMPLE_BG_THRESHOLD_LOW_VARIANCE = 10.0
 _SIMPLE_BG_THRESHOLD_HIGH_VARIANCE = 7.0
 _SIMPLE_BG_CHANNEL_STD_SWITCH = 1.0
 
+# Ring-based fast path: a masked component is flat-filled when ≥ this fraction
+# of the pixels in a ~12 px band around the mask sit within ±tolerance of the
+# band's median colour. Catches text in white boxes / bubbles that the legacy
+# whole-crop std test misses (crop margin always contains borders/art).
+_RING_UNIFORM_FRACTION = 0.90
+_RING_TOLERANCE = 12.0
+
 
 class LamaInpaintService:
     """LaMa ONNX inpainter with koharu's Crop + balloon-fill strategy."""
@@ -73,7 +80,10 @@ class LamaInpaintService:
         self,
         model_path: str = "models/lama.onnx",
         crop_margin: int = 128,
-        default_max_side: int = 1024,
+        # 2048 keeps typical manga pages (≤2048 on the long side) at native
+        # resolution: the global downscale pass added blur on the pasted-back
+        # patches while per-component crops already bound model cost (512²).
+        default_max_side: int = 2048,
     ):
         model_file = Path(model_path)
         if not model_file.is_absolute():
@@ -195,6 +205,22 @@ class LamaInpaintService:
         if max_side is None:
             max_side = self.default_max_side
 
+        # Optional full-image downsample: if the page's longer side exceeds
+        # `max_side`, shrink image+mask by a uniform factor before the
+        # per-component pipeline and upsample the result back. This cuts
+        # per-crop resize cost (the 512×512 model still runs the same count
+        # of forwards, but crops are smaller and may even hit the fast path
+        # more often at low-res). Mask resampled with NEAREST to stay binary.
+        h_in, w_in = image_rgb.shape[:2]
+        longer = max(h_in, w_in)
+        downscale = 1.0
+        if max_side and longer > max_side:
+            downscale = max_side / float(longer)
+            new_w = max(1, int(round(w_in * downscale)))
+            new_h = max(1, int(round(h_in * downscale)))
+            image_rgb = cv2.resize(image_rgb, (new_w, new_h), interpolation=cv2.INTER_AREA)
+            mask_gray = cv2.resize(mask_gray, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
+
         # Binarise the mask once (koharu: `binarize_mask`).
         binary_mask = (mask_gray > 127).astype(np.uint8) * 255
         if not binary_mask.any():
@@ -277,7 +303,12 @@ class LamaInpaintService:
             "fastpath_hits": fastpath_hits,
             "forward_calls": forward_calls,
             "forward_ms": t_total_forward * 1000.0,
+            "downscale": downscale,
         }
+
+        # Upsample back to original size if we downscaled at entry.
+        if downscale < 1.0:
+            out = cv2.resize(out, (w_in, h_in), interpolation=cv2.INTER_LINEAR)
         return out
 
     # ------------------------------------------------------------------ #
@@ -378,6 +409,30 @@ def _apply_bubble_fastpath(
     if not unmasked.any():
         return crop_img, crop_msk, 0
 
+    # --- Primary estimator: ring of pixels immediately AROUND the mask. ---
+    # The crop bbox carries `crop_margin` (≈128 px) of context, which almost
+    # always contains box borders / panel frames / art — so a whole-crop
+    # std-dev test never passes (observed fastpath_hits: 0 across full
+    # galleries). The pixels that actually matter are the ones the masked
+    # strokes sit ON: a thin band adjacent to the mask. For text inside a
+    # white box or speech bubble that band is flat white even when the box
+    # outline is 30 px away.
+    ring_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (25, 25))
+    ring = (cv2.dilate(crop_msk, ring_kernel, iterations=1) > 0) & (crop_msk == 0)
+    if ring.any():
+        ring_px = crop_img[ring].astype(np.float32)  # (N, 3)
+        med = np.median(ring_px, axis=0)
+        # Trimmed uniformity: tolerate a small fraction of outliers (stray
+        # screentone dots, neighbouring stroke tips) instead of a global std.
+        within = (np.abs(ring_px - med) <= _RING_TOLERANCE).all(axis=1)
+        if float(within.mean()) >= _RING_UNIFORM_FRACTION:
+            fill = np.clip(np.round(med), 0, 255).astype(np.uint8)
+            filled = crop_img.copy()
+            masked_pixels = crop_msk > 0
+            filled[masked_pixels] = fill
+            return filled, np.zeros_like(crop_msk), int(masked_pixels.sum())
+
+    # --- Legacy whole-crop estimator (koharu balloon.rs) as fallback. ---
     bg = crop_img[unmasked]  # (N, 3) uint8
     if bg.size == 0:
         return crop_img, crop_msk, 0

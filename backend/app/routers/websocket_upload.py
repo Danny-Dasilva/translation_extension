@@ -18,7 +18,6 @@ from app.routers.translate import (
     detector_service,
     ocr_service,
     translation_service,
-    translation_pool,
 )
 
 logger = logging.getLogger(__name__)
@@ -180,14 +179,8 @@ async def _process_image(
 
         # Step 4: Translate
         translate_start = time.time()
-        if translation_pool:
-            if settings.translation_use_parallel:
-                translations = await translation_pool.translate_parallel(ocr_texts, target_language)
-            else:
-                translations = []
-                for text in ocr_texts:
-                    trans = await translation_pool.translate_single(text, target_language)
-                    translations.append(trans)
+        if settings.translation_use_parallel and len(ocr_texts) > 1:
+            translations = await translation_service.translate_batched(ocr_texts, target_language)
         else:
             translations = []
             for text in ocr_texts:

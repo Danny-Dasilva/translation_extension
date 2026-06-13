@@ -8,9 +8,11 @@ Run from the ``backend/`` directory:
 
     uv run python scripts/test_batched_translate.py
 
-Requires the GGUF translation model to be present (see settings.translation_model_path).
+Requires the GGUF translation model to be present.
 """
 from __future__ import annotations
+
+raise SystemExit("llama-cpp backend removed; this dev script needs porting to vllm-openai")
 
 import asyncio
 import logging

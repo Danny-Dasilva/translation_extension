@@ -31,8 +31,10 @@ class Settings(BaseSettings):
 
     # OCR backend selection: "parseq" (local trained model) or "manga-ocr"
     ocr_backend: str = "parseq"
-    parseq_model_path: str = "models/parseq_manga_large_5p16.fp16.onnx"
-    parseq_batch_size: int = 24
+    parseq_model_path: str = "models/parseq_manga_best_ep60_AR_single.onnx"
+    # AR_single ONNX has hardcoded batch=1 in its Reshape node, so we force
+    # per-sample inference. Batched non-AR exports use larger sizes.
+    parseq_batch_size: int = 1
 
     # Detector Selection: "animetext" (fast) or "ctd" (full-featured).
     # CTD is recommended when ocr_backend="parseq" because PARSeq is a
@@ -53,16 +55,24 @@ class Settings(BaseSettings):
     ctd_min_text_area: int = 100
     ctd_nms_free: bool = False  # Enable NMS to filter duplicate overlapping boxes
 
-    # Translation model
-    translation_model_filename: str = "HY-MT1.5-1.8B-Q8_0.gguf"
+    # Translation backend: "vllm-openai" (vLLM serving an OpenAI-compatible
+    # chat endpoint — the v10-it Gemma 4 E4B merged model + Google's MTP
+    # drafter) or "transformers" (HF transformers, used for Hy-MT1.5-2bit).
+    #
+    # Default is the vLLM + Google MTP path: it's the fastest production config
+    # benched (112 tok/s, 29% draft acceptance, lossless) and gives the best
+    # translation quality. Requires the server from
+    # `backend/scripts/eval/serve_v10it_vllm.sh` to be running on vllm_base_url;
+    # VLLMOpenAITranslationService raises a clear "start it with…" error if not.
+    translation_backend: str = "vllm-openai"
+    vllm_base_url: str = "http://127.0.0.1:8000/v1"
+    vllm_model_name: str = "v10it"
+
+    # Translation model (transformers backend)
+    hymt_transformers_model_dir: str = "app/weights/hymt15-2bit"
 
     # Weights directory (for downloaded models)
     weights_dir: str = "app/weights"
-
-    @property
-    def translation_model_path(self) -> str:
-        """Get translation model path."""
-        return f"{self.weights_dir}/{self.translation_model_filename}"
 
     # Performance Tuning
     detection_confidence: float = 0.25
@@ -72,13 +82,6 @@ class Settings(BaseSettings):
 
     # Translation parallelization
     translation_use_parallel: bool = True  # Use parallel translation with asyncio.gather
-    translation_num_instances: int = 6  # Number of translation model instances (6 for single-round 6-bubble pages)
-
-    # Translation model tuning
-    translation_n_ctx: int = 1024  # Context window (reduced from 2048, but 512 was too tight)
-    translation_n_batch: int = 256  # Prompt processing batch size
-    translation_n_ubatch: int = 128  # Physical batch size for GPU
-    translation_max_tokens: int = 96  # Max output tokens (reduced from 256 - manga dialogue is short)
 
     # Pipeline optimization
     use_pipeline_overlap: bool = True  # Start translation as each OCR completes (overlap OCR+translation)
@@ -100,6 +103,7 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         case_sensitive = False
+        extra = "ignore"
 
     def get_cors_origins(self) -> List[str]:
         """Parse CORS origins from comma-separated string"""
@@ -109,11 +113,6 @@ class Settings(BaseSettings):
     def yolo_model_exists(self) -> bool:
         """Check if YOLOv10 model file exists"""
         return Path(self.yolo_model_path).exists()
-
-    @property
-    def translation_model_exists(self) -> bool:
-        """Check if translation model file exists"""
-        return Path(self.translation_model_path).exists()
 
 
 # Global settings instance

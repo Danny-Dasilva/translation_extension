@@ -39,7 +39,6 @@ from app.routers.translate import (
     detector_service,
     ocr_service,
     translation_service,
-    translation_pool,
 )
 
 
@@ -1082,11 +1081,11 @@ async def _test_translate_with_timing(
     translations = []
     times = []
 
-    if parallel and translation_pool:
-        # Use translate_parallel which properly distributes across instances with semaphores
-        # This avoids the crash from concurrent access to the same Llama instance
+    if parallel and len(texts) > 1:
+        # Page-level batched translation (the configured backend handles
+        # concurrency / batching internally).
         start = time.perf_counter()
-        translations = await translation_pool.translate_parallel(texts, target_language)
+        translations = await translation_service.translate_batched(texts, target_language)
         total_time = (time.perf_counter() - start) * 1000
 
         # Estimate per-text timing (parallel execution = total time / parallelism)
@@ -1098,10 +1097,7 @@ async def _test_translate_with_timing(
         # Sequential translation with timing
         for text in texts:
             start = time.perf_counter()
-            if translation_pool:
-                trans = await translation_pool.translate_single(text, target_language)
-            else:
-                trans = await translation_service.translate_single(text, target_language)
+            trans = await translation_service.translate_single(text, target_language)
             times.append((time.perf_counter() - start) * 1000)
             translations.append(trans)
 

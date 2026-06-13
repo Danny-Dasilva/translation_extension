@@ -8,7 +8,7 @@ Ported conceptually from koharu's `Registry` at
 Today, `backend/app/routers/translate.py` *eagerly* constructs:
     - a detector (CTD or AnimeText)
     - an OCR service (PARSeq or MangaOCR)
-    - a translation pool (6x Llama instances at ~1.5GB VRAM each)
+    - a translation service (vLLM client or transformers Hy-MT model)
 ...at module-import time. That's ~10 GB baseline VRAM and ~30+ s cold start
 just to reply to `GET /health`. The registry below changes nothing by itself
 (it is purely additive) but lets a follow-up integration PR move those
@@ -24,8 +24,7 @@ In ``backend/app/routers/translate.py`` replace the eager init block with:
 
     # remove:  detector_service = create_detector()
     # remove:  ocr_service = ParseqOCRService(...) / MangaOCRService(...)
-    # remove:  translation_pool = LocalTranslationPool()
-    # remove:  translation_service = LocalTranslationService()
+    # remove:  translation_service = VLLMOpenAITranslationService(...) / HyMTTransformersService()
 
     async def process_single_image(...):
         detector = await registry.get_detector()
@@ -134,8 +133,8 @@ class ServiceRegistry:
 
         Koharu's ``Registry::clear`` (engine.rs:129-131) simply empties the
         map and lets Rust's Drop handle GPU buffers. In Python we have to be
-        explicit — services that allocate ONNX sessions or llama-cpp contexts
-        should expose ``close()`` for best-effort release; otherwise we rely
+        explicit — services that allocate ONNX sessions or CUDA model
+        contexts should expose ``close()`` for best-effort release; otherwise we rely
         on refcount + ``gc.collect()``.
         """
         async with self._lock:
@@ -168,7 +167,7 @@ class ServiceRegistry:
 
     # ------------------------------------------------------------------
     # Typed helpers — each does a *lazy import* so that merely importing
-    # this module doesn't drag in torch/llama-cpp/onnxruntime.
+    # this module doesn't drag in torch/onnxruntime/httpx.
     # ------------------------------------------------------------------
 
     async def get_detector(self) -> Any:
@@ -230,11 +229,12 @@ class ServiceRegistry:
             return svc
 
     async def get_translation(self) -> Any:
-        """Return a ``LocalTranslationPool`` or single ``LocalTranslationService``.
+        """Return the configured translation service.
 
-        Matches the current policy in ``translate.py``: if
-        ``settings.translation_num_instances > 1`` we use the pool, else a
-        single instance.
+        Backend is selected by ``settings.translation_backend``:
+          - ``"vllm-openai"`` (default): ``VLLMOpenAITranslationService``
+            talking to a local vLLM + MTP server.
+          - ``"transformers"``: ``HyMTTransformersService`` (Hy-MT1.5-2bit).
         """
         svc = self._services.get(ID_TRANSLATION)
         if svc is not None:
@@ -245,15 +245,27 @@ class ServiceRegistry:
             if svc is not None:
                 return svc
 
-            num = settings.translation_num_instances
-            if num and num > 1:
-                logger.info("Lazy-loading LocalTranslationPool (n=%d)", num)
-                from app.services.local_translation_service import LocalTranslationPool
-                svc = LocalTranslationPool()
+            backend = settings.translation_backend.lower()
+            logger.info("Lazy-loading translation (backend=%s)", backend)
+
+            if backend == "vllm-openai":
+                from app.services.vllm_openai_translation_service import (
+                    VLLMOpenAITranslationService,
+                )
+                svc = VLLMOpenAITranslationService(
+                    base_url=settings.vllm_base_url,
+                    model_name=settings.vllm_model_name,
+                )
+            elif backend == "transformers":
+                from app.services.hymt_transformers_service import (
+                    HyMTTransformersService,
+                )
+                svc = HyMTTransformersService()
             else:
-                logger.info("Lazy-loading LocalTranslationService (single)")
-                from app.services.local_translation_service import LocalTranslationService
-                svc = LocalTranslationService()
+                raise ValueError(
+                    f"Unknown translation_backend {backend!r}. "
+                    "Use 'vllm-openai' or 'transformers'."
+                )
 
             self._services[ID_TRANSLATION] = svc
             return svc
