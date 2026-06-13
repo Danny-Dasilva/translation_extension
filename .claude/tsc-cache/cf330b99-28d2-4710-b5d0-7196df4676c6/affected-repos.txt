@@ -1,3 +1,0 @@
-backend
-src
-root

@@ -27,6 +27,8 @@ runs/
 # Machine-generated caches (local only, regenerable)
 .benchmark/
 .claude/tsc-cache/
+.claude/scheduled_tasks.lock
+.tldr/
 unsloth_compiled_cache/
 
 # Secrets / scratch — never commit
