@@ -19,3 +19,7 @@ backend/app/weights/paddleocr-vl/
 
 # Debug output from test page
 backend/debug_output/
+
+# YOLO training run outputs / checkpoints — large, regenerable; never commit.
+# (Stripped from history 2026-06-13; .pt weights kept on local disk only.)
+runs/
