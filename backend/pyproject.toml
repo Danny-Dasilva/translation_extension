@@ -32,25 +32,10 @@ dependencies = [
     "sentence-transformers",
     "loguru",
     "pytest",
-    # Eval harness (lazy-imported; install separately if metric eval is needed)
-    # "unbabel-comet",  # has hard numpy<2 pin; install in separate venv
-    # "bitsandbytes",  # 4-bit / 8-bit quant for judge + XCOMET-XXL
-    # SFT training stack (imports lazily; unsloth requires CUDA at runtime
-    # but this declaration is fine even on CPU-only dev boxes).
-    "trl>=0.20,<0.24",
-    "peft>=0.19.1",
-    "wandb>=0.26.1",
-    "datasets>=4.8.4",
-    "unsloth>=2025",
-    "polars>=1.36.1",
-    "pyarrow>=24.0.0",
-    "pyyaml>=6.0.2",
-    "datasketch>=1.10.0",
-    "fugashi>=1.5.2",
-    "unidic-lite>=1.0.8",
-    "bitsandbytes>=0.49.2",
-    "xformers>=0.0.33.post2",
-    "cmake>=4.3.2",
+    # SFT / fine-tuning stack (unsloth, trl, peft, bitsandbytes, xformers, …)
+    # lives in requirements-training.txt and installs into a SEPARATE venv.
+    # unsloth's transitive pins can't co-resolve with transformers>=4.60 in a
+    # single lock; app/ never imports it. Same pattern as unbabel-comet.
 ]
 
 [tool.uv]
