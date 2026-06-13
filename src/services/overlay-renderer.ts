@@ -270,6 +270,10 @@ export class OverlayRenderer {
     const width = textBox.maxX - textBox.minX;
     const height = textBox.maxY - textBox.minY;
 
+    // NOTE: the mask source intentionally stays on textRegions (the actual
+    // text pixels), NOT bubbleRect. Text LAYOUT uses the larger bubble interior
+    // (see computeTextRegionBBox), but painting a white plate over the whole
+    // bubble interior would cover bubble art. Keep masking tight to text.
     if (textBox.textRegions && textBox.textRegions.length > 0) {
       for (const region of textBox.textRegions) {
         const rw = region.maxX - region.minX;
@@ -282,11 +286,24 @@ export class OverlayRenderer {
   }
 
   /**
-   * Compute the *text-region bbox* (union of textRegions if provided, else
-   * the outer bubble bbox). This is what we wrap and center text inside —
-   * not the full bubble, so we don't overrun rounded edges.
+   * Compute the box we wrap and center text inside. Fallback chain:
+   *   1. bubbleRect  — the matched speech-bubble interior (larger than the
+   *      tight OCR bbox), so text fills the bubble and overspill resolves.
+   *   2. textRegions — union of precise text regions (older responses / no bubble).
+   *   3. tight outer bbox — last resort.
+   * bubbleRect is optional and may be null (e.g. SFX over art), so older
+   * responses without it still render via the textRegions/bbox fallback.
    */
   private computeTextRegionBBox(textBox: TextBox): RegionBBox {
+    const b = textBox.bubbleRect;
+    if (b && b.maxX > b.minX && b.maxY > b.minY) {
+      return {
+        x: b.minX,
+        y: b.minY,
+        width: Math.max(1, b.maxX - b.minX),
+        height: Math.max(1, b.maxY - b.minY),
+      };
+    }
     if (textBox.textRegions && textBox.textRegions.length > 0) {
       let minX = Infinity;
       let minY = Infinity;

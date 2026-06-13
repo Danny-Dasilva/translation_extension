@@ -30,6 +30,7 @@ export interface TextBox {
   translatedText: string;
   subtextBoxes: TextBox[];
   textRegions?: TextRegion[]; // Precise text regions for targeted masking
+  bubbleRect?: TextRegion | null; // Speech-bubble interior rect this block matched (null = no qualifying bubble, e.g. SFX over art)
   confidence?: number; // Detection confidence
   ocrTimeMs?: number; // OCR timing
   translateTimeMs?: number; // Translation timing
