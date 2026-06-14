@@ -40,7 +40,8 @@ backend/models/
 
 # ===== Datasets & pipeline state (large, regenerable; never commit) =====
 /data/
-backend/scripts/data/manga109/
+backend/scripts/data/manga109/*.json
+backend/scripts/data/manga109/bench/
 backend/scripts/data/cpo/*.parquet
 backend/scripts/data/cpo/*.json
 backend/scripts/data/lippmann_love_hina/*.jsonl

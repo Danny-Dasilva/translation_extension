@@ -276,7 +276,13 @@ def main() -> int:
     ap.add_argument("--pad", type=int, default=2)
     ap.add_argument("--max-disagreements", type=int, default=25)
     ap.add_argument("--out", type=str, default=None)
+    ap.add_argument("--parquet", type=str, default=None,
+                    help="override the bubbles parquet for bubble-gt mode, e.g. a "
+                         "per-line OCR ground-truth set built by build_perline_gt.py")
     args = ap.parse_args()
+    if args.parquet:
+        global BUBBLES_PARQUET
+        BUBBLES_PARQUET = Path(args.parquet)
     if args.out is None:
         args.out = str(Path(__file__).resolve().parent /
                        f"compare_parseq_exports_{args.mode}.json")

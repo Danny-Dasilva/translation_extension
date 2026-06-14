@@ -437,3 +437,221 @@ Files NOT affected:
 - `backend/models/parseq_manga_best_ep60_AR_single.onnx` — keep as archive
 - Training scripts on danny@100.64.235.63 — only needed for Option A fallback
 
+---
+
+## Per-line A/B results (2026-06-13)
+
+Formal per-LINE OCR accuracy A/B on the user-built labeled ground-truth set
+(`backend/scripts/data/manga109/perline_gt.parquet`, 68,472 rows / 87 books, 0
+missing images). Each sampled line is cropped (`xmin..xmax`, `ymin..ymax` + 2px
+pad) from its page JPEG and run through the **real `ParseqOCRService`**
+(`recognize_text_batch`), so preprocessing (`_maybe_rotate_vertical`, resize,
+normalize) and decode match production exactly.
+
+- Eval script: `backend/scripts/eval_vision/eval_perline_gt.py`
+- Results JSON: `backend/scripts/eval_vision/eval_perline_gt_results.json`
+- Sample: **N=1000**, seed=0, stratified to ~25% horizontal (750 vertical / 250
+  horizontal) so both orientations are well represented (natural split is ~94/6).
+- Models: **A** = `parseq_manga_best_ep60_AR_single.onnx` (OLD prod, batch=1,
+  charset 4407) · **B** = `parseq_manga_ep60_nonAR_dynbatch.fp16.onnx` (NEW prod,
+  batched, **same weights as A**) · **C** = `parseq_manga_large_5p16.fp16.onnx`
+  (stopgap, charset 4400).
+- Two scoring passes: **POSTPROCESSED** = service output as shipped (`_finalize_ocr`
+  = `ocr_postprocess.apply_all` + JP-whitespace collapse + repetition guard);
+  **RAW** = same models with `_finalize_ocr` monkeypatched to identity.
+
+> Caveat on absolute numbers: this GT is **bubble-level** — many `jp_text` rows
+> contain `\n` (multi-line bubbles), while PARSeq is a single-line STR model.
+> That inflates absolute CER for **all** models (~19–28%). It does **not** bias
+> the A-vs-B comparison: A and B are scored against identical references, so the
+> **A→B delta is the valid measurement**.
+
+### Postprocessed (production-shipped output)
+
+| Model | Split | n | Exact-match | Mean CER | Median CER |
+|---|---|---:|---:|---:|---:|
+| **A** (old prod) | overall | 1000 | 39.60% | 19.30% | 9.60% |
+| | vertical | 750 | 39.20% | 20.70% | 10.00% |
+| | horizontal | 250 | 40.80% | 15.08% | 6.46% |
+| **B** (new prod) | overall | 1000 | 38.00% | 20.95% | 11.11% |
+| | vertical | 750 | 38.00% | 22.19% | 11.11% |
+| | horizontal | 250 | 38.00% | 17.23% | 11.11% |
+| **C** (stopgap) | overall | 1000 | 33.50% | 25.79% | 14.84% |
+| | vertical | 750 | 35.47% | 24.51% | 13.33% |
+| | horizontal | 250 | 27.60% | 29.62% | 20.00% |
+
+### Raw (bare model decode, no postprocess)
+
+| Model | Split | n | Exact-match | Mean CER | Median CER |
+|---|---|---:|---:|---:|---:|
+| **A** | overall | 1000 | 40.80% | 24.48% | 9.09% |
+| **B** | overall | 1000 | 39.30% | 27.62% | 10.91% |
+| **C** | overall | 1000 | 59.10% | 17.29% | 0.00% |
+
+Timing (this run, RTX, ms/crop): **A 40.3** (forced batch=1 — AR_single export
+is batch-locked) · **B 3.88** · **C 3.48**. The ~10x speedup is confirmed; the
+question is whether B keeps A's accuracy.
+
+### Verdict: B vs A — **FAIL (CER regression)**
+
+Acceptance bar: B within **+0.5pp mean CER** AND within **3pp exact-match** of A
+(postprocessed).
+
+| Metric | A | B | Δ (B−A) | Bar | Result |
+|---|---:|---:|---:|---|:--:|
+| Mean CER (postproc) | 19.30% | 20.95% | **+1.65pp** | ≤ +0.50pp | ✗ FAIL |
+| Exact-match (postproc) | 39.60% | 38.00% | −1.60pp | ≥ −3.00pp | ✓ pass |
+
+**Overall verdict: FAIL.** B is NOT within parity of A; mean CER regresses
++1.65pp (3.3x over the allowed +0.5pp). Exact-match is within tolerance, but the
+CER bar is breached. The raw-decode gap is even larger (+3.14pp), so production
+postprocessing only halves — not removes — the regression.
+
+### Why (root cause)
+
+Despite sharing weights with A, **B's non-autoregressive decode emits
+trailing-repeat / hallucination runs** that A's autoregressive decode does not.
+On the 116/1000 A↔B disagreements (88.4% agreement), when they differ **A is
+right 19x vs B 4x** (and both wrong 93x — mostly the multi-line bubbles above).
+The failures are characteristic non-AR artifacts:
+
+```
+GT 'ボケッ!!'        A 'ボドッ'           B 'ボドッ!.....!!!!!!!...!!!!!!!!!!!.!.!!!!....!!!!!!...'
+GT '私はただ・・・'    A '私はただ...'       B '私.......はただ......................................'
+GT '女王蟻発見！'     A 'さすが...女王蟻発見!' B 'そ.が....女蟻蟻発見!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!.!'
+GT 'ふしぎな生命体'   A '............ふしぎな生命体' B 'お..は生命体しししななな命体体体体体体体'
+GT 'お前……\nどこかで…' A 'お前......どこかでちゃんとごはんもらってるのか?'
+                                          B 'お前......どこかでちゃんとごはんもらってるのか??........???????.......'
+GT 'えええええ〜！？'  A 'えええええ〜!?'    B 'えええええ〜!?????'
+```
+
+The existing repetition guard in `parseq_ocr_service._repetition_guard` only
+**logs** these runs, it does not blank/trim them; `ocr_postprocess` caps some
+trailing repeats but not the interleaved-punctuation runs B produces.
+
+### Recommendation
+
+- **Do NOT ship B as a like-for-like swap on accuracy grounds alone** — it
+  trades 10x throughput for a +1.65pp CER regression driven by non-AR repeat
+  hallucination, not a weight difference.
+- If the speed win is required, mitigate the non-AR artifacts first: (a) add an
+  EOS-confidence / repeat-collapse step to the non-AR decode, or (b) re-export
+  with `decode_ar=True` + dynamic batch, or (c) tighten `ocr_postprocess` to trim
+  interleaved-punctuation runs (`!.!.!`, `………`) and re-run this A/B.
+- **C is not a drop-in** (different charset 4400, different weights). Its raw
+  numbers look strong (17.3% CER) but collapse under production postprocessing
+  (25.8%), so it is not comparable without postprocess tuning.
+
+Re-run anytime with:
+
+```bash
+backend/.venv/bin/python backend/scripts/eval_vision/eval_perline_gt.py \
+    --n 1000 --seed 0 --batch-size 24 --with-c
+```
+
+
+---
+
+## Single-line / production-regime re-test (2026-06-14)
+
+The original FAIL above used **bubble-level GT** (whole `<text>` bboxes; ~4,771
+of 68,472 rows contain embedded `\n` and many more are run-on multi-line
+transcripts). That is **out-of-distribution** for B, a single-line recognizer
+whose non-AR decode hallucinates repeat runs on too-long inputs. Production OCR
+(`recognize_blocks_with_lines`) feeds **single-line CTD crops**, so this re-test
+restricts to that regime to check whether the FAIL was purely OOD.
+
+New self-contained script (does not touch production code):
+`backend/scripts/eval_vision/eval_perline_singleline.py`
+Results: `backend/scripts/eval_vision/eval_perline_singleline_results.json`
+
+Both A and B run through the **real `ParseqOCRService`** (production preprocess +
+`_finalize_ocr` postprocess). A = `parseq_manga_best_ep60_AR_single.onnx`
+(reference, batch=1, charset 4407); B = `parseq_manga_ep60_nonAR_dynbatch.fp16.onnx`
+(candidate, batched, **same weights as A**, charset 4407).
+
+### Test 1 — single-line GT (postprocessed = shipped output)
+
+Filter: `'\n' not in jp_text` AND `n_chars <= 20`. **Single-line pool = 56,323**
+rows (vertical 53,683 / horizontal 2,640). Stratified sample, horiz oversampled
+to ~25%.
+
+n=2000 (seed 0, max_chars=20):
+
+| model | split | n | exact | mean CER | median CER |
+|-------|-------|---|-------|----------|-----------|
+| **A** | overall | 2000 | 46.20% | 21.50% | 7.69% |
+|       | vertical | 1500 | 43.93% | 23.58% | 10.00% |
+|       | horizontal | 500 | 53.00% | 15.26% | 0.00% |
+| **B** | overall | 2000 | 45.60% | 22.54% | 9.09% |
+|       | vertical | 1500 | 43.67% | 24.24% | 10.53% |
+|       | horizontal | 500 | 51.40% | 17.46% | 0.00% |
+
+- Δ mean CER = **+1.042 pp** (bar: ≤ +0.50) → **FAIL**
+- Δ exact-match = −0.600 pp (bar: ≥ −3.00) → within bar
+- Speed: A 37.6 ms/crop, B 3.8 ms/crop (**10.0× faster**)
+
+Robustness re-run n=4000 (seed 1, max_chars=15, tighter single-line cut):
+Δ mean CER = **+0.674 pp** → still **FAIL**; Δ exact = −0.40 pp. The regression
+is stable across seeds and length cuts — it is **not** a sampling artifact and
+**not** explained by multi-line OOD inputs.
+
+### Test 2 — real CTD per-line crops (true production distribution, no GT)
+
+Production CTD detector run on 36 real manga pages
+(`637653_Haha to Ochite Iku Part 12` + `653631_… Part 13`, `<NNN>.webp`) →
+**487 single-line crops**. A and B run on the SAME crops.
+
+- A↔B exact agreement: **87.68%** (427/487)
+- A repeat-artifact rate: **3.29%** (16/487)
+- B repeat-artifact rate: **4.11%** (20/487)
+- **B-only artifacts (present in B, absent in A): 6 → 1.23%**
+- A-only artifacts (present in A, absent in B): 2 → 0.41%
+
+Artifact = run of ≥4 identical chars, or a trailing punctuation run (`!!!!`,
+`....`, `・・・・`, etc.) of length ≥4, in B's output but not A's for the same crop.
+
+Examples (`* = B-only repeat artifact`), real single-line crops:
+
+```
+ *[637653/021#L11]  A 'うっ'              B 'うっ!!!ー!!'
+ *[637653/086#L3]   A '..'                B '...。..'
+ *[653631/011#L11]  A 'でしょお〜〜っ?'    B 'でしょお〜〜??'
+ *[653631/036#L9]   A '帰ったわよぉー!!'   B '帰ったわよぉーー!!'
+ *[653631/061#L0]   A 'わー'              B 'わーっ...。..'
+ *[653631/061#L16]  A 'ーー'              B 'ハーー..'
+  [637653/001#L1]   A '母と堕ちていく'     B '心と堕ちていく'
+  [637653/006#L0]   A '…支障が牛じる…'     B '…支障が生じる…'   (B actually better here)
+  [637653/011#L3]   A 'クリ'              B 'グリ'
+```
+
+Even on **single-line** crops the same non-AR failure mode appears (trailing
+`!!!ー!!`, `...。..`, doubled `ーー`), confirming it is intrinsic to B's non-AR
+decode, not a consequence of feeding it multi-line bubbles. The repetition guard
+in `_repetition_guard` only logs; `ocr_postprocess` does not trim these
+interleaved/short punctuation runs.
+
+### Verdict: DO NOT SHIP B
+
+The "bubble-level FAIL was just OOD" hypothesis is **rejected**. On the exact
+production regime (single-line, real `ParseqOCRService`, real CTD crops):
+
+1. **Test 1 FAIL** — B regresses mean CER by +0.67 to +1.04 pp (bar +0.5), stable
+   across two seeds / length cuts. The regression shrinks vs the +1.65pp
+   bubble-level number (so multi-line OOD *did* inflate it) but does **not**
+   disappear.
+2. **Test 2 NOT OK** — B introduces B-only repeat artifacts at **1.23%** on real
+   single-line crops and a higher overall artifact rate (4.11% vs A's 3.29%).
+
+**Recommendation unchanged:** do not swap B in as-is. To capture the 10× speed
+win, first either (a) add a repeat-collapse / EOS-confidence step to the non-AR
+decode, (b) re-export with `decode_ar=True` + dynamic batch, or (c) tighten
+`ocr_postprocess` to trim short trailing/interleaved punctuation runs — then
+re-run this single-line A/B and require Test 1 ≤ +0.5pp **and** B-only artifact
+rate ≈ A.
+
+Re-run:
+```bash
+backend/.venv/bin/python backend/scripts/eval_vision/eval_perline_singleline.py \
+    --n 2000 --max-chars 20 --pages 18 --batch-size 24 --seed 0
+```
