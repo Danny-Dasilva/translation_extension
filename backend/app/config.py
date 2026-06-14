@@ -67,6 +67,14 @@ class Settings(BaseSettings):
     ctd_min_text_area: int = 100
     ctd_nms_free: bool = False  # Enable NMS to filter duplicate overlapping boxes
 
+    # Orphan-line recovery: text_lines whose center sits inside NO detected
+    # block are otherwise silently dropped before OCR (SMS balloons, vertical
+    # narration columns, dense paragraphs the block detector misses). When on,
+    # those orphans are paragraph-clustered, OCR'd, and appended as synthetic
+    # blocks so they flow through the SAME filter -> translate -> render path.
+    # ALWAYS ON: missing-bubble loss renders raw Japanese to the reader.
+    orphan_line_recovery: bool = True
+
     # Translation backend: "vllm-openai" (vLLM serving an OpenAI-compatible
     # chat endpoint — the v10-it Gemma 4 E4B merged model + Google's MTP
     # drafter) or "transformers" (HF transformers, used for Hy-MT1.5-2bit).
@@ -147,12 +155,14 @@ class Settings(BaseSettings):
 
     # TRUE single-call numbered-block translation: pack all of a page's bubbles
     # into ONE vLLM generate call (1.,2.,3.… prompt, numbered output parsed back).
-    # QUALITY-GATED + OFF by default — production behaviour is unchanged. Enable
-    # only after a chrF++ holdout A/B confirms no regression vs the per-bubble path.
-    batch_translate: bool = False
+    # ON: page-level translation gives the model intra-page context (speaker /
+    # possessive consistency) + a system prompt that locks output to the target
+    # language. Falls back to per-bubble parallel on any count/parse mismatch.
+    batch_translate: bool = True
 
-    # Per-bubble translation generation budget. Manga lines are short; 64 tokens
-    # comfortably covers a translated bubble (~measured outputs well under this).
+    # Per-bubble translation generation budget. Manga lines are short, but
+    # longer context-aware lines (page-level numbered-block translation, multi-
+    # clause narration) need headroom so they aren't truncated mid-sentence.
     # Lower = fewer decode steps on overlong generations. Raise if truncation seen.
     translate_max_tokens: int = 64
 

@@ -47,6 +47,12 @@ from app.utils.ocr_postprocess import apply_all as ocr_postproc  # noqa: E402
 from app.utils.image_processing import snap_font_color, detect_font_colors  # noqa: E402
 from app.utils.japanese_text_filter import is_japanese_text  # noqa: E402
 from app.utils.ctd_utils import build_text_regions  # noqa: E402
+from app.utils.orphan_lines import (  # noqa: E402
+    find_orphan_lines as _find_orphan_lines,
+    cluster_orphan_lines as _cluster_orphan_lines,
+    order_cluster_lines as _order_cluster_lines,
+    ocr_orphan_clusters as _ocr_orphan_clusters_util,
+)
 
 try:
     from app.services.lama_inpaint_service import LamaInpaintService
@@ -277,24 +283,14 @@ class PipelineRunner:
     orphan_mode: str = "off"  # off | paragraph | sentence
 
     async def _ocr_orphan_clusters(self, image_np, clusters) -> list[str]:
-        """OCR each cluster's lines in reading order; return joined text per cluster."""
-        h, w = image_np.shape[:2]
-        flat, owner = [], []
-        for ci, cluster in enumerate(clusters):
-            for ln in _order_cluster_lines(cluster):
-                x0 = max(0, int(ln["minX"]) - 2); y0 = max(0, int(ln["minY"]) - 2)
-                x1 = min(w, int(ln["maxX"]) + 2); y1 = min(h, int(ln["maxY"]) + 2)
-                if x1 > x0 and y1 > y0:
-                    flat.append(image_np[y0:y1, x0:x1])
-                    owner.append(ci)
-        if not flat:
-            return ["" for _ in clusters]
-        texts = await self.ocr.recognize_text_batch(flat, batch_size=settings.parseq_batch_size)
-        joined = [[] for _ in clusters]
-        for ci, t in zip(owner, texts):
-            if t:
-                joined[ci].append(t)
-        return ["".join(parts) for parts in joined]
+        """OCR each cluster's lines in reading order; return joined text per cluster.
+
+        Thin wrapper over the shared app.utils.orphan_lines.ocr_orphan_clusters
+        so the visualizer and the production path stay in lockstep.
+        """
+        return await _ocr_orphan_clusters_util(
+            self.ocr, image_np, clusters, batch_size=settings.parseq_batch_size
+        )
 
     def __init__(self):
         print("  loading detector…")
@@ -596,59 +592,6 @@ def _build_inpaint_mask_vis(image_shape, blocks, text_lines, detector_mask) -> n
     """Same mask the router builds — pass the post-filter (kept) blocks."""
     from app.utils.ctd_utils import build_inpaint_mask
     return build_inpaint_mask(image_shape, blocks, text_lines, detector_mask)
-
-
-def _find_orphan_lines(blocks: list[dict], text_lines: list[dict]) -> list[dict]:
-    """Lines whose center no block contains (mirrors OCR assignment rule)."""
-    orphans = []
-    for ln in text_lines:
-        cx = (ln["minX"] + ln["maxX"]) / 2
-        cy = (ln["minY"] + ln["maxY"]) / 2
-        if not any(b["minX"] <= cx <= b["maxX"] and b["minY"] <= cy <= b["maxY"]
-                   for b in blocks):
-            orphans.append(ln)
-    return orphans
-
-
-def _cluster_orphan_lines(orphans: list[dict]) -> list[list[dict]]:
-    """Union-find clustering: lines whose bboxes (expanded ~1.2 line-heights)
-    intersect belong to one paragraph."""
-    n = len(orphans)
-    parent = list(range(n))
-
-    def find(i):
-        while parent[i] != i:
-            parent[i] = parent[parent[i]]
-            i = parent[i]
-        return i
-
-    def expand(ln):
-        h = ln["maxY"] - ln["minY"]
-        w = ln["maxX"] - ln["minX"]
-        pad = 1.2 * min(h, w) if min(h, w) > 0 else 12
-        return (ln["minX"] - pad, ln["minY"] - pad, ln["maxX"] + pad, ln["maxY"] + pad)
-
-    boxes = [expand(ln) for ln in orphans]
-    for i in range(n):
-        for j in range(i + 1, n):
-            a, b = boxes[i], boxes[j]
-            if a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]:
-                parent[find(i)] = find(j)
-
-    groups: dict[int, list[dict]] = {}
-    for i in range(n):
-        groups.setdefault(find(i), []).append(orphans[i])
-    return list(groups.values())
-
-
-def _order_cluster_lines(cluster: list[dict]) -> list[dict]:
-    """Reading order. Horizontal lines (w > h): top-to-bottom. Vertical
-    columns: right-to-left, then top-to-bottom — matches manga convention."""
-    horiz = sum(1 for ln in cluster
-                if (ln["maxX"] - ln["minX"]) > (ln["maxY"] - ln["minY"]))
-    if horiz >= len(cluster) / 2:
-        return sorted(cluster, key=lambda ln: (ln["minY"], ln["minX"]))
-    return sorted(cluster, key=lambda ln: (-ln["minX"], ln["minY"]))
 
 
 def _save_crop_montage(image_np: np.ndarray, blocks, texts, out: Path, max_items: int = 8):

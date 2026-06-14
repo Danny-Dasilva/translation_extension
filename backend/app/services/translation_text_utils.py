@@ -154,4 +154,38 @@ def clean_translation_output(translation: str) -> str:
     for token in ["</s>", "<|eot_id|>"]:
         translation = translation.replace(token, "")
 
-    return translation.strip()
+    translation = translation.strip()
+
+    # Non-Latin garble guard: the small model occasionally falls out of the
+    # target language (a Russian/Cyrillic leak was observed) or emits CJK /
+    # replacement-box characters. Rendering that to the page is worse than a
+    # silent gap, so replace clearly-off-target output with an ellipsis.
+    if translation and _is_garbled(translation):
+        return "..."
+
+    return translation
+
+
+# Character-class guards for _is_garbled.
+_CYRILLIC_RE = re.compile(r"[Ѐ-ӿ]")
+# CJK ideographs, hiragana, katakana, full-width forms, Hangul, plus the
+# Unicode replacement char and the literal "tofu" box.
+_CJK_OR_BOX_RE = re.compile(
+    r"[぀-ヿ㐀-䶿一-鿿가-힯＀-￯�□]"
+)
+
+
+def _is_garbled(text: str) -> bool:
+    """True if a translated line fell out of the (Latin) target language.
+
+    Heuristics:
+    - any CJK / Hangul / full-width / replacement-box / tofu char present, OR
+    - more than 30% of the letters are Cyrillic (a non-English leak).
+    """
+    if _CJK_OR_BOX_RE.search(text):
+        return True
+    letters = [c for c in text if c.isalpha()]
+    if not letters:
+        return False
+    cyr = sum(1 for c in letters if _CYRILLIC_RE.match(c))
+    return cyr / len(letters) > 0.30

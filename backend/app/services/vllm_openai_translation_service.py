@@ -19,7 +19,12 @@ from typing import List
 import httpx
 
 from app.config import settings
-from app.services.translation_text_utils import clean_translation_output
+from app.services.translation_text_utils import (
+    clean_translation_output,
+    BATCHED_SYSTEM_PROMPT,
+    format_sources,
+    parse_tagged_blocks,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -127,40 +132,60 @@ class VLLMOpenAITranslationService:
     async def translate_numbered_block(
         self, texts: List[str], target_language: str = "English"
     ) -> List[str]:
-        """TRUE single-call numbered-block translation (QUALITY-GATED).
+        """TRUE single-call page-level translation with a system prompt.
 
-        Packs all of a page's bubbles into ONE generate call as a numbered list
-        and parses the numbered output back. This is the coherence/throughput
-        path gated behind settings.batch_translate (default OFF) — the caller
-        must validate chrF++ on a holdout before enabling. Returns [] on any
-        parse/count mismatch so the caller can fall back to per-bubble calls.
+        Packs all of a page's bubbles into ONE generate call as `[N]text`
+        tagged blocks, sending the strong BATCHED_SYSTEM_PROMPT as a `system`
+        message (intra-page context + target-language lock + romanization/
+        full-width punctuation bans) and the tagged source as the `user`
+        message.
+
+        Parsing accepts EITHER the `[N]`-tagged output the prompt requests OR a
+        plain one-translation-per-line response (the v10it fine-tune emits the
+        latter): tags are preferred, else lines are split and matched 1:1.
+        Returns [] on any count mismatch so the caller can fall back to the
+        per-bubble path (preserves the existing safety contract).
         """
         if not texts:
             return []
-        numbered_src = "\n".join(f"{i + 1}. {t}" for i, t in enumerate(texts))
-        msg = [{
-            "role": "user",
-            "content": (
-                f"Translate each numbered segment into {target_language}. "
-                f"Reply with the SAME numbering, one translation per line, and "
-                f"no extra commentary.\n\n{numbered_src}"
-            ),
-        }]
-        # Numbered block needs more room than a single bubble: budget per item.
+        system_prompt = BATCHED_SYSTEM_PROMPT.format(target=target_language)
+        user_src = format_sources(texts)
+        msg = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_src},
+        ]
+        # Page-level block needs more room than a single bubble: budget per item.
         budget = max(64, settings.translate_max_tokens * len(texts))
         try:
             raw = await self._chat(msg, max_tokens=budget, temperature=0.0)
         except Exception as e:
             logger.warning(f"vLLM translate_numbered_block failed: {e!r}")
             return []
-        parsed = self._parse_numbered_output(raw, len(texts))
+        parsed = self._parse_page_output(raw, len(texts))
         if parsed is None:
             logger.warning(
-                "Numbered-block output did not parse to %d lines; caller should fall back",
+                "Page-level output did not parse to %d lines; caller should fall back",
                 len(texts),
             )
             return []
         return [clean_translation_output(p) for p in parsed]
+
+    @staticmethod
+    def _parse_page_output(raw: str, n: int) -> List[str] | None:
+        """Parse a page-level translation response into n ordered lines.
+
+        Prefers `[N]`-tagged output; falls back to plain one-line-per-block
+        output (what the v10it fine-tune emits). Returns None when neither
+        yields exactly n non-empty lines so the caller falls back per-bubble.
+        """
+        tagged = parse_tagged_blocks(raw, n)
+        if tagged is not None and all(p.strip() for p in tagged):
+            return tagged
+        # Plain-line fallback: ignore blank lines, require an exact count match.
+        lines = [ln.strip() for ln in raw.splitlines() if ln.strip()]
+        if len(lines) == n:
+            return lines
+        return None
 
     @staticmethod
     def _parse_numbered_output(raw: str, n: int) -> List[str] | None:

@@ -24,6 +24,12 @@ from app.utils.image_processing import (
 )
 from app.utils.ctd_utils import build_text_regions, build_inpaint_mask, match_blocks_to_bubbles
 from app.utils.japanese_text_filter import is_japanese_text, filter_japanese_texts
+from app.utils.orphan_lines import (
+    find_orphan_lines,
+    cluster_orphan_lines,
+    ocr_orphan_clusters,
+    cluster_bbox,
+)
 from app.utils.zindex_utils import assign_smart_zindex
 from app.utils.progress_bus import bus as progress_bus
 from app.config import settings
@@ -336,6 +342,46 @@ async def process_single_image(
                     image_np, blocks, text_lines,
                     batch_size=settings.parseq_batch_size,
                 )
+
+            # Orphan-line recovery: text_lines whose center no detected block
+            # claims would otherwise be dropped here (rendering raw Japanese).
+            # Paragraph-cluster + OCR them and append as synthetic blocks so they
+            # flow through the SAME japanese-filter -> translate -> inpaint mask
+            # -> render path as detector blocks. Gated on the prefetched (PARSeq
+            # + text_lines) path so the parallel lists stay aligned.
+            if (
+                settings.orphan_line_recovery
+                and prefetched_texts is not None
+                and text_lines
+            ):
+                orphans = find_orphan_lines(blocks, text_lines)
+                if orphans:
+                    clusters = cluster_orphan_lines(orphans)
+                    synth_texts = await ocr_orphan_clusters(
+                        ocr_service, image_np, clusters,
+                        batch_size=settings.parseq_batch_size,
+                    )
+                    added = 0
+                    for cluster, text in zip(clusters, synth_texts):
+                        if not text.strip():
+                            continue
+                        ob = cluster_bbox(cluster)
+                        blocks.append(ob)
+                        crops.append(
+                            detector_service.crop_regions(image_np, [ob])[0]
+                        )
+                        all_text_regions.append(
+                            build_text_regions([ob], cluster)[0]
+                        )
+                        prefetched_texts.append(text)
+                        added += 1
+                    if added:
+                        original_count = len(crops)
+                        logger.info(
+                            f"Image {idx + 1}: orphan-line recovery added "
+                            f"{added} synthetic block(s) from {len(orphans)} "
+                            f"orphan line(s)"
+                        )
 
             # OCR (GPU) runs INSIDE the semaphore; the inpaint task is launched
             # here too (it only needs detection geometry, not translations) so it
