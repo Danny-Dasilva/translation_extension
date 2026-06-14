@@ -30,6 +30,8 @@ interface FitResult {
   lineHeight: number;
   totalHeight: number;
   maxLineWidth: number;
+  /** True if wrapping had to break inside a word (char-level) at this size. */
+  brokeWord: boolean;
 }
 
 interface RegionBBox {
@@ -39,10 +41,13 @@ interface RegionBBox {
   height: number;
   /**
    * Which source produced this region. 'bubble' = matched speech-bubble
-   * interior; 'regions'/'bbox' = tight text-pixel sources; 'expanded' = the
-   * null-bubble fallback grew a tight source outward to give long EN text room.
+   * interior; 'bubble-widened' = a tall-narrow bubble interior grown
+   * horizontally so horizontal EN words fit on fewer, wider lines (see
+   * widenHighAspectRegion); 'regions'/'bbox' = tight text-pixel sources;
+   * 'expanded' = the null-bubble fallback grew a tight source outward to give
+   * long EN text room.
    */
-  source?: 'bubble' | 'regions' | 'bbox' | 'expanded';
+  source?: 'bubble' | 'bubble-widened' | 'regions' | 'bbox' | 'expanded';
 }
 
 // Minimum and maximum font sizes probed by the binary search.
@@ -375,6 +380,30 @@ export class OverlayRenderer {
           canvas.height
         );
       }
+    } else {
+      // With an inpainted plate, the plate already covers each bubble interior.
+      // But high-aspect bubbles are WIDENED past that interior (onto un-erased
+      // art) to fit horizontal EN — so plate just the *extra* widened area to
+      // keep that text off the original art. Normal bubbles are untouched.
+      for (const textBox of sortedTextBoxes) {
+        const region = this.computeTextRegionBBox(
+          textBox,
+          sortedTextBoxes,
+          canvas.width,
+          canvas.height
+        );
+        if (region.source === 'bubble-widened') {
+          this.drawRoundedRect(
+            ctx,
+            region.x,
+            region.y,
+            region.width,
+            region.height,
+            'white',
+            8
+          );
+        }
+      }
     }
 
     // Pass 2: Draw ALL text on top of all backgrounds
@@ -453,8 +482,10 @@ export class OverlayRenderer {
       return;
     }
 
-    // Null-bubble / expanded / tight: plate MUST cover the layout region so
-    // expanded text never lands on un-erased pixels.
+    // bubble-widened / null-bubble / expanded / tight: the layout region now
+    // extends beyond the tight text pixels (and, for bubble-widened, beyond the
+    // original bubble interior onto art), so the plate MUST cover the full
+    // layout region — otherwise widened text would land on un-erased pixels.
     this.drawRoundedRect(
       ctx,
       region.x,
@@ -492,13 +523,17 @@ export class OverlayRenderer {
   ): RegionBBox {
     const b = textBox.bubbleRect;
     if (b && b.maxX > b.minX && b.maxY > b.minY) {
-      return {
+      const bubble: RegionBBox = {
         x: b.minX,
         y: b.minY,
         width: Math.max(1, b.maxX - b.minX),
         height: Math.max(1, b.maxY - b.minY),
         source: 'bubble',
       };
+      // Tall-narrow JP bubbles (read vertically) are far too thin for
+      // horizontal EN, forcing mid-word breaks. Widen them horizontally,
+      // centered on the bubble, bounded by image edges + neighbors.
+      return this.widenHighAspectRegion(bubble, textBox, allBoxes, canvasW, canvasH);
     }
 
     // Build the tight union (textRegions if present, else outer bbox).
@@ -613,18 +648,109 @@ export class OverlayRenderer {
   }
 
   /**
+   * Widen a tall-narrow speech-bubble interior horizontally so horizontal
+   * English words fit on fewer, wider lines.
+   *
+   * WHY: JP is set in vertical columns, so its bubbles are tall and thin
+   * (h/w up to ~3-5x in the perf evidence). Laying horizontal EN into that
+   * literal interior forces tiny per-line widths and mid-word breaks
+   * ("MOMMY" -> "MOM"/"MY"). Trading a little of the (over-abundant) height
+   * for width lets whole words sit on one line.
+   *
+   * Heuristic (documented):
+   *   - Only engage for ASPECT_TRIGGER = height/width > 1.6 (normal/wide
+   *     bubbles are left untouched -> backward compatible).
+   *   - Target a final aspect of TARGET_ASPECT = 1.2 (slightly taller than
+   *     wide reads naturally for short stacked phrases) by growing width,
+   *     capped at MAX_WIDTH_GROWTH = 2.6x the bubble width so we never balloon.
+   *   - Keep the box centered on the ORIGINAL bubble center.
+   *   - Clamp to image bounds and to neighbor box edges (minus a gutter) so we
+   *     don't overrun an adjacent bubble/panel. Cheap O(n); n is tiny.
+   *   - Height is left untouched (the bubble already has ample height); only
+   *     width grows. If neighbors clamp width hard, we keep whatever room we
+   *     could win — never narrower than the original bubble.
+   */
+  private widenHighAspectRegion(
+    bubble: RegionBBox,
+    self: TextBox,
+    allBoxes: TextBox[] | undefined,
+    canvasW: number | undefined,
+    canvasH: number | undefined
+  ): RegionBBox {
+    const ASPECT_TRIGGER = 1.6;
+    const TARGET_ASPECT = 1.2; // desired height/width after widening
+    const MAX_WIDTH_GROWTH = 2.6;
+    const NEIGHBOR_GUTTER_PX = 6;
+
+    const aspect = bubble.height / bubble.width;
+    if (aspect <= ASPECT_TRIGGER) return bubble; // normal/wide -> unchanged.
+
+    // Desired width to reach TARGET_ASPECT, capped by MAX_WIDTH_GROWTH.
+    const desiredWidth = Math.min(
+      bubble.height / TARGET_ASPECT,
+      bubble.width * MAX_WIDTH_GROWTH
+    );
+    if (desiredWidth <= bubble.width) return bubble;
+
+    const cx = bubble.x + bubble.width / 2;
+    let left = cx - desiredWidth / 2;
+    let right = cx + desiredWidth / 2;
+    const top = bubble.y;
+    const bottom = bubble.y + bubble.height;
+
+    // Clamp to image bounds.
+    const imgW = canvasW ?? Infinity;
+    left = Math.max(0, left);
+    right = Math.min(imgW, right);
+
+    // Bound horizontal growth by neighbors that vertically overlap us.
+    if (allBoxes && allBoxes.length > 1) {
+      for (const other of allBoxes) {
+        if (other === self) continue;
+        const ob = other.bubbleRect;
+        const oL = ob ? ob.minX : other.minX;
+        const oT = ob ? ob.minY : other.minY;
+        const oR = ob ? ob.maxX : other.maxX;
+        const oB = ob ? ob.maxY : other.maxY;
+        const vOverlap = oB > top && oT < bottom;
+        if (!vOverlap) continue;
+        if (oR <= cx) left = Math.max(left, oR + NEIGHBOR_GUTTER_PX);
+        if (oL >= cx) right = Math.min(right, oL - NEIGHBOR_GUTTER_PX);
+      }
+    }
+
+    // Never shrink below the original bubble width.
+    left = Math.min(left, bubble.x);
+    right = Math.max(right, bubble.x + bubble.width);
+
+    void canvasH;
+    return {
+      x: left,
+      y: top,
+      width: Math.max(1, right - left),
+      height: Math.max(1, bottom - top),
+      source: 'bubble-widened',
+    };
+  }
+
+  /**
    * Draw ONLY the text for a text box (Pass 2 of two-pass rendering)
    */
   private drawTextBoxText(
     ctx: CanvasRenderingContext2D,
     textBox: TextBox,
-    fontFamily: string
+    fontFamily: string,
+    allBoxes?: TextBox[],
+    canvasW?: number,
+    canvasH?: number
   ): void {
     const text = textBox.translatedText;
     if (!text) return;
 
     // Center inside the text-region bbox (union of textRegions if available).
-    const region = this.computeTextRegionBBox(textBox);
+    // Pass siblings + image bounds so the region (incl. high-aspect bubble
+    // widening) is identical to the one used to paint the background.
+    const region = this.computeTextRegionBBox(textBox, allBoxes, canvasW, canvasH);
 
     // Available area after padding.
     const availWidth = Math.max(1, region.width - TEXT_PADDING_PX * 2);
@@ -654,9 +780,20 @@ export class OverlayRenderer {
 
   /**
    * Binary search for the largest font size within [FONT_SIZE_MIN, FONT_SIZE_MAX]
-   * whose wrapped lines fit inside (availWidth x availHeight).
+   * whose wrapped lines fit inside (availWidth x availHeight) WITHOUT breaking
+   * inside a word.
    *
-   * Mirrors koharu run_auto: low=min, high=max, widen while it fits.
+   * Mirrors koharu run_auto (low=min, high=max, widen while it fits) but adds a
+   * hard "no mid-word break" constraint, which is the dominant readability bug
+   * in tall-narrow bubbles ("MOMMY" -> "MOM"/"MY"). Because a word only breaks
+   * when it is wider than availWidth, and word width shrinks monotonically with
+   * font size, "the longest word fits the width" is itself monotonic in size —
+   * so we can binary-search it. Priority of the accepted layout:
+   *
+   *   1. Largest size that fits H + W AND does not break a word  (preferred)
+   *   2. else: largest size that fits H + W (may break a word — only happens
+   *      when a single word cannot fit the width even near FONT_SIZE_MIN)
+   *   3. else: FONT_SIZE_MIN, accepting overflow (koharu's tiny-box behavior)
    */
   private findBestFit(
     ctx: CanvasRenderingContext2D,
@@ -667,27 +804,40 @@ export class OverlayRenderer {
   ): FitResult {
     let low = FONT_SIZE_MIN;
     let high = FONT_SIZE_MAX;
+    // best = largest size fitting H+W with NO mid-word break (priority 1).
     let best: FitResult | null = null;
+    // fallback = largest size fitting H+W even if it broke a word (priority 2).
+    let fallback: FitResult | null = null;
 
     while (low <= high) {
       const mid = (low + high) >> 1;
       const attempt = this.layoutAtSize(ctx, text, availWidth, mid, fontFamily);
       const fitsH = attempt.totalHeight <= availHeight;
       const fitsW = attempt.maxLineWidth <= availWidth;
-      if (fitsH && fitsW) {
+
+      if (fitsH && fitsW && !attempt.brokeWord) {
+        // Clean fit — try to grow.
         best = attempt;
+        if (!fallback || attempt.fontSize > fallback.fontSize) fallback = attempt;
         low = mid + 1;
+      } else if (fitsH && fitsW && attempt.brokeWord) {
+        // Fits the box but only by char-breaking the longest word. The
+        // longest word is too wide at this size, so a CLEAN fit can only exist
+        // at a SMALLER size — search down. Remember it as a fallback.
+        if (!fallback || attempt.fontSize > fallback.fontSize) fallback = attempt;
+        high = mid - 1;
       } else {
+        // Overflows the box — shrink.
         high = mid - 1;
       }
     }
 
-    // If nothing fit at the minimum size, fall back to FONT_SIZE_MIN and
-    // accept overflow (koharu does this for tiny boxes).
-    if (!best) {
-      best = this.layoutAtSize(ctx, text, availWidth, FONT_SIZE_MIN, fontFamily);
-    }
-    return best;
+    // Priority 1: largest clean (no mid-word break) fit.
+    if (best) return best;
+    // Priority 2: largest box-fitting layout even if it broke a word.
+    if (fallback) return fallback;
+    // Priority 3: nothing fit — FONT_SIZE_MIN, accept overflow.
+    return this.layoutAtSize(ctx, text, availWidth, FONT_SIZE_MIN, fontFamily);
   }
 
   /**
@@ -703,7 +853,7 @@ export class OverlayRenderer {
     fontFamily: string
   ): FitResult {
     ctx.font = this.buildFontString(fontSize, fontFamily, 'bold');
-    const lines = this.wrapTextAtFont(ctx, text, maxWidth);
+    const { lines, brokeWord } = this.wrapTextAtFont(ctx, text, maxWidth);
 
     let totalHeight = 0;
     let maxLineWidth = 0;
@@ -736,24 +886,34 @@ export class OverlayRenderer {
       lineHeight,
       totalHeight: totalHeight || lineHeight,
       maxLineWidth,
+      brokeWord,
     };
   }
 
   /**
    * Word-wrap helper that assumes the caller already set ctx.font.
    * Also splits absurdly long single words by char if needed.
+   *
+   * Returns `{ lines, brokeWord }` where `brokeWord` is true iff a single word
+   * had to be split mid-word (character-level) because it could not fit
+   * `maxWidth` on its own. The font-fit search uses `brokeWord` to AVOID such
+   * sizes whenever a larger-but-non-breaking size could not be found — mid-word
+   * breaks ("MOMMY" -> "MOM"/"MY") are the dominant readability bug, so we only
+   * accept them as a true last resort (see findBestFit).
    */
   private wrapTextAtFont(
     ctx: CanvasRenderingContext2D,
     text: string,
     maxWidth: number
-  ): string[] {
+  ): { lines: string[]; brokeWord: boolean } {
     const words = text.split(/\s+/).filter(Boolean);
     const lines: string[] = [];
     let currentLine = '';
+    let brokeWord = false;
 
     const pushLongWord = (word: string): void => {
-      // Word alone doesn't fit; break by character.
+      // Word alone doesn't fit; break by character (last-resort, flagged).
+      brokeWord = true;
       let buf = '';
       for (const ch of word) {
         const test = buf + ch;
@@ -791,7 +951,10 @@ export class OverlayRenderer {
     }
 
     if (currentLine) lines.push(currentLine);
-    return lines.length > 0 ? lines : [text];
+    return {
+      lines: lines.length > 0 ? lines : [text],
+      brokeWord,
+    };
   }
 
   /**
