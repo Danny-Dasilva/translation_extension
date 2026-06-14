@@ -34,6 +34,14 @@ class Settings(BaseSettings):
     parseq_model_path: str = "models/parseq_manga_best_ep60_AR_single.onnx"
     # AR_single ONNX has hardcoded batch=1 in its Reshape node, so we force
     # per-sample inference. Batched non-AR exports use larger sizes.
+    #
+    # NOTE: a batched non-AR export (parseq_manga_ep60_nonAR_dynbatch.fp16.onnx, ~10x
+    # faster OCR) was evaluated 2026-06-14 against this model on a labeled per-line GT
+    # set. It REGRESSED accuracy (+1.04pp mean CER over the +0.5pp bar, stable across
+    # seeds) and emitted non-AR repeat artifacts on single-line crops, so we stay on
+    # AR_single. To revive the speed win, fix the repeat artifacts (repeat-collapse
+    # postprocess or decode_ar=True re-export) and re-run the per-line A/B. See
+    # thoughts/shared/research/translation-perf-display/2026-06-13_parseq-dynamic-batch-proposal.md
     parseq_batch_size: int = 1
 
     # Detector Selection: "animetext" (fast) or "ctd" (full-featured).
@@ -105,6 +113,18 @@ class Settings(BaseSettings):
     # background and skips the neural forward for those components. Purely
     # additive + gated; False instantly restores the prior 3-tier behaviour.
     enable_bubble_solid_fill: bool = True
+    # Final inpaint tier: when True, the textured/screentone residual that used to
+    # go through the LaMa neural forward is instead handled by cv2.inpaint
+    # (Navier-Stokes, r=3) — a purely classical (no-AI) reconstruction. The
+    # bubble solid-fill / ring fast-path / classical-NS tiers are unchanged; this
+    # only swaps tier-3. Audit (2026-06-13_noai-inpaint-audit.md) over 11
+    # benchmark pages found 85% of inpainted pixels are hidden by the re-rendered
+    # translation and the visible residual is imperceptible on dialogue; only
+    # large SFX-over-detailed-art (which is largely left un-erased in production
+    # anyway) is mildly softer than LaMa. Removing the neural tier drops the
+    # 208MB ONNX model load + GPU working set and the ~28ms/forward on the ~40%
+    # of components that previously hit the model. Set False to restore LaMa.
+    use_neural_inpaint: bool = False
     # Overlap LaMa inpaint with OCR+translate. Inpainting only needs the detection
     # mask (not translated text), so it can run concurrently with the OCR/translate
     # stage instead of serially after it. Runs in a worker thread so the event loop

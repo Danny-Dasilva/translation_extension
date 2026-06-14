@@ -137,11 +137,42 @@ class LamaInpaintService:
         # patches while per-component crops already bound model cost (512²).
         default_max_side: int = 2048,
         enable_classical_inpaint: bool = True,
+        use_neural: bool | None = None,
     ):
         # 3-way router tier 2: route smooth/gradient residual regions to
         # classical cv2.inpaint instead of the LaMa model. Set False to force
         # the old flat-fill-or-LaMa behavior.
         self.enable_classical_inpaint = enable_classical_inpaint
+
+        # Tier-3 backend. When neural is disabled, the textured/screentone
+        # residual is reconstructed with cv2.inpaint (Navier-Stokes) instead of
+        # the LaMa ONNX model — and the 208MB model is NOT loaded at all (no GPU
+        # working set, no cold-start). See settings.use_neural_inpaint and the
+        # 2026-06-13 no-AI inpaint audit for the validation behind this default.
+        if use_neural is None:
+            try:
+                from app.config import settings as _settings
+                use_neural = bool(getattr(_settings, "use_neural_inpaint", False))
+            except Exception:  # noqa: BLE001 — config import is best-effort
+                use_neural = False
+        self.use_neural = use_neural
+
+        self.crop_margin = crop_margin
+        self.default_max_side = default_max_side
+        self.last_stats: dict = {}
+
+        if not self.use_neural:
+            # No neural model: tier-3 is classical NS. Nothing to load.
+            self.session = None
+            self.device = "cpu"
+            self._image_input = None
+            self._mask_input = None
+            logger.info(
+                "LaMa inpaint service in NON-NEURAL mode "
+                "(tier-3 = cv2.inpaint NS; ONNX model not loaded)"
+            )
+            return
+
         model_file = Path(model_path)
         if not model_file.is_absolute():
             model_file = Path(__file__).resolve().parents[2] / model_file
@@ -150,9 +181,6 @@ class LamaInpaintService:
                 f"LaMa ONNX model not found: {model_file}. "
                 "Run `uv run python scripts/download_lama_onnx.py`."
             )
-
-        self.crop_margin = crop_margin
-        self.default_max_side = default_max_side
 
         # Same load chain as parseq_ocr_service (see PARSeq comments for
         # rationale). ORT_ENABLE_ALL is safe: the LaMa graph is fully static.
@@ -216,9 +244,6 @@ class LamaInpaintService:
         # robust to alternate manga-tuned ONNX ports that may relabel.
         self._image_input = inputs[0].name
         self._mask_input = inputs[1].name
-
-        # Stats for SUMMARY.md
-        self.last_stats: dict = {}
 
     # ------------------------------------------------------------------ #
     # Public API
@@ -411,9 +436,9 @@ class LamaInpaintService:
                     _clear_region_in_mask(working_mask, binary_mask, l, t, r, b)
                     continue
 
-            # Tier 3 — LaMa neural inpaint (textured/screentone residual only).
-            # Pad-to-multiple path is moot: our ONNX has fixed 512×512. Just
-            # resize the crop → 512, forward, resize output back.
+            # Tier 3 — textured/screentone residual. Backend depends on
+            # `use_neural`: classical cv2.inpaint NS (default) or the LaMa ONNX
+            # model. `forward_calls`/`forward_ms` count this tier either way.
             t0 = time.perf_counter()
             crop_out = self._forward_one(crop_img, crop_msk)
             t_total_forward += time.perf_counter() - t0
@@ -448,12 +473,20 @@ class LamaInpaintService:
     # ------------------------------------------------------------------ #
 
     def _forward_one(self, crop_img: np.ndarray, crop_msk: np.ndarray) -> np.ndarray:
-        """Run LaMa on a single crop.
+        """Reconstruct the textured/screentone residual of a single crop.
 
-        Resizes crop and mask to the model's fixed `MODEL_HW`, runs forward,
-        then resizes the output back. Mask is resized with nearest-neighbour
-        to keep it binary; image uses bilinear.
+        Tier-3 backend. When `use_neural` is False (default), this is a purely
+        classical cv2.inpaint (Navier-Stokes, r=3) — no model, no GPU — which the
+        no-AI audit found visually indistinguishable from LaMa once the
+        translation is rendered on top (85% of inpainted px are hidden; the
+        residual is imperceptible on dialogue). When `use_neural` is True it runs
+        the LaMa ONNX model: resize crop+mask to the fixed `MODEL_HW`, forward,
+        resize back (mask nearest, image bilinear).
         """
+        if not self.use_neural:
+            m = (crop_msk > 0).astype(np.uint8)
+            return cv2.inpaint(crop_img, m, 3, cv2.INPAINT_NS)
+
         mh, mw = self.MODEL_HW
         orig_h, orig_w = crop_img.shape[:2]
 
