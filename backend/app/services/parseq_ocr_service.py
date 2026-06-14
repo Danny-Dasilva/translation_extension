@@ -149,8 +149,10 @@ class ParseqOCRService:
             try:
                 self.session = ort.InferenceSession(str(candidate), sess_options=so, providers=providers)
                 # Force a tiny inference to surface cuDNN/CUDA memory failures up front.
-                dummy = np.zeros((1, 3, self.img_h, self.img_w), dtype=np.float32)
-                self.session.run(None, {self.session.get_inputs()[0].name: dummy})
+                _in0 = self.session.get_inputs()[0]
+                _dt = np.float16 if "float16" in _in0.type else np.float32
+                dummy = np.zeros((1, 3, self.img_h, self.img_w), dtype=_dt)
+                self.session.run(None, {_in0.name: dummy})
                 model_file = candidate
                 break
             except Exception as e:
@@ -172,6 +174,12 @@ class ParseqOCRService:
         )
 
         self._input_name = self.session.get_inputs()[0].name
+        # Adapt the feed dtype to the model's declared input type: fp16 exports
+        # (model.half()) require float16 input, while the fp32/mixed-precision
+        # exports require float32. Detect once so _run_sync casts correctly.
+        self._input_np_dtype = (
+            np.float16 if "float16" in self.session.get_inputs()[0].type else np.float32
+        )
 
     @staticmethod
     def _maybe_rotate_vertical(crop: np.ndarray, thresh_aspect: float = 1.5) -> np.ndarray:
@@ -217,6 +225,8 @@ class ParseqOCRService:
         return texts
 
     def _run_sync(self, batch: np.ndarray) -> np.ndarray:
+        if batch.dtype != self._input_np_dtype:
+            batch = batch.astype(self._input_np_dtype, copy=False)
         return self.session.run(None, {self._input_name: batch})[0]
 
     async def recognize_text_batch(
