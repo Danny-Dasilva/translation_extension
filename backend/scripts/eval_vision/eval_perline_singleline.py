@@ -272,6 +272,7 @@ def fmt_block(name: str, s: dict) -> str:
 
 
 def main() -> int:
+    global MODEL_A, MODEL_B
     ap = argparse.ArgumentParser()
     ap.add_argument("--n", type=int, default=2000, help="single-line GT rows to sample (Test 1)")
     ap.add_argument("--max-chars", type=int, default=20,
@@ -285,7 +286,11 @@ def main() -> int:
     ap.add_argument("--max-disagreements", type=int, default=15)
     ap.add_argument("--out", type=str,
                     default=str(Path(__file__).resolve().parent / "eval_perline_singleline_results.json"))
+    ap.add_argument("--model-a", type=str, default=MODEL_A, help="reference model filename")
+    ap.add_argument("--model-b", type=str, default=MODEL_B, help="candidate model filename")
     args = ap.parse_args()
+    MODEL_A = args.model_a
+    MODEL_B = args.model_b
 
     if not GT_PARQUET.exists():
         print(f"ERROR: GT parquet not found: {GT_PARQUET}", file=sys.stderr)
