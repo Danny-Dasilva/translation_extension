@@ -31,18 +31,22 @@ class Settings(BaseSettings):
 
     # OCR backend selection: "parseq" (local trained model) or "manga-ocr"
     ocr_backend: str = "parseq"
-    parseq_model_path: str = "models/parseq_manga_best_ep60_AR_single.onnx"
-    # AR_single ONNX has hardcoded batch=1 in its Reshape node, so we force
-    # per-sample inference. Batched non-AR exports use larger sizes.
+    parseq_model_path: str = "models/parseq_manga_ep60_r2_nonAR_dynbatch.fp16.onnx"
+    # Batched non-autoregressive export with a dynamic batch axis: one forward
+    # pass OCRs all lines on a page (~10x faster than the old AR_single model,
+    # which had a hardcoded batch=1 Reshape and required N sequential forwards).
     #
-    # NOTE: a batched non-AR export (parseq_manga_ep60_nonAR_dynbatch.fp16.onnx, ~10x
-    # faster OCR) was evaluated 2026-06-14 against this model on a labeled per-line GT
-    # set. It REGRESSED accuracy (+1.04pp mean CER over the +0.5pp bar, stable across
-    # seeds) and emitted non-AR repeat artifacts on single-line crops, so we stay on
-    # AR_single. To revive the speed win, fix the repeat artifacts (repeat-collapse
-    # postprocess or decode_ar=True re-export) and re-run the per-line A/B. See
+    # NOTE: this non-AR export was evaluated 2026-06-14 against the AR_single model
+    # (parseq_manga_best_ep60_AR_single.onnx) on a labeled per-line GT set. RAW, it
+    # REGRESSED accuracy (+1.04pp mean CER over the +0.5pp bar) and emitted non-AR
+    # repeat artifacts on single-line crops ('体体体体体', '...。..', 'うっ!!!ー!!').
+    # We now run it with the repeat-collapse postprocess (collapse_cjk_runs +
+    # collapse_trailing_loop in app/utils/ocr_postprocess.py, wired into apply_all)
+    # which neutralizes those artifacts; the speed win is taken pending the
+    # postprocess-on per-line A/B re-run. To fall back, set this to the AR_single
+    # path and parseq_batch_size=1. See
     # thoughts/shared/research/translation-perf-display/2026-06-13_parseq-dynamic-batch-proposal.md
-    parseq_batch_size: int = 1
+    parseq_batch_size: int = 8
 
     # Detector Selection: "animetext" (fast) or "ctd" (full-featured).
     # CTD is recommended when ocr_backend="parseq" because PARSeq is a

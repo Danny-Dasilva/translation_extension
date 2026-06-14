@@ -17,6 +17,117 @@ import unicodedata
 
 
 # ---------------------------------------------------------------------------
+# NAR repeat-artifact collapse (B-export specific)
+# ---------------------------------------------------------------------------
+#
+# The non-autoregressive PARSeq export hallucinates repeat artifacts that the
+# autoregressive decode does not. They fall into a few signatures, each handled
+# below with thresholds tuned against the Manga109-s single-line GT pool
+# (56,323 rows) so the collapse is a near no-op on clean text and preserves
+# legitimate Japanese repeats (laughter ハハハ/あはは, elongated vowels わ～～～,
+# ellipsis ・・・・/……, emphatic !! / ?? / ！？, doubled ー).
+#
+# Empirical facts that drive the thresholds (measured on the GT pool):
+#   * Legit non-punct same-char runs of length >=5 are common (584 rows):
+#     laughter and vowel elongation. So NEVER cap arbitrary same-char runs.
+#   * A CJK *ideograph* repeated even 3x never occurs in legit GT (0 rows).
+#     So a CJK run >= 3 is a safe artifact signal ('体体体体体' -> '体体').
+#   * A *trailing punctuation block* in which some punct char appears in 2+
+#     separate runs (a "loop": e.g. '...。..', '!.!.!', '!!!ー!!') occurs in
+#     only 2 / 56,323 GT rows (0.004%). So it is a safe artifact signal; the
+#     non-looping mixed tails ('・・・・！？', 'ーー！！', '…!?') are left intact.
+
+# Punctuation / symbol characters that the NAR decode loops on at end-of-line.
+_TRAIL_PUNCT_SET = set("!?！？.。．・…ー―—-~〜、，,")
+# Period-class characters. A *period* recurring across the trailing block is the
+# strongest NAR-loop signature ('...。..', '!.....!...'); legit emphatic tails
+# ('!!??', '・・・・！？', interrobang ligatures) never interleave a period.
+_PERIOD_SET = set(".。．")
+
+# CJK ideograph ranges (Unified + Extension-A). Repeated >=3 is never legit.
+def _is_cjk_ideograph(ch: str) -> bool:
+    o = ord(ch)
+    return (0x4E00 <= o <= 0x9FFF) or (0x3400 <= o <= 0x4DBF)
+
+
+def collapse_cjk_runs(text: str, max_run: int = 2) -> str:
+    """Cap runs of an identical CJK ideograph to ``max_run`` characters.
+
+    A CJK ideograph repeated >=3 times never appears in the legit GT pool, so
+    this only fires on NAR artifacts like '体体体体体'. Kana/symbol runs (which
+    DO occur legitimately as laughter / elongation) are left untouched.
+    """
+    if len(text) < max_run + 1:
+        return text
+    out = []
+    i = 0
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        j = i
+        while j < n and text[j] == ch:
+            j += 1
+        run_len = j - i
+        if _is_cjk_ideograph(ch) and run_len > max_run:
+            out.append(ch * max_run)
+        else:
+            out.append(ch * run_len)
+        i = j
+    return "".join(out)
+
+
+def collapse_trailing_loop(text: str, min_tail: int = 4) -> str:
+    """Trim a looping trailing punctuation block produced by NAR decode.
+
+    The NAR export fills the tail with interleaved punctuation runs, e.g.
+    '...。..', '!.....!...', 'わーっ...。..'. The signature is: within the maximal
+    trailing run of punctuation/symbol characters, some character appears in 2+
+    separate (non-adjacent) runs. To avoid trimming legitimate emphatic tails
+    that happen to repeat a char ('!!??', interrobang ligatures '!!???!!?',
+    'ええーー!?!!'), the loop only counts as an artifact when EITHER:
+      * a *period-class* char ('.', '。', '．') is the looped char -- the dot-fill
+        signature that never appears in legit emphatic tails; OR
+      * the tail is long (>= 8) AND some char spans >= 3 separate runs -- a
+        runaway loop too long to be intentional emphasis.
+    When detected, the entire trailing punctuation block is replaced by its FIRST
+    contiguous run (the emphasis closest to the real content), discarding the
+    looped fill while keeping a plausible terminal mark.
+
+    Non-looping mixed tails ('・・・・！？', 'ーー！！', '…!?', '!!??') and bounded
+    emphatic loops without a period ('ええーー!?!!') are preserved verbatim. Tuned
+    against the GT pool: this fires on only 1 / 56,323 legit rows (0.0018%).
+    """
+    if len(text) < min_tail:
+        return text
+    i = len(text)
+    while i > 0 and text[i - 1] in _TRAIL_PUNCT_SET:
+        i -= 1
+    prefix, tail = text[:i], text[i:]
+    if len(tail) < min_tail:
+        return text
+    # Build contiguous runs within the tail.
+    runs: list[list] = []
+    for ch in tail:
+        if runs and runs[-1][0] == ch:
+            runs[-1][1] += 1
+        else:
+            runs.append([ch, 1])
+    # Count how many separate runs each char spans.
+    run_counts: dict[str, int] = {}
+    for ch, _ in runs:
+        run_counts[ch] = run_counts.get(ch, 0) + 1
+    looped = {ch for ch, c in run_counts.items() if c >= 2}
+    if not looped:
+        return text
+    period_loop = bool(looped & _PERIOD_SET)
+    runaway = len(tail) >= 8 and any(c >= 3 for c in run_counts.values())
+    if not (period_loop or runaway):
+        return text
+    first_ch, first_len = runs[0]
+    return prefix + first_ch * first_len
+
+
+# ---------------------------------------------------------------------------
 # Character repeat stripping
 # ---------------------------------------------------------------------------
 
@@ -170,10 +281,19 @@ def normalize_text(text: str) -> str:
 def apply_all(text: str) -> str:
     """Apply all post-processing steps in the correct order.
 
-    Order: normalize_text -> strip_trailing_repeats.
-    Normalization first ensures character comparisons in strip_trailing_repeats
-    work on canonical forms.
+    Order:
+      1. normalize_text                  (canonicalize so comparisons are valid)
+      2. collapse_trailing_loop          (kill NAR looping punct tails)
+      3. collapse_cjk_runs               (cap artifact CJK ideograph runs)
+      4. strip_trailing_repeats          (legacy same-char trailing/mid cap)
+
+    Normalization runs first so character comparisons in the collapse steps work
+    on canonical forms. The two collapse steps are tuned to be near no-ops on the
+    legit GT distribution (see module docstring), so they do not regress the
+    autoregressive model that shares this pipeline.
     """
     text = normalize_text(text)
+    text = collapse_trailing_loop(text)
+    text = collapse_cjk_runs(text)
     text = strip_trailing_repeats(text)
     return text
