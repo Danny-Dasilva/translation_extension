@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 import numpy as np
 
+from app.services import _ort_init  # noqa: F401  (preload CUDA before ORT sessions)
 from app.config import settings
 from app.routers import translate
 from app.routers import test_page
@@ -85,6 +86,54 @@ async def lifespan(app: FastAPI):
         logger.info(f"Translation warmup: {(time.time() - translate_start)*1000:.1f}ms")
 
         logger.info(f"All models warmed up in {(time.time() - warmup_start)*1000:.1f}ms")
+
+        # --- CUDA EP audit: loud ERROR if sessions silently fell back to CPU ---
+        try:
+            import onnxruntime as _ort
+            _available = _ort.get_available_providers()
+            logger.info("ORT available providers: %s", _available)
+            _cuda_available = "CUDAExecutionProvider" in _available
+            if not _cuda_available:
+                logger.error(
+                    "ORT_CUDA_ABSENT: CUDAExecutionProvider is NOT in onnxruntime's "
+                    "available providers %s — all ONNX sessions are running on CPU. "
+                    "Ensure onnxruntime-gpu is installed and CUDA libs are preloaded "
+                    "via app.services._ort_init.",
+                    _available,
+                )
+
+            # Check each service session if accessible
+            _services = {
+                "detector": getattr(translate, "detector_service", None),
+                "ocr": getattr(translate, "ocr_service", None),
+                "inpaint": getattr(translate, "inpaint_service", None),
+            }
+            for _svc_name, _svc in _services.items():
+                if _svc is None:
+                    continue
+                # Session may live under .session or ._session or .model
+                _sess = (
+                    getattr(_svc, "session", None)
+                    or getattr(_svc, "_session", None)
+                    or getattr(_svc, "model", None)
+                )
+                if _sess is None or not hasattr(_sess, "get_providers"):
+                    continue
+                _bound = _sess.get_providers()
+                if _bound and _bound[0] == "CPUExecutionProvider" and _cuda_available:
+                    logger.error(
+                        "ORT_CPU_FALLBACK: %s session is on CPUExecutionProvider "
+                        "(providers=%s) despite CUDA being available — expect 5-19x "
+                        "slower inference. Check model load order and _ort_init import.",
+                        _svc_name,
+                        _bound,
+                    )
+                else:
+                    logger.info("ORT provider audit — %s: %s", _svc_name, _bound)
+        except Exception as _audit_err:
+            logger.warning("ORT provider audit failed (non-fatal): %s", _audit_err)
+        # --- end CUDA EP audit ---
+
     except Exception as e:
         logger.warning(f"Model warmup failed (non-fatal): {e}")
 
