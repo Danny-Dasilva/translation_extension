@@ -655,3 +655,138 @@ Re-run:
 backend/.venv/bin/python backend/scripts/eval_vision/eval_perline_singleline.py \
     --n 2000 --max-chars 20 --pages 18 --batch-size 24 --seed 0
 ```
+
+
+---
+
+## Postprocess repeat-collapse attempt (2026-06-14) — VERDICT: NOT YET (ship blocked)
+
+Goal: clear the Test-1 bar (B ≤ A + 0.5pp mean CER) by strengthening the
+shared OCR postprocess (`backend/app/utils/ocr_postprocess.py`,
+`apply_all`) to kill B's non-AR repeat artifacts — **without** regressing A
+(which runs the same pipeline) and **without** damaging legitimate Japanese
+repeats. Decode/config/commit untouched.
+
+### What was added to `ocr_postprocess.apply_all`
+
+Two new artifact-targeted collapse steps run after `normalize_text` and before
+the legacy `strip_trailing_repeats`. Thresholds were derived from the 56,323-row
+single-line GT pool so each step is a near no-op on clean text:
+
+1. **`collapse_trailing_loop`** — trims a *looping* trailing punctuation block
+   (a punct char recurring across 2+ separate runs), but only when the loop
+   involves a period-class char (`.`/`。`/`．` — the NAR dot-fill signature) OR
+   the tail is ≥8 long with a char spanning ≥3 runs. Replaces the block with its
+   first contiguous run. **Fires on 1 / 56,323 GT rows (0.0018%).** Non-looping
+   emphatic tails (`・・・・！？`, `ーー！！`, `…!?`, `!!??`, interrobang `!!???!!?`)
+   are preserved.
+2. **`collapse_cjk_runs`** — caps an identical *CJK ideograph* run to 2. A CJK
+   ideograph repeated even 3× never occurs in legit GT (0 rows), so this is a
+   pure-artifact signal (`体体体体体` → `体体`). Kana/symbol runs (laughter
+   ハハハ, vowel elongation わ～～～) are untouched.
+
+Empirical safety: the new steps change only **3 / 56,323 legit GT rows
+(0.005%)**, vs the legacy `strip_trailing_repeats` which mangles **22%** of
+legit GT (laughter/elongation/ellipsis) for both models — but that legacy step
+was left as-is because it hits A and B identically (delta-neutral) and removing
+it is out of scope for this artifact fix.
+
+### Example artifact fixes (raw B → collapsed)
+
+```
+'わーっ...。..'                                          -> 'わーっ..'
+'...。..'                                               -> '..'
+'!.....!!!!!!!...!!!!'                                  -> '!'
+'体体体体体'                                             -> '体体'
+'ボドッ!.....!!!!!!!...!!!!!!!!!!!.!.!!!!....!!!!!!...'   -> 'ボドッ!'
+'そ.が....女蟻蟻発見!!!!!!!!!!!!!!!...!!!.!'              -> 'そ.が...女蟻蟻発見!!!.!'
+'私.......はただ............................'             -> '私...はただ..'
+'えええええ〜!?????'                                      -> 'えええ〜!??'
+'顔を突き出した顔を突突ままし'                              -> '顔を突き出した顔を突突ままし'   (UNFIXABLE — interior phrase dup)
+'い...い兵器器..兵.兵'                                    -> 'い...い兵器器..兵.兵'           (UNFIXABLE — interior char dup)
+```
+
+### A/B re-eval (real ParseqOCRService, n=2000 seed 0, max_chars 20, 36 CTD pages)
+
+**Test 1 — single-line GT (postprocessed = shipped output):**
+
+| model | split | n | exact | mean CER | median CER |
+|-------|-------|---|-------|----------|-----------|
+| **A** | overall | 2000 | 46.20% | **21.50%** | 7.69% |
+|       | vertical | 1500 | 43.93% | 23.58% | 10.00% |
+|       | horizontal | 500 | 53.00% | 15.26% | 0.00% |
+| **B** | overall | 2000 | 45.60% | **22.53%** | 9.09% |
+|       | vertical | 1500 | 43.67% | 24.22% | 10.53% |
+|       | horizontal | 500 | 51.40% | 17.46% | 0.00% |
+
+- **Δ mean CER = +1.032 pp** (bar ≤ +0.50) → **FAIL** (was +1.042; collapse moved it −0.010pp)
+- Δ exact-match = −0.600 pp (bar ≥ −3.00) → within bar
+- Speed: A 39.2 ms/crop, B 3.73 ms/crop (**10.5× faster**)
+
+**A is byte-identical to its pre-collapse baseline** (21.50% overall / 23.58%
+vert / 15.26% horiz / 46.20% exact) → criterion (b) "A must not regress" **PASS**.
+
+**Test 2 — real CTD per-line crops (487 crops, production distribution):**
+
+| metric | before collapse | after collapse | A |
+|--------|----------------:|---------------:|--:|
+| A↔B exact agreement | 87.68% | 87.89% | — |
+| B artifact rate | 4.11% | **3.70%** | 3.29% |
+| B-only artifacts | 1.23% | **0.82%** | — |
+
+→ criterion (c) "B repeat-artifact rate drops to ~A's level" **PASS** (B-only
+0.82% ≤ 1%; B 3.70% within A+1%). The eval's own Test-2 gate reports **OK**.
+
+### PASS / FAIL on the three ship criteria
+
+| # | criterion | result |
+|---|-----------|:------:|
+| (a) | B mean CER within +0.5pp of A | **FAIL** (+1.032pp) |
+| (b) | A mean CER does not regress | **PASS** (21.50% unchanged) |
+| (c) | B repeat-artifact rate ≈ A on real CTD crops | **PASS** (B-only 0.82%, B 3.70% vs A 3.29%) |
+
+### Where B is stuck (why postprocess alone can't clear the bar)
+
+A per-case CER decomposition on the 2000-row set (B-worse CER mass = 26.0,
+A-worse = 5.4, net ≈ +20.6 → ~+1.03pp) shows the regression is **NOT** the
+trailing/CJK artifacts that the collapse fixes (those are a small slice and now
+caught). The dominant surviving classes are **intrinsic non-AR decode
+corruption woven into the content**, which is not safely postprocessable:
+
+- **Interior phrase duplication / loops:** `顔を突き出した顔を突突ままし`,
+  `こ...こら待..こ...こら待て〜〜`, `い...い兵器器..兵.兵`. Cannot dedup without a
+  language model; immediate-substring collapse damages **9.8%** of legit GT
+  (legit reduplication ドクンドクン / ごちゃごちゃ / ドキドキ).
+- **Doubled kana mid-word:** `突突`, `器器`, `300のの`, `子子`. Indistinguishable
+  from legit doubled kana / laughter, so uncappable.
+- **Substitution errors** (unrelated to repeats): `母`→`心`, `クリ`→`グリ`,
+  `牛`→`生`, `どき`→`はき` — pure recognition differences from the non-AR pass.
+- **Trailing same-char punct runs** that overlap legit emphasis: `?????` vs
+  legit `・・・・・・` (len-6 ellipsis appears in thousands of GT rows), and doubled
+  `ーー` (legit per GT `ーー！！`). Capping these would regress A.
+
+### Verdict: **NOT YET — do not ship B on postprocess alone**
+
+Postprocess tightening closed the **artifact** gap (Test 2 now OK, A untouched)
+but the **+1.03pp CER regression is intrinsic to B's non-AR decode** (interior
+phrase/char duplication + substitutions), not trailing fill. No postprocess rule
+can remove it without damaging legitimate Japanese repeats (laughter,
+reduplication, ellipsis) and thereby regressing A.
+
+To capture the 10× speed win, a **decode-time fix is required**, in order of
+preference:
+1. **Re-export the ep60 weights with `decode_ar=True` + dynamic batch** (Option A
+   in §2/§3b). This is the surest path: it gives A's sequential decode quality
+   *and* batching, eliminating the non-AR hallucination at the source.
+2. Add an **EOS-confidence / repeat-aware truncation inside `_decode`** for the
+   non-AR logits (cut the tail at the first low-confidence step after a
+   high-confidence content run), and re-run this same A/B.
+
+The postprocess changes are safe to keep regardless (A unchanged, B artifacts
+down) but are **not sufficient** to gate B in as a like-for-like swap.
+
+Re-run:
+```bash
+backend/.venv/bin/python backend/scripts/eval_vision/eval_perline_singleline.py \
+    --n 2000 --max-chars 20 --pages 18 --batch-size 24 --seed 0
+```
