@@ -31,7 +31,7 @@ class Settings(BaseSettings):
 
     # OCR backend selection: "parseq" (local trained model) or "manga-ocr"
     ocr_backend: str = "parseq"
-    parseq_model_path: str = "models/parseq_manga_ep60_r2_nonAR_dynbatch.fp16.onnx"
+    parseq_model_path: str = "models/parseq_manga_ep60_nonAR_dynbatch.fp16.onnx"
     # Batched non-autoregressive export with a dynamic batch axis: one forward
     # pass OCRs all lines on a page (~10x faster than the old AR_single model,
     # which had a hardcoded batch=1 Reshape and required N sequential forwards).
