@@ -21,7 +21,9 @@ class TextBox(BaseModel):
     minY: int
     maxX: int
     maxY: int
-    background: str
+    # Per-box source-crop JPEG was removed from the pipeline (frontend renderer
+    # never read it); kept as an empty-string default for API compatibility.
+    background: str = ""
     fontHeightPx: int
     fontColor: str
     fontStrokeColor: str
