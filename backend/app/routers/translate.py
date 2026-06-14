@@ -24,11 +24,14 @@ from app.utils.image_processing import (
 )
 from app.utils.ctd_utils import build_text_regions, build_inpaint_mask, match_blocks_to_bubbles
 from app.utils.japanese_text_filter import is_japanese_text, filter_japanese_texts
+from app.utils.ocr_confidence_gate import is_garbled_low_conf
 from app.utils.orphan_lines import (
     find_orphan_lines,
     cluster_orphan_lines,
     ocr_orphan_clusters,
+    ocr_orphan_clusters_with_conf,
     cluster_bbox,
+    merge_orphans_into_blocks,
 )
 from app.utils.zindex_utils import assign_smart_zindex
 from app.utils.progress_bus import bus as progress_bus
@@ -337,10 +340,12 @@ async def process_single_image(
             # and stitching — this is how the model was trained. Fall back to
             # the per-batch block-crop path otherwise (matches manga-ocr).
             prefetched_texts: List[str] | None = None
+            prefetched_confs: List[float] | None = None
             if isinstance(ocr_service, ParseqOCRService) and text_lines:
-                prefetched_texts = await ocr_service.recognize_blocks_with_lines(
+                prefetched_texts, prefetched_confs = await ocr_service.recognize_blocks_with_lines(
                     image_np, blocks, text_lines,
                     batch_size=settings.parseq_batch_size,
+                    return_confidence=True,
                 )
 
             # Orphan-line recovery: text_lines whose center no detected block
@@ -357,30 +362,57 @@ async def process_single_image(
                 orphans = find_orphan_lines(blocks, text_lines)
                 if orphans:
                     clusters = cluster_orphan_lines(orphans)
-                    synth_texts = await ocr_orphan_clusters(
+                    synth_ocr, synth_conf = await ocr_orphan_clusters_with_conf(
                         ocr_service, image_np, clusters,
                         batch_size=settings.parseq_batch_size,
                     )
-                    added = 0
-                    for cluster, text in zip(clusters, synth_texts):
+                    synth_blocks: List[dict] = []
+                    synth_texts: List[str] = []
+                    synth_confs: List[float] = []
+                    for cluster, text, c in zip(clusters, synth_ocr, synth_conf):
                         if not text.strip():
                             continue
-                        ob = cluster_bbox(cluster)
-                        blocks.append(ob)
-                        crops.append(
-                            detector_service.crop_regions(image_np, [ob])[0]
-                        )
-                        all_text_regions.append(
-                            build_text_regions([ob], cluster)[0]
-                        )
-                        prefetched_texts.append(text)
-                        added += 1
-                    if added:
+                        synth_blocks.append(cluster_bbox(cluster))
+                        synth_texts.append(text)
+                        synth_confs.append(c)
+                    n_before = len(blocks)
+                    # Resolve synthetic-vs-original overlaps: overlapping synth
+                    # blocks merge into the original (union bbox + combined text,
+                    # synth dropped) so the SMS/balloon renders ONCE; isolated
+                    # synth blocks are appended unchanged. Returns merged parallel
+                    # blocks/prefetched_texts lists.
+                    blocks, prefetched_texts = merge_orphans_into_blocks(
+                        blocks, prefetched_texts, synth_blocks, synth_texts
+                    )
+                    # Keep OCR confidences aligned. Appended orphan blocks carry
+                    # their REAL recognition confidence (tail of synth_confs) so
+                    # the garble gate can drop low-conf garbled orphan SFX.
+                    if prefetched_confs is not None:
+                        appended = len(prefetched_texts) - len(prefetched_confs)
+                        if appended > 0:
+                            tail = (
+                                synth_confs[-appended:]
+                                if appended <= len(synth_confs)
+                                else synth_confs
+                            )
+                            prefetched_confs = prefetched_confs + list(tail)
+                            while len(prefetched_confs) < len(prefetched_texts):
+                                prefetched_confs.append(0.0)
+                    # build_text_regions/crop_regions depend only on block bbox,
+                    # so rebuild the other parallel lists from the merged blocks
+                    # (this keeps blocks/crops/text_regions/texts aligned even for
+                    # originals whose bbox grew during a merge).
+                    if synth_blocks:
+                        crops = detector_service.crop_regions(image_np, blocks)
+                        all_text_regions = build_text_regions(blocks, text_lines)
                         original_count = len(crops)
+                        added = len(blocks) - n_before
+                        merged = len(synth_blocks) - added
                         logger.info(
-                            f"Image {idx + 1}: orphan-line recovery added "
-                            f"{added} synthetic block(s) from {len(orphans)} "
-                            f"orphan line(s)"
+                            f"Image {idx + 1}: orphan-line recovery: "
+                            f"{len(orphans)} orphan line(s) -> {len(synth_blocks)} "
+                            f"cluster(s) => {added} new block(s), {merged} merged "
+                            f"into originals (blocks {n_before} -> {len(blocks)})"
                         )
 
             # OCR (GPU) runs INSIDE the semaphore; the inpaint task is launched
@@ -404,10 +436,17 @@ async def process_single_image(
                         # OCR mini-batch (or slice of prefetched per-block OCR)
                         if prefetched_texts is not None:
                             texts = prefetched_texts[batch_start:batch_start + len(batch_crops)]
+                            confs = (
+                                prefetched_confs[batch_start:batch_start + len(batch_crops)]
+                                if prefetched_confs is not None
+                                else [1.0] * len(texts)
+                            )
                         else:
-                            texts = await ocr_service.recognize_text_batch(batch_crops)
+                            tc = await ocr_service.recognize_text_batch_with_conf(batch_crops)
+                            texts = [t for t, _c in tc]
+                            confs = [c for _t, c in tc]
 
-                        for i, text in zip(batch_indices, texts):
+                        for i, text, conf in zip(batch_indices, texts, confs):
                             # Filter non-Japanese before keeping
                             if settings.japanese_filter_enabled:
                                 if not is_japanese_text(
@@ -417,6 +456,21 @@ async def process_single_image(
                                 ):
                                     logger.debug(f"Filtered non-Japanese text at index {i}: '{text[:30]}...'")
                                     continue
+                            # OCR-confidence garble gate: drop low-conf garbled
+                            # OCR before translation (stops hallucinated captions).
+                            if (
+                                settings.ocr_confidence_gate_enabled
+                                and settings.ocr_confidence_gate_threshold > 0
+                                and is_garbled_low_conf(
+                                    text, conf,
+                                    conf_threshold=settings.ocr_confidence_gate_threshold,
+                                )
+                            ):
+                                logger.info(
+                                    "OCR-gate dropped index %d (conf=%.2f): %r — garbled",
+                                    i, conf, text[:24],
+                                )
+                                continue
                             results.append((i, text))
                     return results
 
@@ -462,25 +516,43 @@ async def process_single_image(
                 # BATCH MODE: All OCR first, then filter, then translation (after release)
                 if prefetched_texts is not None:
                     ocr_texts = prefetched_texts
+                    ocr_confs = prefetched_confs if prefetched_confs is not None else [1.0] * len(ocr_texts)
                 else:
-                    ocr_texts = await ocr_service.recognize_text_batch(
+                    tc = await ocr_service.recognize_text_batch_with_conf(
                         crops,
                         batch_size=len(crops)  # Process all crops at once
                     )
+                    ocr_texts = [t for t, _c in tc]
+                    ocr_confs = [c for _t, c in tc]
                 ocr_time = time.time() - ocr_start
                 logger.info(f"Image {idx + 1}: Batched OCR completed in {ocr_time*1000:.1f}ms ({len(crops)} crops)")
 
-                # Filter non-Japanese OCR results
+                # Filter non-Japanese OCR results + OCR-confidence garble gate
                 if settings.japanese_filter_enabled:
                     valid_indices = filter_japanese_texts(
                         ocr_texts,
                         settings.japanese_filter_min_ratio,
                         settings.japanese_filter_katakana_max_length
                     )
+                    if settings.ocr_confidence_gate_enabled and settings.ocr_confidence_gate_threshold > 0:
+                        gated = []
+                        for i in valid_indices:
+                            conf = ocr_confs[i] if i < len(ocr_confs) else 1.0
+                            if is_garbled_low_conf(
+                                ocr_texts[i], conf,
+                                conf_threshold=settings.ocr_confidence_gate_threshold,
+                            ):
+                                logger.info(
+                                    "Image %d: OCR-gate dropped index %d (conf=%.2f): %r",
+                                    idx + 1, i, conf, ocr_texts[i][:24],
+                                )
+                                continue
+                            gated.append(i)
+                        valid_indices = gated
 
                     filtered_count = len(ocr_texts) - len(valid_indices)
                     if filtered_count > 0:
-                        logger.info(f"Image {idx + 1}: Filtered {filtered_count} non-Japanese regions")
+                        logger.info(f"Image {idx + 1}: Filtered {filtered_count} non-Japanese/garbled regions")
 
                     if not valid_indices:
                         logger.warning(f"Image {idx + 1}: All text regions filtered as non-Japanese")

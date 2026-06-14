@@ -21,12 +21,56 @@ import httpx
 from app.config import settings
 from app.services.translation_text_utils import (
     clean_translation_output,
-    BATCHED_SYSTEM_PROMPT,
-    format_sources,
     parse_tagged_blocks,
 )
 
 logger = logging.getLogger(__name__)
+
+import re as _re
+
+_LEADING_IDX_RE = _re.compile(r"^\s*\[?\d+\]?[.):\-]?\s*")
+# A "preamble" is meta/chatter rather than a translation: ends with a colon,
+# or starts with a common lead-in. Translations rarely end in a colon.
+_PREAMBLE_RE = _re.compile(
+    r"^(here|sure|okay|ok|certainly|translations?|output|the\s+following)\b",
+    _re.IGNORECASE,
+)
+
+
+def _strip_leading_index(line: str) -> str:
+    """Drop a leading ``[3]`` / ``3.`` / ``3)`` index from a plain line."""
+    return _LEADING_IDX_RE.sub("", line, count=1).strip()
+
+
+# A run of >=6 identical chars, or a short token (<=3 chars) repeated >=4 times:
+# the degenerate `||||...` / `aaaa` / `lololo` loops the small model emits on
+# garbled SFX OCR. We cut the line at the start of the runaway tail.
+_RUNAWAY_CHAR_RE = _re.compile(r"(.)\1{5,}")
+_RUNAWAY_TOK_RE = _re.compile(r"(.{1,3}?)\1{3,}")
+
+
+def _strip_runaway_repeat(line: str) -> str:
+    """Cut a degenerate repetition tail off a line, keeping the real prefix."""
+    if not line:
+        return line
+    cut = len(line)
+    m = _RUNAWAY_CHAR_RE.search(line)
+    if m:
+        cut = min(cut, m.start())
+    m = _RUNAWAY_TOK_RE.search(line)
+    if m and (m.end() - m.start()) >= 8:  # only long token-loops, not "haha"
+        cut = min(cut, m.start())
+    return line[:cut].strip()
+
+
+def _looks_like_preamble(line: str) -> bool:
+    """True if a line reads as meta/chatter rather than a translation."""
+    s = line.strip()
+    if not s:
+        return True
+    if s.endswith(":"):
+        return True
+    return bool(_PREAMBLE_RE.match(s))
 
 
 class VLLMOpenAITranslationService:
@@ -71,6 +115,7 @@ class VLLMOpenAITranslationService:
         messages: List[dict],
         max_tokens: int,
         temperature: float = 0.0,
+        repetition_penalty: float | None = None,
     ) -> str:
         await self._ensure_healthy()
         payload = {
@@ -80,6 +125,11 @@ class VLLMOpenAITranslationService:
             "temperature": temperature,
             "stream": False,
         }
+        if repetition_penalty is not None:
+            # vLLM-specific sampler param: suppresses the degenerate `||||`/char
+            # repetition loops the small model falls into on garbled SFX OCR
+            # (those loops eat the token budget and truncate the tail -> mismatch).
+            payload["repetition_penalty"] = repetition_penalty
         async with self._sem:
             r = await self._client.post(
                 f"{self.base_url}/chat/completions",
@@ -148,51 +198,155 @@ class VLLMOpenAITranslationService:
         """
         if not texts:
             return []
-        system_prompt = BATCHED_SYSTEM_PROMPT.format(target=target_language)
-        user_src = format_sources(texts)
-        msg = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_src},
-        ]
-        # Page-level block needs more room than a single bubble: budget per item.
-        budget = max(64, settings.translate_max_tokens * len(texts))
+        n = len(texts)
+
+        # IMPORTANT: the v10it fine-tune was NOT trained on the heavy few-shot
+        # BATCHED_SYSTEM_PROMPT / `[N]text` tagged format — given that prompt it
+        # collapses a whole page to a single confused line. It DOES reliably do a
+        # plain numbered list ("1. text" -> "1. translation", one per line) from
+        # a short user instruction. We use that here; the garble gate upstream
+        # keeps low-confidence SFX out of the batch (they poison the generation),
+        # and the parser/salvage/gap-fill below recover partial responses so we
+        # hold page context whenever the model produces a usable list.
+        instr = (
+            f"Translate each numbered line below into {target_language}. "
+            f"Output the SAME numbers, one translation per line, in order, "
+            f"nothing else. Keep every line — do not merge, drop, or add lines."
+        )
+        body = "\n".join(f"{i + 1}. {t}" for i, t in enumerate(texts))
+        user_src = f"{instr}\n\n{body}"
+
+        # Token budget MUST scale with N so long pages aren't truncated (a
+        # truncated tail drops lines -> count mismatch -> isolation fallback).
+        budget = max(256, settings.translate_max_tokens * n + 32 * n + 64)
+
+        def _parse(raw: str) -> List[str] | None:
+            # Prefer the strict 'k.' / 'k)' numbered parser (matches the format
+            # we asked for); fall back to the robust tagged/plain parser.
+            return self._parse_numbered_output(raw, n) or self._parse_page_output(raw, n)
+
+        parsed: List[str] | None = None
         try:
-            raw = await self._chat(msg, max_tokens=budget, temperature=0.0)
+            raw = await self._chat(
+                [{"role": "user", "content": user_src}],
+                max_tokens=budget,
+                temperature=0.0,
+            )
+            parsed = _parse(raw)
         except Exception as e:
             logger.warning(f"vLLM translate_numbered_block failed: {e!r}")
-            return []
-        parsed = self._parse_page_output(raw, len(texts))
+            parsed = None
+
+        # Bounded retry: ONE stricter attempt before any isolation fallback.
+        if parsed is None:
+            logger.info(
+                "Page-level output did not parse to %d lines; retrying once strict", n
+            )
+            strict = (
+                f"Output EXACTLY {n} lines, numbered 1. to {n}., one "
+                f"{target_language} translation per line, in order, nothing "
+                f"else — no preamble, no blank lines, no extra lines.\n\n{body}"
+            )
+            try:
+                raw = await self._chat(
+                    [{"role": "user", "content": strict}],
+                    max_tokens=budget,
+                    temperature=0.0,
+                )
+                parsed = _parse(raw)
+            except Exception as e:
+                logger.warning(f"vLLM translate_numbered_block retry failed: {e!r}")
+                parsed = None
+
         if parsed is None:
             logger.warning(
-                "Page-level output did not parse to %d lines; caller should fall back",
-                len(texts),
+                "Page-level output still unparseable after retry for %d lines; "
+                "caller will fall back per-bubble",
+                n,
             )
             return []
-        return [clean_translation_output(p) for p in parsed]
+
+        cleaned = [clean_translation_output(p) for p in parsed]
+
+        # NEVER let a non-empty source bubble collapse to "..." or "" just
+        # because the batch dropped/blanked its line. Individually translate
+        # only the gaps so page context holds for the rest of the page.
+        gaps = [
+            i
+            for i, (src, out) in enumerate(zip(texts, cleaned))
+            if src.strip() and (not out.strip() or out.strip() == "...")
+        ]
+        if gaps:
+            logger.info("Page-level: filling %d empty/ellipsis gap(s) individually", len(gaps))
+            fills = await asyncio.gather(
+                *(self.translate_single(texts[i], target_language) for i in gaps)
+            )
+            for i, fill in zip(gaps, fills):
+                if fill.strip():
+                    cleaned[i] = fill
+        return cleaned
 
     @staticmethod
     def _parse_page_output(raw: str, n: int) -> List[str] | None:
         """Parse a page-level translation response into n ordered lines.
 
-        Prefers `[N]`-tagged output; falls back to plain one-line-per-block
-        output (what the v10it fine-tune emits). Returns None when neither
-        yields exactly n non-empty lines so the caller falls back per-bubble.
+        Robust, in priority order:
+          1. `[N]`-tagged output -> align by tag index (handles reorder, blanks,
+             and a few missing tags: the gap stays "" and is filled per-bubble
+             by the caller, never rendered as "...").
+          2. Plain one-line-per-item output (what the v10it fine-tune emits):
+             strip blank lines; if a short preamble made it n+1 lines, drop the
+             leading non-translation line; accept when the count reconciles to n.
+
+        Returns None ONLY when the count genuinely cannot be reconciled, so the
+        caller's per-bubble isolation fallback is a true last resort.
         """
+        # 1) Tagged path. Accept when at least half the tags are present; the
+        #    blocks list is length-n with "" for any missing tag.
         tagged = parse_tagged_blocks(raw, n)
-        if tagged is not None and all(p.strip() for p in tagged):
-            return tagged
-        # Plain-line fallback: ignore blank lines, require an exact count match.
+        if tagged is not None:
+            present = sum(1 for p in tagged if p.strip())
+            if present == n or present >= max(1, (n + 1) // 2):
+                return tagged
+
+        # 2) Plain-line path. Strip blanks; tolerate a single preamble/trailer.
         lines = [ln.strip() for ln in raw.splitlines() if ln.strip()]
+        # Strip stray `[N]` prefixes + degenerate repetition tails (the small
+        # model loops `||||...`/repeated chars on garbled SFX, which both eats
+        # the budget — truncating later lines — and corrupts the looped line).
+        lines = [_strip_runaway_repeat(_strip_leading_index(ln)) for ln in lines]
+        lines = [ln for ln in lines if ln.strip()]
         if len(lines) == n:
             return lines
+        if len(lines) == n + 1:
+            # One extra line is almost always a leading preamble ("Sure! ...")
+            # or a trailing note. Prefer dropping the leading one.
+            head, *rest = lines
+            if _looks_like_preamble(head):
+                return rest
+            return lines[:n]
+        if n < len(lines) <= n + 2:
+            # A couple of extra chatter lines: keep the last n (translations
+            # follow any preamble). Conservative best-effort.
+            return lines[-n:]
+        # TRUNCATION SALVAGE: the model emitted the first K (<n) lines then a
+        # repetition loop ate the budget before the tail. Keep the K we have
+        # (page context preserved) and pad to n with "" — the caller fills the
+        # missing tail bubbles INDIVIDUALLY rather than dropping the whole page
+        # to per-bubble isolation. Only salvage when we got a real majority so a
+        # genuinely broken response still returns None.
+        if 0 < len(lines) < n and len(lines) >= max(1, (n + 1) // 2):
+            return lines + [""] * (n - len(lines))
         return None
 
     @staticmethod
     def _parse_numbered_output(raw: str, n: int) -> List[str] | None:
         """Parse 'k. text' lines back into an ordered list of n items.
 
-        Returns None if fewer than n numbered lines are recovered (signals the
-        caller to fall back). Tolerates blank lines and 'k)' / 'k.' separators.
+        Aligns by the emitted number (handles reorder / stray blank lines) and
+        strips any runaway repetition tail. Salvages a MAJORITY response (gaps
+        left "" for the caller to fill individually); returns None only when
+        too few numbered lines are recovered. Tolerates 'k)' / 'k.' separators.
         """
         import re
 
@@ -204,10 +358,11 @@ class VLLMOpenAITranslationService:
                 continue
             k = int(m.group(1))
             if 1 <= k <= n:
-                out[k] = m.group(2).strip()
-        if len(out) < n:
+                out[k] = _strip_runaway_repeat(m.group(2).strip())
+        present = sum(1 for v in out.values() if v.strip())
+        if present == 0 or present < max(1, (n + 1) // 2):
             return None
-        return [out[i + 1] for i in range(n)]
+        return [out.get(i + 1, "") for i in range(n)]
 
     async def warmup(self) -> dict:
         t0 = time.perf_counter()

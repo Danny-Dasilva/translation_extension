@@ -209,36 +209,60 @@ class ParseqOCRService:
         batch /= self.std
         return batch
 
+    @staticmethod
+    def _softmax_lastdim(logits: np.ndarray) -> np.ndarray:
+        """Numerically-stable softmax over the last axis (fp32)."""
+        x = logits.astype(np.float32)
+        x = x - x.max(axis=-1, keepdims=True)
+        e = np.exp(x)
+        return e / e.sum(axis=-1, keepdims=True)
+
     def _decode(self, logits: np.ndarray) -> List[str]:
-        """Greedy argmax; truncate at first EOS per sample."""
+        """Greedy argmax; truncate at first EOS per sample (text only)."""
+        return [t for t, _c in self._decode_with_conf(logits)]
+
+    def _decode_with_conf(self, logits: np.ndarray) -> List[tuple[str, float]]:
+        """Greedy decode + per-crop OCR recognition confidence.
+
+        Confidence is the mean softmax max-probability over the DECODED tokens
+        (the chars emitted before EOS). High for crisp dialogue (~0.9+), low for
+        garbled / stylized SFX the recognizer is unsure about (~0.4-0.6).
+        Empty decodes (immediate EOS) get conf 0.0.
+        """
         ids = logits.argmax(-1)  # (B, L)
-        texts: List[str] = []
-        for row in ids:
+        probs = self._softmax_lastdim(logits)  # (B, L, C)
+        maxp = probs.max(-1)  # (B, L) softmax max-prob per step
+        out: List[tuple[str, float]] = []
+        for row, prow in zip(ids, maxp):
             chars: List[str] = []
-            for tok in row:
+            confs: List[float] = []
+            for tok, p in zip(row, prow):
                 if tok == self.eos_id:
                     break
                 # index 0 is EOS which we already filtered; chars are 1..len(charset)
                 if 0 < tok < len(self._itos):
                     chars.append(self._itos[int(tok)])
-            texts.append(_finalize_ocr("".join(chars)))
-        return texts
+                    confs.append(float(p))
+            conf = float(np.mean(confs)) if confs else 0.0
+            out.append((_finalize_ocr("".join(chars)), conf))
+        return out
 
     def _run_sync(self, batch: np.ndarray) -> np.ndarray:
         if batch.dtype != self._input_np_dtype:
             batch = batch.astype(self._input_np_dtype, copy=False)
         return self.session.run(None, {self._input_name: batch})[0]
 
-    async def recognize_text_batch(
+    async def _recognize_batch_with_conf(
         self,
         image_crops: List[np.ndarray],
         batch_size: int = 24,
-    ) -> List[str]:
+    ) -> List[tuple[str, float]]:
+        """Core batched inference returning (text, ocr_confidence) per crop."""
         if not image_crops:
             return []
 
         total_start = time.perf_counter()
-        texts: List[str] = []
+        out: List[tuple[str, float]] = []
         current_bs = batch_size
         i = 0
         while i < len(image_crops):
@@ -252,7 +276,7 @@ class ParseqOCRService:
                     logger.warning("PARSeq OOM; reducing batch to %d", current_bs)
                     continue
                 raise
-            texts.extend(self._decode(logits))
+            out.extend(self._decode_with_conf(logits))
             i += len(chunk)
 
         total_ms = (time.perf_counter() - total_start) * 1000
@@ -262,7 +286,22 @@ class ParseqOCRService:
             total_ms,
             total_ms / len(image_crops),
         )
-        return texts
+        return out
+
+    async def recognize_text_batch(
+        self,
+        image_crops: List[np.ndarray],
+        batch_size: int = 24,
+    ) -> List[str]:
+        return [t for t, _c in await self._recognize_batch_with_conf(image_crops, batch_size)]
+
+    async def recognize_text_batch_with_conf(
+        self,
+        image_crops: List[np.ndarray],
+        batch_size: int = 24,
+    ) -> List[tuple[str, float]]:
+        """Like ``recognize_text_batch`` but returns (text, ocr_confidence)."""
+        return await self._recognize_batch_with_conf(image_crops, batch_size)
 
     async def recognize_single(self, image_crop: np.ndarray) -> str:
         results = await self.recognize_text_batch([image_crop])
@@ -275,16 +314,22 @@ class ParseqOCRService:
         text_lines: List[dict],
         padding: int = 2,
         batch_size: int = 24,
-    ) -> List[str]:
+        return_confidence: bool = False,
+    ):
         """OCR per text-line, then concat per block in reading order.
 
         PARSeq is a single-line STR model. When the detector exposes
         `text_lines` (e.g. the CTD detector), route line-level crops through
         it and stitch results back per block using spatial containment.
         Falls back to block-level OCR when no line overlaps a block.
+
+        When ``return_confidence`` is True, returns ``(texts, confidences)``
+        where confidence is the per-block OCR recognition confidence (the MIN
+        over the block's lines — a single garbled line should poison the block
+        so the gate can drop it). Empty blocks get confidence 0.0.
         """
         if not blocks:
-            return []
+            return ([], []) if return_confidence else []
         if not text_lines:
             crops = []
             h, w = image.shape[:2]
@@ -294,7 +339,11 @@ class ParseqOCRService:
                 x1 = min(w, b["maxX"] + padding)
                 y1 = min(h, b["maxY"] + padding)
                 crops.append(image[y0:y1, x0:x1])
-            return await self.recognize_text_batch(crops, batch_size=batch_size)
+            tc = await self._recognize_batch_with_conf(crops, batch_size=batch_size)
+            texts = [t for t, _c in tc]
+            if return_confidence:
+                return texts, [c for _t, c in tc]
+            return texts
 
         # Assign each text_line to the first block that contains its center.
         block_to_lines: List[List[dict]] = [[] for _ in blocks]
@@ -330,9 +379,17 @@ class ParseqOCRService:
                 flat_crops.append(image[y0:y1, x0:x1])
                 flat_owner.append(bi)
 
-        texts = await self.recognize_text_batch(flat_crops, batch_size=batch_size)
+        tc = await self._recognize_batch_with_conf(flat_crops, batch_size=batch_size)
         per_block: List[List[str]] = [[] for _ in blocks]
-        for owner, text in zip(flat_owner, texts):
+        per_block_conf: List[List[float]] = [[] for _ in blocks]
+        for owner, (text, conf) in zip(flat_owner, tc):
+            # Always record confidence (even for empty text) so a block whose
+            # only line decoded to garbage/empty is flagged low-confidence.
+            per_block_conf[owner].append(conf)
             if text:
                 per_block[owner].append(text)
-        return ["".join(parts) for parts in per_block]
+        texts = ["".join(parts) for parts in per_block]
+        if return_confidence:
+            confs = [min(cs) if cs else 0.0 for cs in per_block_conf]
+            return texts, confs
+        return texts

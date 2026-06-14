@@ -172,6 +172,15 @@ class Settings(BaseSettings):
     japanese_filter_min_ratio: float = 0.5  # Min Japanese char ratio (0.0-1.0)
     japanese_filter_katakana_max_length: int = 6  # Max length for katakana-only text
 
+    # OCR-confidence garble gate (pre-translation). Drops a bubble before it
+    # reaches the LLM when PARSeq recognition confidence is below this AND the
+    # decoded text looks garbled (replacement/bracket scrawl, fails the JP
+    # filter, or low JP-char ratio). Stops hallucinated captions on stylized
+    # SFX. Conservative: high-confidence text is never dropped. Set <=0 to
+    # disable. Tuned on Part13 inspection (dialogue ~0.9+, garbage SFX ~0.5-0.6).
+    ocr_confidence_gate_enabled: bool = True
+    ocr_confidence_gate_threshold: float = 0.65
+
     class Config:
         env_file = ".env"
         case_sensitive = False
