@@ -20,9 +20,7 @@ from app.services.parseq_ocr_service import ParseqOCRService
 from app.utils.image_processing import (
     calculate_font_size,
     decode_base64_to_numpy,
-    decode_base64_to_pil,
     detect_font_colors,
-    extract_text_region_background,
 )
 from app.utils.ctd_utils import build_text_regions, build_inpaint_mask, match_blocks_to_bubbles
 from app.utils.japanese_text_filter import is_japanese_text, filter_japanese_texts
@@ -339,13 +337,19 @@ async def process_single_image(
                     batch_size=settings.parseq_batch_size,
                 )
 
+            # OCR (GPU) runs INSIDE the semaphore; the inpaint task is launched
+            # here too (it only needs detection geometry, not translations) so it
+            # can overlap the network-bound translate. Translation + inpaint-await
+            # are intentionally deferred to AFTER the semaphore is released so the
+            # GPU slot is free during the out-of-process vLLM call.
+            inpaint_task: Optional["asyncio.Task"] = None
             if settings.use_pipeline_overlap and len(crops) > 1:
                 # PIPELINE OVERLAP with mini-batching: OCR crops in batches of 3,
-                # then fire translation tasks immediately for each batch.
-                # This preserves ONNX batching efficiency while overlapping OCR and translation.
+                # filtering non-Japanese as we go. OCR stays on the GPU inside the
+                # semaphore; translation is run after release (see below).
                 MINI_BATCH_SIZE = 3
 
-                async def ocr_and_translate_pipelined():
+                async def ocr_pipelined():
                     results = []
                     for batch_start in range(0, len(crops), MINI_BATCH_SIZE):
                         batch_crops = crops[batch_start:batch_start + MINI_BATCH_SIZE]
@@ -358,7 +362,7 @@ async def process_single_image(
                             texts = await ocr_service.recognize_text_batch(batch_crops)
 
                         for i, text in zip(batch_indices, texts):
-                            # Filter non-Japanese before starting translation
+                            # Filter non-Japanese before keeping
                             if settings.japanese_filter_enabled:
                                 if not is_japanese_text(
                                     text,
@@ -367,53 +371,49 @@ async def process_single_image(
                                 ):
                                     logger.debug(f"Filtered non-Japanese text at index {i}: '{text[:30]}...'")
                                     continue
+                            results.append((i, text))
+                    return results
 
-                            # Start translation immediately (non-blocking)
-                            trans_task = asyncio.create_task(
-                                translation_service.translate_single(text, target_language)
-                            )
-                            results.append((i, text, trans_task))
-
-                    # Await all translation tasks
-                    return [(i, text, await task) for i, text, task in results]
-
-                paired = await ocr_and_translate_pipelined()
+                paired = await ocr_pipelined()
 
                 if not paired:
                     logger.warning(f"Image {idx + 1}: All text regions filtered as non-Japanese")
                     await emit("done", 5, 5, note="all_filtered")
                     return (idx, [], None)
 
-                # Extract results and filter parallel lists to match kept indices
-                kept_indices = [i for i, _, _ in paired]
-                ocr_texts = [text for _, text, _ in paired]
-                translations = [trans for _, _, trans in paired]
+                # Extract OCR results and filter parallel lists to kept indices
+                kept_indices = [i for i, _ in paired]
+                ocr_texts = [text for _, text in paired]
                 blocks = [blocks[i] for i in kept_indices]
                 crops = [crops[i] for i in kept_indices]
                 all_text_regions = [all_text_regions[i] for i in kept_indices]
 
                 ocr_time = time.time() - ocr_start
-                translate_time = ocr_time  # Combined time for pipelined mode
 
                 filtered_count = original_count - len(kept_indices)
                 if filtered_count > 0:
-                    logger.info(f"Image {idx + 1}: Pipelined OCR+Translation completed in {ocr_time*1000:.1f}ms ({len(crops)} kept, {filtered_count} filtered)")
+                    logger.info(f"Image {idx + 1}: Pipelined OCR completed in {ocr_time*1000:.1f}ms ({len(crops)} kept, {filtered_count} filtered)")
                 else:
-                    logger.info(f"Image {idx + 1}: Pipelined OCR+Translation completed in {ocr_time*1000:.1f}ms ({len(crops)} crops)")
+                    logger.info(f"Image {idx + 1}: Pipelined OCR completed in {ocr_time*1000:.1f}ms ({len(crops)} crops)")
 
-                # Match kept blocks to bubbles ONCE (reused below). In this fused
-                # mode OCR+translate already completed, so inpaint cannot overlap
-                # translation; run it now (still uses the interior-fill tier).
+                # Match kept blocks to bubbles ONCE (reused for inpaint + response).
                 fit_rects = (
                     match_blocks_to_bubbles(blocks, bubbles)
                     if bubbles else [None] * len(blocks)
                 )
+
+                # Launch inpaint BEFORE releasing the semaphore so it overlaps the
+                # post-release translation. When overlap is disabled, finish it
+                # here (serial, inside the semaphore) to keep GPU stages serial.
+                await emit("inpaint", 4, 5, note=f"{len(blocks)} regions")
                 inpaint_task = _maybe_start_inpaint_task(
                     idx, image_np, blocks, text_lines, detector_mask, fit_rects, emit
                 )
-                inpainted_b64 = await _await_inpaint_task(idx, inpaint_task)
+                if not settings.overlap_inpaint:
+                    inpainted_b64 = await _await_inpaint_task(idx, inpaint_task)
+                    inpaint_task = None
             else:
-                # BATCH MODE: All OCR first, then filter, then all translation
+                # BATCH MODE: All OCR first, then filter, then translation (after release)
                 if prefetched_texts is not None:
                     ocr_texts = prefetched_texts
                 else:
@@ -456,39 +456,40 @@ async def process_single_image(
 
                 # Step 5b: LaMa inpaint. Inpainting needs only the detection mask
                 # (not translated text), so launch it as a background thread task
-                # and let it OVERLAP with OCR+translate. The worker thread frees
-                # the event loop to drive the concurrent vLLM translate calls.
+                # and let it OVERLAP with the post-release translation. The worker
+                # thread frees the event loop to drive the concurrent vLLM calls.
                 await emit("inpaint", 4, 5, note=f"{len(blocks)} regions")
                 inpaint_task = _maybe_start_inpaint_task(
                     idx, image_np, blocks, text_lines, detector_mask, fit_rects, emit
                 )
 
-                # When overlap is disabled, finish inpaint before translating so
-                # the two GPU stages stay serial (exact prior behaviour).
+                # When overlap is disabled, finish inpaint before releasing the
+                # semaphore so the two GPU stages stay serial (exact prior behaviour).
                 if not settings.overlap_inpaint:
                     inpainted_b64 = await _await_inpaint_task(idx, inpaint_task)
                     inpaint_task = None
 
-                # Translation (batched page-level [N] protocol, or parallel/sequential fallback)
-                await emit("translate", 3, 5, note=f"{len(ocr_texts)} bubbles")
-                translate_start = time.time()
-                translations = await _run_translation(ocr_texts, target_language)
-                translate_time = time.time() - translate_start
-                logger.info(f"Image {idx + 1}: Translation completed in {translate_time*1000:.1f}ms ({len(ocr_texts)} texts)")
+        # Semaphore released - GPU slot available for other images.
+        # Translation is an out-of-process (vLLM/httpx) or in-process-but-non-GPU
+        # call, and the inpaint worker runs in its own thread, so neither needs to
+        # hold the GPU slot. all_text_regions/blocks/crops/fit_rects were all built
+        # and filtered inside the semaphore block above and remain in scope here.
 
-                if inpaint_task is not None:
-                    inpainted_b64 = await _await_inpaint_task(idx, inpaint_task)
+        # Translation (batched page-level [N] protocol, or parallel/sequential fallback)
+        await emit("translate", 3, 5, note=f"{len(ocr_texts)} bubbles")
+        translate_start = time.time()
+        translations = await _run_translation(ocr_texts, target_language)
+        translate_time = time.time() - translate_start
+        logger.info(f"Image {idx + 1}: Translation completed in {translate_time*1000:.1f}ms ({len(ocr_texts)} texts)")
 
-            # Calculate per-crop timing (distribute evenly)
-            num_items = len(crops) if crops else 1
-            ocr_time_per_crop = (ocr_time * 1000) / num_items
-            translate_time_per_text = (translate_time * 1000) / num_items
+        # Await the overlapped inpaint (if still running) after translation.
+        if inpaint_task is not None:
+            inpainted_b64 = await _await_inpaint_task(idx, inpaint_task)
 
-        # Semaphore released - GPU slot available for other images
-        # Note: all_text_regions was built and filtered inside the semaphore block
-
-        # Decode image once for all background extractions (avoids N base64 decodes)
-        pil_image = decode_base64_to_pil(base64_image)
+        # Calculate per-crop timing (distribute evenly)
+        num_items = len(crops) if crops else 1
+        ocr_time_per_crop = (ocr_time * 1000) / num_items
+        translate_time_per_text = (translate_time * 1000) / num_items
 
         # Step 6: Build response
         text_boxes = []
@@ -510,16 +511,6 @@ async def process_single_image(
                 bbox_width,
                 bbox_height,
                 len(translated_text) if translated_text else 1
-            )
-
-            # Extract background region (uses pre-decoded PIL image)
-            background = extract_text_region_background(
-                base64_image,
-                block['minX'],
-                block['minY'],
-                block['maxX'],
-                block['maxY'],
-                preloaded_image=pil_image,
             )
 
             # Content-aware font colors: sample the bubble/block background from
@@ -544,7 +535,7 @@ async def process_single_image(
                 minY=block['minY'],
                 maxX=block['maxX'],
                 maxY=block['maxY'],
-                background=background,
+                background="",
                 fontHeightPx=font_size,
                 fontColor=font_color,
                 fontStrokeColor=stroke_color,
@@ -572,7 +563,7 @@ async def process_single_image(
         if settings.use_pipeline_overlap and len(crops) > 1:
             logger.info(
                 f"Image {idx + 1} completed: {len(text_boxes)} boxes in {image_time*1000:.1f}ms "
-                f"(detect: {detect_time*1000:.1f}ms, pipelined ocr+trans: {ocr_time*1000:.1f}ms)"
+                f"(detect: {detect_time*1000:.1f}ms, pipelined ocr: {ocr_time*1000:.1f}ms, translate: {translate_time*1000:.1f}ms)"
             )
         else:
             logger.info(
