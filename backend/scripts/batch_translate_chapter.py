@@ -317,7 +317,12 @@ class ChapterPipeline:
             print(f"  bubble detector unavailable ({exc}); typeset to text blocks")
 
         print("  loading OCR (PARSeq)…")
-        self.ocr = ParseqOCRService(model_path=settings.parseq_model_path)
+        self.ocr = ParseqOCRService(
+            model_path=settings.parseq_model_path,
+            hybrid_enabled=getattr(settings, "hybrid_ocr_enabled", False),
+            ar_model_path=getattr(settings, "parseq_ar_model_path", None),
+            hybrid_conf_threshold=getattr(settings, "ocr_confidence_gate_threshold", 0.65),
+        )
 
         self.lama = None
         if LamaInpaintService is not None and Path(

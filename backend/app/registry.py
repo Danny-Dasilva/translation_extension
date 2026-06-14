@@ -215,7 +215,12 @@ class ServiceRegistry:
 
             if backend == "parseq":
                 from app.services.parseq_ocr_service import ParseqOCRService
-                svc = ParseqOCRService(model_path=settings.parseq_model_path)
+                svc = ParseqOCRService(
+                    model_path=settings.parseq_model_path,
+                    hybrid_enabled=settings.hybrid_ocr_enabled,
+                    ar_model_path=settings.parseq_ar_model_path,
+                    hybrid_conf_threshold=settings.ocr_confidence_gate_threshold,
+                )
             elif backend in ("manga-ocr", "manga_ocr", "mangaocr"):
                 from app.services.manga_ocr_service import MangaOCRService
                 svc = MangaOCRService()

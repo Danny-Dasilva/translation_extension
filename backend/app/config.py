@@ -181,6 +181,21 @@ class Settings(BaseSettings):
     ocr_confidence_gate_enabled: bool = True
     ocr_confidence_gate_threshold: float = 0.65
 
+    # Confidence-gated HYBRID OCR. Default path is the fast non-AR PARSeq model;
+    # crops whose recognition confidence is below ocr_confidence_gate_threshold
+    # (stylized/handwritten SFX the non-AR model garbles) are re-OCR'd in ONE
+    # batch by the higher-quality autoregressive (AR) model, and that result
+    # replaces the non-AR one. Only low-confidence crops pay the ~10x AR cost.
+    # The existing garble gate then runs on the AR result, so genuinely
+    # illegible SFX still drop. Order: non-AR -> AR-retry-on-low-conf -> gate.
+    # Set False to use non-AR only.
+    hybrid_ocr_enabled: bool = True
+    # fp32 AR export with a dynamic batch axis; ORT applies fp16 kernels at
+    # runtime. Same input spec/preprocessing/letterbox/normalization as the
+    # non-AR model (images: tensor(float) [batch,3,128,512] -> logits
+    # [batch,51,4407]); decode is byte-identical to the trusted AR_single model.
+    parseq_ar_model_path: str = "models/parseq_manga_ep60_AR_dynbatch.onnx"
+
     class Config:
         env_file = ".env"
         case_sensitive = False

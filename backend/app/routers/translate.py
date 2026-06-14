@@ -51,7 +51,12 @@ detector_service = create_detector()
 # Initialize OCR service for batched inference (always needed)
 if settings.ocr_backend == "parseq":
     logger.info("Using PARSeq-large OCR (ONNX fp16, CUDA)")
-    ocr_service = ParseqOCRService(model_path=settings.parseq_model_path)
+    ocr_service = ParseqOCRService(
+        model_path=settings.parseq_model_path,
+        hybrid_enabled=settings.hybrid_ocr_enabled,
+        ar_model_path=settings.parseq_ar_model_path,
+        hybrid_conf_threshold=settings.ocr_confidence_gate_threshold,
+    )
 else:
     logger.info("Using manga-ocr OCR with batched inference")
     ocr_service = MangaOCRService()

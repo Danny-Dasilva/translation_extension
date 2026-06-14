@@ -98,7 +98,23 @@ class ParseqOCRService:
         model_path: str = "models/parseq_manga_large_5p16.fp16.onnx",
         fallback_fp32_path: str = "models/parseq_manga_large_5p16.opt.onnx",
         meta_path: str | None = None,
+        hybrid_enabled: bool = False,
+        ar_model_path: str | None = None,
+        hybrid_conf_threshold: float = 0.65,
     ):
+        # --- Confidence-gated HYBRID OCR config -----------------------------
+        # When enabled, low-confidence crops (the ones the gate treats as
+        # garbled) are re-OCR'd by the AR model in one batch and replace the
+        # non-AR result. The AR session is loaded lazily on first low-conf hit.
+        self.hybrid_enabled = bool(hybrid_enabled)
+        self._ar_model_path = ar_model_path
+        self.hybrid_conf_threshold = float(hybrid_conf_threshold)
+        self._ar_session = None
+        self._ar_input_name: str | None = None
+        self._ar_input_np_dtype = np.float32
+        # Cumulative count of crops re-OCR'd with AR (for per-page logging).
+        self.ar_retry_count = 0
+
         model_file = Path(model_path)
         if not model_file.is_absolute():
             model_file = Path(__file__).resolve().parents[2] / model_file
@@ -252,6 +268,120 @@ class ParseqOCRService:
             batch = batch.astype(self._input_np_dtype, copy=False)
         return self.session.run(None, {self._input_name: batch})[0]
 
+    # ----------------------------- HYBRID (AR) -----------------------------
+    def _ensure_ar_session(self) -> bool:
+        """Lazily load the AR ONNX session (CUDA-bound, fail-loud on CPU drop).
+
+        Mirrors the non-AR ``_ort_init`` CUDA setup: requests
+        CUDAExecutionProvider first and RAISES if ORT silently falls back to
+        CPU (the AR model is ~10x heavier; a silent CPU bind would tank
+        latency). Returns True once a CUDA-bound session is ready. On any load
+        failure it disables hybrid (logs once) and returns False so OCR still
+        serves non-AR results.
+        """
+        if self._ar_session is not None:
+            return True
+        if not self.hybrid_enabled or not self._ar_model_path:
+            return False
+
+        ar_file = Path(self._ar_model_path)
+        if not ar_file.is_absolute():
+            ar_file = Path(__file__).resolve().parents[2] / ar_file
+        if not ar_file.exists():
+            logger.error("HYBRID OCR: AR model not found: %s — disabling hybrid", ar_file)
+            self.hybrid_enabled = False
+            return False
+
+        so = ort.SessionOptions()
+        so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+        providers = [
+            ("CUDAExecutionProvider", {"cudnn_conv_algo_search": "HEURISTIC"}),
+            "CPUExecutionProvider",
+        ]
+        try:
+            start = time.perf_counter()
+            sess = ort.InferenceSession(str(ar_file), sess_options=so, providers=providers)
+            actual = sess.get_providers()
+            if "CUDAExecutionProvider" not in actual:
+                # Fail loud: a silent CPU bind would make the AR retry ~unusable.
+                raise RuntimeError(
+                    f"HYBRID OCR: AR model bound CPU-only (providers={actual}); "
+                    "refusing silent CPU fallback"
+                )
+            in0 = sess.get_inputs()[0]
+            self._ar_input_name = in0.name
+            self._ar_input_np_dtype = np.float16 if "float16" in in0.type else np.float32
+            # Warm up to surface cuDNN/CUDA failures up front and JIT-compile.
+            dummy = np.zeros((1, 3, self.img_h, self.img_w), dtype=self._ar_input_np_dtype)
+            sess.run(None, {self._ar_input_name: dummy})
+            self._ar_session = sess
+            logger.info(
+                "HYBRID OCR: AR model loaded %s (%.1f MB) in %.2fs on CUDA (providers=%s)",
+                ar_file.name,
+                ar_file.stat().st_size / 1e6,
+                time.perf_counter() - start,
+                actual,
+            )
+            return True
+        except Exception as e:
+            logger.error("HYBRID OCR: AR session load failed (%s) — disabling hybrid", e)
+            self.hybrid_enabled = False
+            self._ar_session = None
+            return False
+
+    def _run_ar_sync(self, batch: np.ndarray) -> np.ndarray:
+        if batch.dtype != self._ar_input_np_dtype:
+            batch = batch.astype(self._ar_input_np_dtype, copy=False)
+        return self._ar_session.run(None, {self._ar_input_name: batch})[0]
+
+    async def _ar_retry(
+        self,
+        crops: List[np.ndarray],
+        low_idx: List[int],
+        results: List[tuple[str, float]],
+    ) -> None:
+        """Re-OCR ``low_idx`` crops with the AR model; replace in ``results``.
+
+        Runs the AR model as ONE batch over only the low-confidence crops and
+        replaces the corresponding non-AR results in place (AR is the
+        higher-quality model on hard/stylized crops). Bumps ``ar_retry_count``.
+        The garble gate runs downstream on these replaced results, so genuinely
+        illegible SFX still drop after the AR pass.
+        """
+        if not low_idx:
+            return
+        if not self._ensure_ar_session():
+            return
+        # The AR model is ~10x heavier than non-AR; on a busy GPU its Softmax
+        # over [B,51,4407] can OOM. Run sub-batches and halve on allocation
+        # failure (mirrors the non-AR OOM guard); on a bs=1 OOM keep the non-AR
+        # result for that crop rather than failing the whole page.
+        ar_bs = len(low_idx)
+        j = 0
+        while j < len(low_idx):
+            sub = low_idx[j : j + ar_bs]
+            ar_batch = self._preprocess([crops[k] for k in sub])
+            try:
+                ar_logits = await asyncio.to_thread(self._run_ar_sync, ar_batch)
+            except ort.capi.onnxruntime_pybind11_state.RuntimeException as e:
+                if "Failed to allocate memory" in str(e) and ar_bs > 1:
+                    ar_bs = max(1, ar_bs // 2)
+                    logger.warning("HYBRID OCR: AR OOM; reducing AR batch to %d", ar_bs)
+                    continue
+                # bs==1 still OOMs (or other runtime error): skip AR for this
+                # crop, keep its non-AR result, and move on.
+                logger.warning(
+                    "HYBRID OCR: AR retry failed for %d crop(s) (%s); keeping non-AR",
+                    len(sub), e,
+                )
+                j += len(sub)
+                continue
+            ar_tc = self._decode_with_conf(ar_logits)
+            for idx, (text, conf) in zip(sub, ar_tc):
+                results[idx] = (text, conf)
+            self.ar_retry_count += len(sub)
+            j += len(sub)
+
     async def _recognize_batch_with_conf(
         self,
         image_crops: List[np.ndarray],
@@ -279,13 +409,46 @@ class ParseqOCRService:
             out.extend(self._decode_with_conf(logits))
             i += len(chunk)
 
+        nonar_ms = (time.perf_counter() - total_start) * 1000
+
+        # --- HYBRID: AR-retry on low-confidence crops -----------------------
+        # Collect the crops the gate would treat as garbled (conf < threshold)
+        # and re-OCR ONLY those with the higher-quality AR model in one batch.
+        # The replaced results then flow through the same downstream garble
+        # gate, so order is: non-AR -> AR-retry-on-low-conf -> gate.
+        ar_ms = 0.0
+        n_retry = 0
+        if self.hybrid_enabled and self._ar_model_path:
+            low_idx = [
+                k for k, (_t, c) in enumerate(out)
+                if c < self.hybrid_conf_threshold
+            ]
+            if low_idx:
+                ar_start = time.perf_counter()
+                before = self.ar_retry_count
+                await self._ar_retry(image_crops, low_idx, out)
+                n_retry = self.ar_retry_count - before
+                ar_ms = (time.perf_counter() - ar_start) * 1000
+
         total_ms = (time.perf_counter() - total_start) * 1000
-        logger.info(
-            "PARSeq OCR batch: %d crops in %.1fms (avg %.1fms/crop)",
-            len(image_crops),
-            total_ms,
-            total_ms / len(image_crops),
-        )
+        if n_retry:
+            logger.info(
+                "PARSeq OCR batch: %d crops in %.1fms (non-AR %.1fms + AR-retry "
+                "%d crops %.1fms; avg %.1fms/crop)",
+                len(image_crops),
+                total_ms,
+                nonar_ms,
+                n_retry,
+                ar_ms,
+                total_ms / len(image_crops),
+            )
+        else:
+            logger.info(
+                "PARSeq OCR batch: %d crops in %.1fms (avg %.1fms/crop)",
+                len(image_crops),
+                total_ms,
+                total_ms / len(image_crops),
+            )
         return out
 
     async def recognize_text_batch(
