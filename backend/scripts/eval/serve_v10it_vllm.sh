@@ -40,8 +40,10 @@
 set -euo pipefail
 
 PROJECT_ROOT="${PROJECT_ROOT:-/home/danny/Documents/personal/extension}"
-ADAPTER_DIR="${ADAPTER_DIR:-${PROJECT_ROOT}/backend/training/runs/manga-bubbles/gemma4_e4b_v10it/final}"
-MERGED_DIR="${MERGED_DIR:-${PROJECT_ROOT}/backend/training/runs/manga-bubbles/gemma4_e4b_v10it/merged}"
+# Production default: v11 page-context model (merged_fixed has the restored k_norm
+# weights vLLM needs — see reference-gemma4-training-quirks). Override via env for others.
+ADAPTER_DIR="${ADAPTER_DIR:-${PROJECT_ROOT}/backend/training/runs/manga-bubbles/gemma4_e4b_v11_pagecontext/final}"
+MERGED_DIR="${MERGED_DIR:-${PROJECT_ROOT}/backend/training/runs/manga-bubbles/gemma4_e4b_v11_pagecontext/merged_fixed}"
 BASE_MODEL="${BASE_MODEL:-unsloth/gemma-4-E4B-it}"
 DRAFTER="${DRAFTER:-google/gemma-4-E4B-it-assistant}"
 PORT="${PORT:-8000}"

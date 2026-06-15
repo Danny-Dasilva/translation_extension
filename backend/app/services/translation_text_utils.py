@@ -58,6 +58,23 @@ BATCHED_SYSTEM_PROMPT = (
 )
 
 
+# LIGHT page-level system prompt (A/B candidate). Deliberately minimal — the
+# v10it fine-tune COLLAPSES on the heavy few-shot BATCHED_SYSTEM_PROMPT above,
+# so this is 4 short sentences: genre framing + the self-reference fix + the
+# count/format lock. Gated behind settings.translation_system_prompt_enabled;
+# the A/B (Part13_sysprompt_off vs _on) decides whether to default it on.
+# Use `.format(target=...)` to fill the target language.
+LIGHT_SYSTEM_PROMPT = (
+    "You are translating intimate adult manga dialogue into {target}. "
+    "When a speaker refers to themselves in the third person (for example the "
+    "mother saying お母さん or 母さん about herself), translate it as "
+    "\"Mommy\" or \"I\", never \"my mom\". "
+    "Output exactly the same number of numbered lines as the input, one "
+    "translation per line, in order, nothing else. "
+    "Every line must be in natural {target}."
+)
+
+
 def format_sources(texts: List[str]) -> str:
     """Format a list of source strings into koharu's tagged-block body.
 

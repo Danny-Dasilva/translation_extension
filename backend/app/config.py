@@ -160,6 +160,32 @@ class Settings(BaseSettings):
     # language. Falls back to per-bubble parallel on any count/parse mismatch.
     batch_translate: bool = True
 
+    # A/B FLAG: prepend a SHORT genre/self-reference system message to the
+    # page-level numbered-block call (translate_numbered_block). Default False
+    # because v10it is prompt-sensitive (it collapses on the heavy few-shot
+    # BATCHED_SYSTEM_PROMPT). When True, sends [system, user]; the light prompt
+    # (LIGHT_SYSTEM_PROMPT) targets the お母さん/母さん -> "my mom" self-reference
+    # error. The Part13 A/B decides the default. Override via env
+    # TRANSLATION_SYSTEM_PROMPT_ENABLED=true|false.
+    translation_system_prompt_enabled: bool = False
+
+    # v11 PAGE-CONTEXT translation format (default ON). When True, page
+    # translation uses the EXACT context-augmented single-line format the v11
+    # `gemma4_e4b_v11_pagecontext` LoRA was trained on (see
+    # backend/scripts/data/v11/build_v11_dataset.py): for a page of N bubbles we
+    # issue N calls, each carrying the FULL numbered page as context and ONE
+    # "Translate line k: …" marked line; the assistant returns just that one
+    # line. The shared "Page:\n1. …\nN. …" prefix is byte-identical across the N
+    # calls so vLLM prefix-caching amortizes it. `translate_single` (no page
+    # context) uses the matching PLAIN v11 format
+    # ("Translate the following Japanese to English. …\n\nJapanese: {jp}").
+    # When False, the prior numbered-block ([N]/tagged) path is used unchanged.
+    #
+    # NOTE: only meaningful when serving the v11 merged model
+    # (backend/training/runs/manga-bubbles/gemma4_e4b_v11_pagecontext/merged).
+    # Serving v10it with this ON would feed v10it an out-of-distribution prompt.
+    translation_v11_pagecontext: bool = True
+
     # Per-bubble translation generation budget. Manga lines are short, but
     # longer context-aware lines (page-level numbered-block translation, multi-
     # clause narration) need headroom so they aren't truncated mid-sentence.

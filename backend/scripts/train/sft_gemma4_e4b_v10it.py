@@ -87,12 +87,17 @@ def build_chat_dataset(
     skipped = 0
     over_len = 0
     for r in df.iter_rows(named=True):
-        jp = (r.get("jp") or "").strip()
+        # v11 page-context data ships a prebuilt `prompt` column; v10 ships `jp`.
+        # Prefer `prompt`, fall back to `jp` — backward compatible with both datasets.
+        src_text = (r.get("prompt") if r.get("prompt") is not None else r.get("jp")) or ""
+        src_text = src_text.strip()
         en = (r.get("en") or "").strip()
-        if not jp or not en:
+        if not src_text or not en:
             skipped += 1
             continue
-        user_msg = user_template.format(jp=jp).rstrip()
+        # Provide both keys so either template ("{prompt}" v11 or "{jp}" v10) formats cleanly;
+        # str.format ignores the unused key and does not re-parse braces inside the value.
+        user_msg = user_template.format(prompt=src_text, jp=src_text).rstrip()
         prompt_msgs = [{"role": "user", "content": user_msg}]
         full_msgs = prompt_msgs + [{"role": "assistant", "content": en}]
         prompt_text = tok.apply_chat_template(
