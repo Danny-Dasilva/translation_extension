@@ -314,6 +314,68 @@ def pick_font(text: str) -> Path:
     return DEFAULT_FONT_PATH
 
 
+# ---------------------------------------------------------------------------
+# FIX A helpers — keep caption / orphan / SFX (no-bubble) blocks inside their
+# own bbox and avoid overlapping already-placed blocks.
+# ---------------------------------------------------------------------------
+
+# Verbose model glosses for stylized SFX ("SFX FOR A MOMENTARY SHOCK…",
+# "FLOPPING, BOUNCING") overflow the tiny scrawl boxes they belong to. When a
+# block is orphan/SFX-sized we keep only a short onomatopoeia-length token so it
+# reads as a sound effect instead of spilling a sentence over neighbouring art.
+_SFX_MAX_CHARS = 16
+
+
+def _is_sfx_sized(block: dict) -> bool:
+    """True for small, orphan/SFX-style boxes (the verbose-gloss offenders).
+
+    A box qualifies when it is flagged ``orphan`` OR is physically small
+    (short side ≤ ~48 px or area ≤ ~9 kpx) — the regime where a multi-word
+    English sentence cannot fit without overflowing.
+    """
+    w = int(block.get("maxX", 0)) - int(block.get("minX", 0))
+    h = int(block.get("maxY", 0)) - int(block.get("minY", 0))
+    short = min(abs(w), abs(h))
+    area = abs(w) * abs(h)
+    return bool(block.get("orphan")) or short <= 48 or area <= 9000
+
+
+def _truncate_sfx_text(text: str, block: dict, max_chars: int = _SFX_MAX_CHARS) -> str:
+    """Shorten a verbose SFX gloss to onomatopoeia length for a small box.
+
+    Leaves already-short strings untouched. For long glosses, keeps the first
+    word(s) up to ``max_chars`` (the actual onomatopoeia usually leads, e.g.
+    "FLOPPING, BOUNCING" -> "FLOPPING"), falling back to a hard char cut.
+    Only applies to SFX-sized boxes; larger caption boxes are returned as-is.
+    """
+    if not text:
+        return text
+    s = text.strip()
+    if len(s) <= max_chars or not _is_sfx_sized(block):
+        return s
+    # Prefer a clean word boundary within the budget.
+    words = s.replace(",", " ").split()
+    out = ""
+    for w in words:
+        trial = (out + " " + w).strip()
+        if len(trial) > max_chars:
+            break
+        out = trial
+    if not out:  # single very long word
+        out = s[:max_chars]
+    return out
+
+
+def _rects_overlap(a: tuple, b: tuple, pad: int = 0) -> bool:
+    """Axis-aligned overlap test for (x0, y0, x1, y1) ink rects."""
+    ax0, ay0, ax1, ay1 = a
+    bx0, by0, bx1, by1 = b
+    return (
+        ax0 < bx1 + pad and bx0 < ax1 + pad
+        and ay0 < by1 + pad and by0 < ay1 + pad
+    )
+
+
 def sample_bg_luminance(image: np.ndarray, x0: int, y0: int, x1: int, y1: int) -> float:
     """Mean 0-255 luminance of the background where we're about to draw.
     Koharu picks text/stroke color from a prediction model; we fall back
@@ -360,9 +422,39 @@ def compose_final(
     draw = ImageDraw.Draw(pil)
     img_h, img_w = inpainted.shape[:2]
     fit_rects = fit_rects or [None] * len(blocks)
-    for block, text, fit_rect in zip(blocks, translations, fit_rects):
+
+    # FIX A: track ink rects already placed so a later block can be shrunk /
+    # suppressed instead of overlapping an earlier one. Each entry is
+    # (x0, y0, x1, y1, is_dialogue) where is_dialogue marks bubble-matched
+    # dialogue (an orphan/SFX block must never overlap it).
+    placed_rects: list[tuple[int, int, int, int, bool]] = []
+
+    # FIX A.2: placement order matters for overlap avoidance. Place DIALOGUE
+    # (bubble-matched) first so it is never covered, then clamped caption/SFX
+    # blocks SMALLEST-area-first so the small, specific narration columns claim
+    # their space and an over-large MERGED caption box (whose OCR concatenated
+    # several columns) shrinks/clips around them instead of overlapping them.
+    order = sorted(
+        range(len(blocks)),
+        key=lambda i: (
+            0 if fit_rects[i] is not None else 1,  # dialogue first
+            (int(blocks[i]["maxX"]) - int(blocks[i]["minX"]))
+            * (int(blocks[i]["maxY"]) - int(blocks[i]["minY"])),  # then small-first
+        ),
+    )
+
+    for _idx in order:
+        block = blocks[_idx]
+        text = translations[_idx]
+        fit_rect = fit_rects[_idx]
         if not text:
             continue
+        is_dialogue = fit_rect is not None
+        is_clamped = fit_rect is None  # caption / orphan / SFX over art
+        # FIX A.3: cap verbose SFX glosses in small/orphan boxes to onomatopoeia
+        # length so they don't overflow their tiny bbox onto neighbours.
+        if is_clamped:
+            text = _truncate_sfx_text(text, block)
         # Normalize to the ASCII subset our display fonts actually cover, then
         # UPPERCASE — English manga dialogue is conventionally all-caps (Wild
         # Words / Anime Ace are caps-first), and it reads as "official" rather
@@ -374,12 +466,54 @@ def compose_final(
         rect = fit_rect if fit_rect is not None else block
         x0, y0 = int(rect["minX"]), int(rect["minY"])
         x1, y1 = int(rect["maxX"]), int(rect["maxY"])
+
+        # FIX A.2: for a clamped block, carve already-placed rects out of its
+        # working bbox so an over-large MERGED caption shrinks around the small
+        # narration columns already placed inside it (instead of overlapping
+        # them). We trim the bbox on whichever single axis recovers the most
+        # free space, keeping the largest remaining sub-rectangle.
+        if is_clamped and placed_rects:
+            for pr in placed_rects:
+                px0, py0, px1, py1, _ = pr
+                # only consider rects that meaningfully intrude into this bbox
+                ix0, iy0 = max(x0, px0), max(y0, py0)
+                ix1, iy1 = min(x1, px1), min(y1, py1)
+                if ix1 <= ix0 or iy1 <= iy0:
+                    continue
+                # candidate trims: keep the side of our bbox with more room.
+                left_room = ix0 - x0      # keep [x0, ix0]
+                right_room = x1 - ix1     # keep [ix1, x1]
+                top_room = iy0 - y0       # keep [y0, iy0]
+                bot_room = y1 - iy1       # keep [iy1, y1]
+                best = max(left_room, right_room, top_room, bot_room)
+                # require a usable remaining strip; else leave bbox (will clip).
+                if best < 24:
+                    continue
+                if best == right_room:
+                    x0 = ix1
+                elif best == left_room:
+                    x1 = ix0
+                elif best == bot_room:
+                    y0 = iy1
+                else:
+                    y1 = iy0
+            if x1 - x0 < 8:
+                x1 = x0 + 8
+            if y1 - y0 < 8:
+                y1 = y0 + 8
+
         bw, bh = x1 - x0, y1 - y0
         cx, cy = (x0 + x1) // 2, (y0 + y1) // 2
 
         # Fixed-px inset preserves a consistent visual margin at any bubble size.
         inset_w = max(20, bw - inset_margin * 2)
         inset_h = max(12, bh - inset_margin * 2)
+        # FIX A.1: for clamped (no-bubble) blocks the fit box must be the BLOCK
+        # bbox, never widened — text is shrunk-to-fit to the bbox width and
+        # wrapped, and may be clipped at the bbox edge below rather than spill.
+        if is_clamped:
+            inset_w = max(8, bw - inset_margin * 2)
+            inset_h = max(8, bh - inset_margin * 2)
 
         # Tall-narrow blocks come from vertical Japanese text columns. Rendering
         # horizontal English into that skinny box forces one-word-per-line (or
@@ -403,10 +537,69 @@ def compose_final(
         # Minimum legible floor. Below this, text is unreadable at reading
         # size — prefer a little overflow over microscopic text. Kept modest
         # (13px) so small bubbles don't get text that dwarfs them.
+        # FIX A.1: for clamped (no-bubble) blocks we let the binary search go
+        # below the floor so the text actually fits the bbox; if it still
+        # overflows the bbox height we CLIP whole lines (with a "…" marker)
+        # rather than spilling onto neighbours.
         min_floor = 13
+        fit_floor = 6 if is_clamped else min_floor
         font, lines = find_best_fit(draw, text, eff_w, eff_h, font_path,
-                                    min_size=min_floor, max_size=max_cap)
+                                    min_size=fit_floor, max_size=max_cap)
         mw, mh = measure_block(draw, lines, font)
+
+        line_h = line_height_px(font)
+        # Center the rendered block on the original block's center.
+        top = cy - mh // 2
+        left_anchor = cx
+        if is_clamped:
+            # FIX A.1: clip to the BLOCK bbox (not the canvas). Drop trailing
+            # lines that won't fit the bbox height; mark the last kept line with
+            # an ellipsis so truncation is visible instead of silent spill.
+            max_lines = max(1, (y1 - y0) // line_h) if line_h > 0 else 1
+            if len(lines) > max_lines:
+                lines = lines[:max_lines]
+                last = lines[-1].rstrip(".")
+                lines[-1] = (last + "...") if last else "..."
+                mw, mh = measure_block(draw, lines, font)
+            # Keep the rendered block vertically inside [y0, y1].
+            top = max(y0, min(top, y1 - mh))
+            top = max(y0, top)
+        else:
+            # Dialogue: clamp so the whole block stays on-canvas (a tall column
+            # near a page edge would otherwise render off the top/bottom).
+            top = max(2, min(top, img_h - mh - 2))
+
+        # Predict the rendered ink rect so we can detect collisions.
+        if is_clamped:
+            rect_x0 = max(x0, left_anchor - mw // 2)
+            rect_x1 = min(x1, rect_x0 + mw)
+        else:
+            rect_x0 = left_anchor - mw // 2
+            rect_x1 = rect_x0 + mw
+        rendered_rect = (int(rect_x0), int(top), int(rect_x1), int(top + mh))
+
+        # FIX A.2: inter-block overlap avoidance. The bbox was already carved to
+        # dodge placed rects, but a render can still intrude (tiny boxes, or
+        # captions whose free strip was too small). For a clamped block:
+        #   * orphan/SFX over a DIALOGUE block -> always SUPPRESS (never cover
+        #     dialogue);
+        #   * an SFX-sized block still overlapping ANY placed block -> SUPPRESS
+        #     (a stray gloss is less valuable than a clean neighbour);
+        #   * a larger caption still overlapping -> keep (it carries narration;
+        #     it has already been shrunk/clipped toward its own free space).
+        if is_clamped:
+            suppress = False
+            for pr in placed_rects:
+                if not _rects_overlap(rendered_rect, pr[:4]):
+                    continue
+                if pr[4]:  # overlapping DIALOGUE
+                    suppress = True
+                    break
+                if _is_sfx_sized(block):  # stray SFX over another caption
+                    suppress = True
+                    break
+            if suppress:
+                continue
 
         # Auto-contrast: flip to white text on dark plates.
         bg_lum = sample_bg_luminance(inpainted, x0, y0, x1, y1)
@@ -415,24 +608,24 @@ def compose_final(
         else:
             fill, stroke = (0, 0, 0), (255, 255, 255)
 
-        line_h = line_height_px(font)
-        # Center the rendered block on the original block's center, then clamp
-        # so the whole block stays on-canvas (a tall column near a page edge
-        # would otherwise render off the top/bottom).
-        top = cy - mh // 2
-        top = max(2, min(top, img_h - mh - 2))
         # Stroke ~10 % of font size, capped so it doesn't close counters on tiny text.
         stroke_w = max(2, min(5, round(font.size * 0.10)))
         for i, ln in enumerate(lines):
             bb = font.getbbox(ln)
             lw = bb[2] - bb[0]
-            # ink-bbox correction so the line is centered on the block center,
-            # then clamp horizontally to keep the line on-canvas.
+            # ink-bbox correction so the line is centered on the block center.
             left = cx - lw // 2 - bb[0]
-            left = max(2 - bb[0], min(left, img_w - lw - 2 - bb[0]))
+            if is_clamped:
+                # FIX A.1: clamp the line strictly to the BLOCK bbox width so it
+                # never spills past x0/x1 onto neighbours.
+                left = max(x0 - bb[0], min(left, x1 - lw - bb[0]))
+            else:
+                # Dialogue: clamp horizontally to keep the line on-canvas.
+                left = max(2 - bb[0], min(left, img_w - lw - 2 - bb[0]))
             y = top + i * line_h
             draw_stroked_text(draw, (left, y), ln, font,
                               fill=fill, stroke=stroke, stroke_width=stroke_w)
+        placed_rects.append((*rendered_rect, is_dialogue))
     return np.array(pil)
 
 
