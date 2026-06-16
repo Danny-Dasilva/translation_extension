@@ -66,10 +66,20 @@ class ComicTextDetectorService:
         return providers or available
 
     def _create_session(self, model_path: str, providers: List[str]) -> ort.InferenceSession:
+        from app.services._ort_init import cuda_provider_options
+
+        # Inject env-gated CUDA arena options (avoid greedy VRAM fill beside vLLM).
+        cuda_opts = cuda_provider_options()
+        if cuda_opts:
+            providers = [
+                ("CUDAExecutionProvider", cuda_opts) if p == "CUDAExecutionProvider" else p
+                for p in providers
+            ]
         try:
             return ort.InferenceSession(model_path, providers=providers)
         except Exception as exc:
-            if "CUDAExecutionProvider" in providers:
+            names = [p[0] if isinstance(p, tuple) else p for p in providers]
+            if "CUDAExecutionProvider" in names:
                 logger.warning("CTD CUDA init failed (%s). Falling back to CPU.", exc)
                 return ort.InferenceSession(model_path, providers=["CPUExecutionProvider"])
             raise

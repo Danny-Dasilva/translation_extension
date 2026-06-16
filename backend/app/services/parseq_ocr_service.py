@@ -28,6 +28,8 @@ import cv2
 import numpy as np
 import onnxruntime as ort
 
+from app.services._ort_init import cuda_provider_options
+
 from app.utils.ocr_postprocess import apply_all as postprocess_ocr
 
 ort.set_default_logger_severity(3)  # ERROR only
@@ -141,7 +143,7 @@ class ParseqOCRService:
         self._itos: List[str] = ["[E]"] + list(self.charset)
 
         cuda_first = [
-            ("CUDAExecutionProvider", {"cudnn_conv_algo_search": "HEURISTIC"}),
+            ("CUDAExecutionProvider", cuda_provider_options({"cudnn_conv_algo_search": "HEURISTIC"})),
             "CPUExecutionProvider",
         ]
         so = ort.SessionOptions()
@@ -295,7 +297,7 @@ class ParseqOCRService:
         so = ort.SessionOptions()
         so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
         providers = [
-            ("CUDAExecutionProvider", {"cudnn_conv_algo_search": "HEURISTIC"}),
+            ("CUDAExecutionProvider", cuda_provider_options({"cudnn_conv_algo_search": "HEURISTIC"})),
             "CPUExecutionProvider",
         ]
         try:
