@@ -96,7 +96,7 @@ def test_clamped_caption_never_below_hard_floor():
     # A modest box: small enough to exercise the floor, large enough that the
     # text doesn't need sub-9px to fit. find_best_fit falls back to min_size
     # when nothing fits, so retrying at hard_floor never goes below 9px.
-    font, lines = R.find_best_fit(
+    font, lines, _fitted = R.find_best_fit(
         draw, text, 120, 80, R.DEFAULT_FONT_PATH,
         min_size=HARD_FLOOR, max_size=96,
     )
