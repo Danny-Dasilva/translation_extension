@@ -69,6 +69,7 @@ def build_inpaint_mask(
     blocks: List[Dict],
     text_lines: List[Dict],
     detector_mask: Optional[np.ndarray],
+    erase_blocks: Optional[List[Dict]] = None,
 ) -> np.ndarray:
     """Binary 0/255 LaMa mask covering ONLY regions that will be re-rendered.
 
@@ -78,16 +79,26 @@ def build_inpaint_mask(
     large regions) but never replaced, which reads as corruption on the final
     page. Text outside kept blocks is left untouched instead.
 
+    `erase_blocks` are regions that were DROPPED by the OCR-confidence gate but
+    are real Japanese ink (e.g. stylized SFX) — they get no translation but must
+    still be erased so raw Japanese doesn't survive into the final render. We do
+    NOT draw their full bbox into the mask (that paints rectangular patches over
+    art); instead we extend the detector seg-mask clip area so the tight ink
+    pixels over them are retained. Only when there is no detector mask do we fall
+    back to a bbox fill, and only for SMALL erase_blocks (area<=9000) to avoid
+    large rectangular ghosting.
+
     Sources, in priority order per block:
       * text_lines whose center falls inside the block (tight strokes)
       * the block bbox itself when no line is assigned to it
     The detector's pixel mask is OR-ed in only where it intersects a kept
-    block's bbox (the raw mask covers every detection on the page, including
-    dropped ones).
+    block's bbox OR an erase_block's bbox (the raw mask covers every detection on
+    the page, including dropped ones).
     """
+    erase_blocks = erase_blocks or []
     h, w = image_shape[:2]
     mask = np.zeros((h, w), dtype=np.uint8)
-    if not blocks:
+    if not blocks and not erase_blocks:
         return mask
 
     # Same center-containment rule recognize_blocks_with_lines uses, so the
@@ -122,12 +133,28 @@ def build_inpaint_mask(
         if bi not in blocks_with_lines:
             cv2.rectangle(mask, (x0, y0), (x1, y1), 255, thickness=-1)
 
-    if detector_mask is not None and detector_mask.size:
+    # Extend block_area to cover erase-only (dropped-but-real-JP) blocks so the
+    # detector seg-mask clip below RETAINS their ink instead of clipping it away.
+    # We do NOT draw their bbox into `mask` (avoids rectangular patches over art);
+    # the tight detector ink is what gets erased. Only fall back to a bbox fill
+    # for SMALL erase_blocks when there is no detector mask to rely on.
+    has_detector_mask = detector_mask is not None and detector_mask.size
+    for b in erase_blocks:
+        x0 = max(0, int(b["minX"])); y0 = max(0, int(b["minY"]))
+        x1 = min(w, int(b["maxX"])); y1 = min(h, int(b["maxY"]))
+        if x1 <= x0 or y1 <= y0:
+            continue
+        cv2.rectangle(block_area, (x0, y0), (x1, y1), 255, thickness=-1)
+        if not has_detector_mask and (x1 - x0) * (y1 - y0) <= 9000:
+            cv2.rectangle(mask, (x0, y0), (x1, y1), 255, thickness=-1)
+
+    if has_detector_mask:
         dm = detector_mask
         if dm.shape[:2] != (h, w):
             dm = cv2.resize(dm, (w, h), interpolation=cv2.INTER_NEAREST)
         _, dm_bin = cv2.threshold(dm, 127, 255, cv2.THRESH_BINARY)
-        # Clip to kept-block area so dropped detections stay untouched.
+        # Clip to kept-block + erase-block area so unrelated dropped detections
+        # stay untouched while real-JP erase regions keep their ink.
         dm_bin = cv2.bitwise_and(dm_bin.astype(np.uint8), block_area)
         mask = np.maximum(mask, dm_bin)
 

@@ -24,7 +24,7 @@ from app.utils.image_processing import (
 )
 from app.utils.ctd_utils import build_text_regions, build_inpaint_mask, match_blocks_to_bubbles
 from app.utils.japanese_text_filter import is_japanese_text, filter_japanese_texts
-from app.utils.ocr_confidence_gate import is_garbled_low_conf
+from app.utils.ocr_confidence_gate import is_garbled_low_conf, should_erase_dropped
 from app.utils.orphan_lines import (
     find_orphan_lines,
     cluster_orphan_lines,
@@ -143,12 +143,17 @@ def _build_inpaint_mask(
     blocks: List[dict],
     text_lines: List[dict],
     detector_mask: Optional[np.ndarray],
+    erase_only_blocks: Optional[List[dict]] = None,
 ) -> np.ndarray:
-    """Mask only what will be re-rendered (kept blocks). See
-    app.utils.ctd_utils.build_inpaint_mask — `blocks` must be the post-filter
+    """Mask only what will be re-rendered (kept blocks) PLUS erase-only regions.
+    See app.utils.ctd_utils.build_inpaint_mask — `blocks` must be the post-filter
     list so dropped detections keep their original text instead of being
-    erased without replacement."""
-    return build_inpaint_mask(image_shape, blocks, text_lines, detector_mask)
+    erased without replacement. `erase_only_blocks` are gate-dropped real-JP SFX
+    that are erased (inpaint-only) but never translated/rendered."""
+    return build_inpaint_mask(
+        image_shape, blocks, text_lines, detector_mask,
+        erase_blocks=erase_only_blocks or [],
+    )
 
 
 def _fit_rects_to_bubble_rects(
@@ -178,12 +183,14 @@ def _run_inpaint_sync(
     text_lines: List[dict],
     detector_mask: Optional[np.ndarray],
     bubble_rects: Optional[List[Optional[Tuple[int, int, int, int]]]],
+    erase_only_blocks: Optional[List[dict]] = None,
 ) -> Optional[str]:
     """Build the erase mask, run the inpaint router (interior fill → ring fast
     path → classical → LaMa) and return the encoded plate data URL. Runs in a
     worker thread (see overlap_inpaint) so it can overlap OCR+translate."""
     inpaint_mask = _build_inpaint_mask(
-        image_np.shape, blocks, text_lines, detector_mask
+        image_np.shape, blocks, text_lines, detector_mask,
+        erase_only_blocks=erase_only_blocks,
     )
     inpainted_rgb = inpaint_service.inpaint(
         image_np, inpaint_mask, bubble_rects=bubble_rects
@@ -199,6 +206,7 @@ def _maybe_start_inpaint_task(
     detector_mask: Optional[np.ndarray],
     fit_rects: List[Optional[dict]],
     emit,
+    erase_only_blocks: Optional[List[dict]] = None,
 ) -> Optional["asyncio.Task"]:
     """Kick off the inpaint in a worker thread so it overlaps OCR+translate.
 
@@ -217,6 +225,7 @@ def _maybe_start_inpaint_task(
             text_lines,
             detector_mask,
             bubble_rects,
+            erase_only_blocks,
         )
     )
 
@@ -426,6 +435,12 @@ async def process_single_image(
             # are intentionally deferred to AFTER the semaphore is released so the
             # GPU slot is free during the out-of-process vLLM call.
             inpaint_task: Optional["asyncio.Task"] = None
+            # Snapshot the pre-filter block list BEFORE the gate reassigns
+            # `blocks` to the kept subset. Gate-dropped regions that are real JP
+            # ink (e.g. stylized SFX) are collected here for INPAINT-ONLY erase —
+            # they are never added to the parallel kept lists used by render.
+            orig_blocks = blocks
+            erase_only_blocks: List[dict] = []
             if settings.use_pipeline_overlap and len(crops) > 1:
                 # PIPELINE OVERLAP with mini-batching: OCR crops in batches of 3,
                 # filtering non-Japanese as we go. OCR stays on the GPU inside the
@@ -475,6 +490,12 @@ async def process_single_image(
                                     "OCR-gate dropped index %d (conf=%.2f): %r — garbled",
                                     i, conf, text[:24],
                                 )
+                                # Real-JP ink we drop (not translate) must still
+                                # be erased so raw Japanese doesn't survive into
+                                # the render. Collect for inpaint-only — NOT into
+                                # the parallel kept lists.
+                                if should_erase_dropped(text):
+                                    erase_only_blocks.append(orig_blocks[i])
                                 continue
                             results.append((i, text))
                     return results
@@ -512,7 +533,8 @@ async def process_single_image(
                 # here (serial, inside the semaphore) to keep GPU stages serial.
                 await emit("inpaint", 4, 5, note=f"{len(blocks)} regions")
                 inpaint_task = _maybe_start_inpaint_task(
-                    idx, image_np, blocks, text_lines, detector_mask, fit_rects, emit
+                    idx, image_np, blocks, text_lines, detector_mask, fit_rects, emit,
+                    erase_only_blocks=erase_only_blocks,
                 )
                 if not settings.overlap_inpaint:
                     inpainted_b64 = await _await_inpaint_task(idx, inpaint_task)
@@ -551,6 +573,11 @@ async def process_single_image(
                                     "Image %d: OCR-gate dropped index %d (conf=%.2f): %r",
                                     idx + 1, i, conf, ocr_texts[i][:24],
                                 )
+                                # Real-JP ink we drop (not translate) must still
+                                # be erased — collect for inpaint-only, NOT into
+                                # the parallel kept lists below.
+                                if should_erase_dropped(ocr_texts[i]):
+                                    erase_only_blocks.append(orig_blocks[i])
                                 continue
                             gated.append(i)
                         valid_indices = gated
@@ -583,7 +610,8 @@ async def process_single_image(
                 # thread frees the event loop to drive the concurrent vLLM calls.
                 await emit("inpaint", 4, 5, note=f"{len(blocks)} regions")
                 inpaint_task = _maybe_start_inpaint_task(
-                    idx, image_np, blocks, text_lines, detector_mask, fit_rects, emit
+                    idx, image_np, blocks, text_lines, detector_mask, fit_rects, emit,
+                    erase_only_blocks=erase_only_blocks,
                 )
 
                 # When overlap is disabled, finish inpaint before releasing the

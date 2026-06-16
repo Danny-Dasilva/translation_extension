@@ -85,3 +85,36 @@ def is_garbled_low_conf(
     if len(norm) < _DIALOGUE_MIN_LEN:
         return True
     return False
+
+
+def should_erase_dropped(text: str) -> bool:
+    """True if a gate-dropped region is real Japanese ink worth ERASING.
+
+    A region dropped by ``is_garbled_low_conf`` is never translated, but it may
+    still be genuine Japanese SFX/scrawl on the page. Leaving it untouched
+    renders the raw Japanese into the final image. This decides whether such a
+    dropped region should be inpainted away (erased) even though no translation
+    will be drawn over it. Conservative: a non-empty region must contain at
+    least one Japanese glyph (so stray Latin/garble-only crops are left alone).
+
+      * Empty / near-empty short text -> erase (an empty low-conf crop is real
+        ink the recognizer couldn't decode, typical of stylized SFX).
+      * Garble char present AND a JP glyph present -> erase.
+      * japanese_ratio > 0.5 -> erase.
+    """
+    norm = unicodedata.normalize("NFC", text).strip()
+    analysis = analyze_characters(norm)
+
+    if not norm:
+        # Empty/near-empty: real ink the recognizer gave up on -> erase.
+        return True
+
+    # Non-empty text must contain a Japanese glyph to be worth erasing.
+    if analysis.japanese_count == 0:
+        return False
+
+    if _has_garble_chars(norm):
+        return True
+    if analysis.japanese_ratio > _MIN_JP_RATIO_FOR_LOWCONF:
+        return True
+    return False
