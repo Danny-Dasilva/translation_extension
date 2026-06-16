@@ -104,6 +104,143 @@ _MIN_FLATFILL_LUMA = 110.0
 _MAX_FLATFILL_AREA = 6000
 
 
+# ---------------------------------------------------------------------------
+# P2-3 — erase-without-replace guard + over-broad mask clamp.
+#
+# Two QA failures on automated manga translation:
+#   (073) The only text on a cover-illustration page is the editorial margin
+#         label "表紙用イラスト" ("for cover use"). The pipeline translated and
+#         ERASED it but typeset nothing in its place, leaving a gray smear in
+#         the top margin. The human reference LEAVES such editorial / margin
+#         labels intact. So a region is only erased when real replacement
+#         English will be drawn over it (translation non-empty AND not
+#         gate-dropped AND not a leave-intact label), OR when it is genuine JP
+#         ink we explicitly want gone (see ocr_confidence_gate.should_erase_dropped).
+#   (001) An over-broad inpaint box smeared a large gray rectangle over art. A
+#         mask component whose bbox is wildly larger than the ink it contains —
+#         or larger than a sane fraction of the page — is skipped (left intact).
+# ---------------------------------------------------------------------------
+
+# Editorial / production margin labels the human reference keeps intact. These
+# are not in-panel dialogue; they sit in the page margin to instruct the
+# printer/editor ("for cover use", "color page", "title page", "colophon",
+# "table of contents", "next issue/volume"). Substring match on the NFC-
+# normalized OCR is enough — these markers do not occur inside real dialogue.
+_LEAVE_INTACT_LABEL_MARKERS: tuple[str, ...] = (
+    "表紙",      # cover
+    "イラスト用",  # "for illustration"
+    "用イラスト",  # "...-use illustration" (表紙用イラスト)
+    "カラー",     # color (page)
+    "モノクロ",   # monochrome (page)
+    "扉",        # frontispiece / title page
+    "奥付",      # colophon
+    "目次",      # table of contents
+    "巻頭",      # front of volume
+    "次号",      # next issue
+    "次巻",      # next volume
+    "ネーム",     # name/storyboard production note
+)
+
+# Over-broad mask clamp (001 smear). A single mask component is treated as
+# pathologically broad — and therefore NOT erased — when EITHER:
+#   * its bbox covers more than this fraction of the whole page (a single
+#     dialogue/SFX region never legitimately spans this much), OR
+#   * the actual ink inside the bbox fills less than this fraction of the bbox
+#     area (a box far larger than the strokes it contains is a detector blow-up
+#     / merged-region artifact that would smear background over art).
+# 0.18 of the page: the largest real 001 dialogue column is ~5.3% of the page,
+# so 18% leaves a wide safety margin over legitimate text while still catching
+# the full-quadrant rectangles that produced the cover smear.
+_MASK_BOX_PAGE_FRACTION_CAP = 0.18
+# 0.04 ink fill: tight vertical-manga text columns measure ~20-30% fill; a box
+# under 4% inked is essentially empty (mostly background that would be smeared).
+_MASK_BOX_INK_RATIO_CAP = 0.04
+
+
+def is_leave_intact_label(jp: str | None) -> bool:
+    """True if `jp` is an editorial / production margin label to keep intact.
+
+    These (e.g. 表紙用イラスト) are printer/editor instructions in the page
+    margin, not in-panel dialogue. The human reference leaves them on the page,
+    so even when the pipeline produced a translation we must NOT erase them.
+    """
+    if not jp:
+        return False
+    import unicodedata
+
+    norm = unicodedata.normalize("NFC", jp).strip()
+    if not norm:
+        return False
+    return any(marker in norm for marker in _LEAVE_INTACT_LABEL_MARKERS)
+
+
+def should_inpaint_region(
+    translation: str | None,
+    jp: str | None,
+    was_dropped: bool = False,
+    *,
+    is_label: bool | None = None,
+) -> bool:
+    """Decide whether a detected region should be ERASED (inpainted).
+
+    The invariant: only erase where real replacement English will be typeset
+    over the hole, OR where the region is genuine JP ink we explicitly want gone.
+    Erasing without replacing damages the page (the 073 margin-label smear).
+
+    Args:
+        translation: the English the renderer will typeset (None/"" = nothing).
+        jp: the source OCR text (used for label / dropped-ink classification).
+        was_dropped: True if the OCR-confidence gate dropped this region (it has
+            no translation but may still be real JP ink — defer to
+            ocr_confidence_gate.should_erase_dropped).
+        is_label: optional override for the leave-intact classification. When
+            None, falls back to is_leave_intact_label(jp).
+
+    Returns:
+        True  -> erase (a replacement will be drawn, or it is JP ink to remove).
+        False -> preserve original pixels (no replacement; leave the page alone).
+    """
+    label = is_leave_intact_label(jp) if is_label is None else is_label
+
+    has_translation = bool(translation and translation.strip())
+
+    # Case 1: a translation WILL be typeset. Erase to make room for it — UNLESS
+    # it's a leave-intact editorial/margin label (073), which the human
+    # reference keeps and which we therefore must not erase even though a
+    # translation exists.
+    if has_translation and not was_dropped:
+        return not label
+
+    # Case 2: no replacement text (empty/dropped). Only erase if this is genuine
+    # JP ink worth removing — reuse the gate's dropped-but-worth-erasing logic so
+    # raw Japanese SFX/scrawl is still cleaned, but stray Latin/garble crops and
+    # leave-intact labels are left untouched.
+    if label:
+        return False
+    try:
+        from app.utils.ocr_confidence_gate import should_erase_dropped
+    except Exception:  # noqa: BLE001 — defensive: never crash the inpaint path
+        return False
+    return should_erase_dropped(jp or "")
+
+
+def _mask_box_too_broad(box_area: int, ink_area: int, page_area: int) -> bool:
+    """True if a mask component is pathologically broad and must NOT be erased.
+
+    Guards the 001-style smear: a component whose bbox spans an unreasonable
+    fraction of the page, or whose actual ink fills only a tiny fraction of its
+    bbox, is a detector blow-up / over-broad mask. Erasing it paints a large
+    background patch over artwork, so we skip it (preserve the original pixels).
+    """
+    if box_area <= 0 or page_area <= 0:
+        return False
+    if box_area / float(page_area) > _MASK_BOX_PAGE_FRACTION_CAP:
+        return True
+    if ink_area >= 0 and (ink_area / float(box_area)) < _MASK_BOX_INK_RATIO_CAP:
+        return True
+    return False
+
+
 def _luma(px: np.ndarray) -> np.ndarray:
     """Rec.601 luminance of an (N,3) RGB float array."""
     return px[:, 0] * 0.299 + px[:, 1] * 0.587 + px[:, 2] * 0.114
@@ -407,6 +544,23 @@ class LamaInpaintService:
             # them go to classical/neural inpaint. Small components are unchanged.
             comp_area = int((crop_msk > 0).sum())
             allow_flatfill = comp_area <= _MAX_FLATFILL_AREA
+
+            # P2-3 over-broad clamp (001 smear). The component's source bbox is
+            # (bx,by,bw,bh); `comp_area` is its actual ink. If the bbox is a
+            # pathologically broad mask (covers an unreasonable page fraction, or
+            # the ink fills only a tiny sliver of it), erasing it smears a large
+            # background patch over artwork. Skip the component entirely: leave
+            # the original pixels and clear it from the working mask so nothing
+            # downstream re-touches it.
+            box_area = int(bw) * int(bh)
+            if _mask_box_too_broad(box_area, comp_area, w_full * h_full):
+                logger.debug(
+                    "inpaint: skipping over-broad mask box %dx%d (ink=%d, "
+                    "page_frac=%.3f) to avoid smear",
+                    bw, bh, comp_area, box_area / float(max(1, w_full * h_full)),
+                )
+                _clear_region_in_mask(working_mask, binary_mask, l, t, r, b)
+                continue
 
             # Tier 0 — bubbleRect interior solid-fill (R1 hybrid). If this
             # component's center sits inside a matched bubble, try to fill its
