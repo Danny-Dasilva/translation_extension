@@ -205,3 +205,36 @@ def test_suppress_or_transliterate_none_returns_ellipsis():
 
 def test_suppress_or_transliterate_empty_returns_ellipsis():
     assert suppress_or_transliterate("") == "..."
+
+
+# --- extended: word-list / descriptive meta-leak (no "SFX for" prefix) -------
+
+import pytest
+from app.services.sfx_glossary import clean_sfx_output
+
+
+@pytest.mark.parametrize("jp,en", [
+    ("ぶぶっ", "angerous, grumble, rumble rumbling"),
+    ("ばっ", "fast forceful movement noise"),
+])
+def test_descriptive_wordlist_leak_suppressed(jp, en):
+    out = clean_sfx_output(en, jp)
+    assert out != en
+    assert "grumble" not in (out or "").lower()
+    assert "," not in (out or "")
+
+
+@pytest.mark.parametrize("jp,en", [
+    ("ありがとう", "Thank you so much"),     # short kana but not SFX (no marker)
+    ("ごめんね", "I am really sorry"),         # real dialogue
+    ("だいすき", "I love you"),                # real dialogue
+    ("ドキドキ", "my heart pounds so hard"),   # katakana SFX but pronoun -> keep
+    ("まてまて", "wait wait"),                 # only 2 words
+])
+def test_descriptive_leak_does_not_touch_dialogue(jp, en):
+    assert clean_sfx_output(en, jp) == en
+
+
+def test_hiragana_sfx_transliterates():
+    # ぶぶっ has no SFX_MAP entry -> romaji fallback (not "...")
+    assert clean_sfx_output("angerous, grumble, rumble rumbling", "ぶぶっ") == "Bubu"

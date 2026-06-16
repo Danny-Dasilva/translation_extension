@@ -156,6 +156,8 @@ def _to_romaji(jp: str) -> str:
     out: list[str] = []
     prev_base = ""
     for ch in jp:
+        if "ぁ" <= ch <= "ゟ":  # hiragana block -> katakana (so kana SFX romanise)
+            ch = chr(ord(ch) + 0x60)
         if ch in ("ー",):  # chōonpu: lengthen previous vowel (drop = ascii-safe)
             continue
         if ch in ("ッ", "ｯ", "っ"):  # sokuon: gemination — keep it light, skip
@@ -256,6 +258,57 @@ def _jp_is_exact_mapped_sfx(jp: Optional[str]) -> bool:
     return _normalise_sfx_key(s) in SFX_MAP
 
 
+# Dialogue tells: a real spoken line almost always has a personal pronoun or a
+# sentence-terminal mark. A bare descriptive word-list ("angerous, grumble,
+# rumble rumbling") has neither — that's the model describing the sound.
+_PRONOUN_RE = re.compile(
+    r"\b(i|i'm|i'll|i've|i'd|you|you're|me|my|mine|your|yours|we|we're|us|our|"
+    r"he|he's|she|she's|him|her|his|they|them|their|it|it's|that's|this)\b",
+    re.IGNORECASE,
+)
+_TERMINAL_PUNCT_RE = re.compile(r"[.!?]")
+
+
+def _jp_is_kana_sfx_source(jp: Optional[str]) -> bool:
+    """True when ``jp`` looks like a kana onomatopoeia SOURCE (katakana OR
+    hiragana), used only in conjunction with :func:`_en_is_descriptive_leak`.
+
+    Pure kana (no kanji/latin/digits), short (<=5 base kana), and carrying an
+    SFX marker — a sokuon (っ/ッ), chōonpu (ー), a repeated kana, or katakana.
+    Plain short hiragana words (ありがとう, ごめんね) carry no marker -> False, so
+    real dialogue is never caught.
+    """
+    if not jp:
+        return False
+    s = jp.strip()
+    if not s or re.search(r"[一-鿿A-Za-z0-9]", s):
+        return False
+    base = [c for c in s if _KANA_KANJI_RE.match(c)]
+    if not base or len(base) > 5:
+        return False
+    if any(m in s for m in ("っ", "ッ", "ー")):
+        return True
+    if _KATAKANA_RE.search(s):
+        return True
+    return any(base[i] == base[i + 1] for i in range(len(base) - 1))
+
+
+def _en_is_descriptive_leak(en: str) -> bool:
+    """True when ``en`` is a bare multi-word description of a sound rather than
+    a spoken line: >=3 words, NO personal pronoun, and NO sentence-terminal
+    punctuation. Catches comma word-lists like "angerous, grumble, rumble
+    rumbling". Only ever used gated behind a kana-SFX source, so the few real
+    pronoun-less, punctuation-less fragments are still protected by that gate.
+    """
+    core = en.strip()
+    words = re.findall(r"[A-Za-z']+", core)
+    if len(words) < 3:
+        return False
+    if _TERMINAL_PUNCT_RE.search(core) or _PRONOUN_RE.search(core):
+        return False
+    return True
+
+
 def _en_is_sfx_shaped(en: str) -> bool:
     """True when an English line is short / punctuation-heavy enough to be SFX.
 
@@ -292,6 +345,12 @@ def clean_sfx_output(en: Optional[str], jp: Optional[str] = None) -> Optional[st
 
     # (2) Meta-description leak — the highest-priority, page-breaking case.
     if is_sfx_meta_description(en):
+        return suppress_or_transliterate(jp)
+
+    # (2b) Word-list / descriptive leak that doesn't match the "SFX for ..."
+    # patterns (e.g. "angerous, grumble, rumble rumbling" for ぶぶっ). Gated on
+    # the JP being a kana SFX source AND the English having no dialogue tells.
+    if _jp_is_kana_sfx_source(jp) and _en_is_descriptive_leak(en):
         return suppress_or_transliterate(jp)
 
     # (3) Conservative SFX correction. Fires when the English is short /
