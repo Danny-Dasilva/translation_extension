@@ -255,16 +255,22 @@ def measure_block(draw: ImageDraw.ImageDraw, lines: list[str],
 
 def find_best_fit(draw: ImageDraw.ImageDraw, text: str, max_w: int, max_h: int,
                   font_path: Path = DEFAULT_FONT_PATH,
-                  min_size: int = 6, max_size: int = 72) -> tuple[ImageFont.FreeTypeFont, list[str]]:
+                  min_size: int = 6, max_size: int = 72) -> tuple[ImageFont.FreeTypeFont, list[str], bool]:
     """Binary-search the largest font size where the wrapped text fits inside
     (max_w, max_h). Falls back to min_size if nothing fits (accepts overflow).
 
     Mirrors /tmp/koharu/koharu-renderer/src/layout.rs:133-167 run_auto —
     same [6..300] range shape, same fallback-to-minimum behaviour.
+
+    Returns ``(font, lines, fitted)`` where ``fitted`` is True only if some
+    size satisfied both ``w <= max_w`` and ``h <= max_h``. When ``fitted`` is
+    False the caller MUST clip/clamp the returned block — nothing actually fit
+    and the min-size fallback still overflows.
     """
     lo, hi = min_size, max_size
     best_font = load_font(min_size, font_path)
     best_lines = wrap_greedy(draw, text, best_font, max_w) or [text]
+    fitted = False
     while lo <= hi:
         mid = (lo + hi) // 2
         font = load_font(mid, font_path)
@@ -273,10 +279,11 @@ def find_best_fit(draw: ImageDraw.ImageDraw, text: str, max_w: int, max_h: int,
         if w <= max_w and h <= max_h:
             best_font = font
             best_lines = lines
+            fitted = True
             lo = mid + 1
         else:
             hi = mid - 1
-    return best_font, best_lines
+    return best_font, best_lines, fitted
 
 
 # ---------------------------------------------------------------------------
@@ -543,50 +550,57 @@ def compose_final(
         # rather than spilling onto neighbours.
         min_floor = 13
         fit_floor = 6 if is_clamped else min_floor
-        font, lines = find_best_fit(draw, text, eff_w, eff_h, font_path,
-                                    min_size=fit_floor, max_size=max_cap)
+        font, lines, fitted = find_best_fit(draw, text, eff_w, eff_h, font_path,
+                                            min_size=fit_floor, max_size=max_cap)
         mw, mh = measure_block(draw, lines, font)
 
         line_h = line_height_px(font)
         # Center the rendered block on the original block's center.
         top = cy - mh // 2
         left_anchor = cx
-        if is_clamped:
-            # FIX A.1: clip to the BLOCK bbox (not the canvas). Drop trailing
-            # lines that won't fit the bbox height; mark the last kept line with
-            # an ellipsis so truncation is visible instead of silent spill.
-            max_lines = max(1, (y1 - y0) // line_h) if line_h > 0 else 1
-            if len(lines) > max_lines:
-                lines = lines[:max_lines]
-                last = lines[-1].rstrip(".")
-                lines[-1] = (last + "...") if last else "..."
-                mw, mh = measure_block(draw, lines, font)
-            # Keep the rendered block vertically inside [y0, y1].
-            top = max(y0, min(top, y1 - mh))
-            top = max(y0, top)
-        else:
-            # Dialogue: clamp so the whole block stays on-canvas (a tall column
-            # near a page edge would otherwise render off the top/bottom).
-            top = max(2, min(top, img_h - mh - 2))
 
-        # Predict the rendered ink rect so we can detect collisions.
-        if is_clamped:
-            rect_x0 = max(x0, left_anchor - mw // 2)
-            rect_x1 = min(x1, rect_x0 + mw)
-        else:
-            rect_x0 = left_anchor - mw // 2
-            rect_x1 = rect_x0 + mw
+        # FIX #4: a SINGLE clamp box bounds every block so DIALOGUE text can no
+        # longer overflow its bubble. For dialogue the box is the bubble interior
+        # (rect == fit_rect, i.e. x0/y0/x1/y1 already point at it). For clamped
+        # caption/SFX blocks it is the (possibly carved) block bbox. Both axes
+        # are clamped to this box; only when the box is degenerate/larger than
+        # the canvas do we fall back to canvas extents (keeps tall edge columns
+        # on-screen). Previously dialogue clamped only to the canvas, so long
+        # translations spilled past the bubble edges.
+        clamp_x0 = max(0, min(x0, img_w))
+        clamp_y0 = max(0, min(y0, img_h))
+        clamp_x1 = max(clamp_x0 + 1, min(x1, img_w))
+        clamp_y1 = max(clamp_y0 + 1, min(y1, img_h))
+
+        # Vertical: max lines from clamp-box height; clip trailing lines + "..."
+        # for BOTH branches (dialogue previously never clipped vertically).
+        max_lines = max(1, (clamp_y1 - clamp_y0) // line_h) if line_h > 0 else 1
+        if len(lines) > max_lines:
+            lines = lines[:max_lines]
+            last = lines[-1].rstrip(".")
+            lines[-1] = (last + "...") if last else "..."
+            mw, mh = measure_block(draw, lines, font)
+        # Keep the rendered block vertically inside the clamp box. If it is
+        # taller than the box (single very tall line), pin to the top edge.
+        top = max(clamp_y0, min(top, clamp_y1 - mh))
+        top = max(clamp_y0, top)
+
+        # Predict the rendered ink rect (clamped to the box) for collision tests.
+        rect_x0 = max(clamp_x0, left_anchor - mw // 2)
+        rect_x1 = min(clamp_x1, rect_x0 + mw)
         rendered_rect = (int(rect_x0), int(top), int(rect_x1), int(top + mh))
 
-        # FIX A.2: inter-block overlap avoidance. The bbox was already carved to
-        # dodge placed rects, but a render can still intrude (tiny boxes, or
-        # captions whose free strip was too small). For a clamped block:
-        #   * orphan/SFX over a DIALOGUE block -> always SUPPRESS (never cover
-        #     dialogue);
-        #   * an SFX-sized block still overlapping ANY placed block -> SUPPRESS
-        #     (a stray gloss is less valuable than a clean neighbour);
-        #   * a larger caption still overlapping -> keep (it carries narration;
-        #     it has already been shrunk/clipped toward its own free space).
+        # FIX A.2 / FIX #4: inter-block overlap avoidance.
+        #   Clamped block:
+        #     * orphan/SFX over a DIALOGUE block -> always SUPPRESS (never cover
+        #       dialogue);
+        #     * an SFX-sized block still overlapping ANY placed block -> SUPPRESS;
+        #     * a larger caption still overlapping -> keep (shrunk/clipped).
+        #   Dialogue block:
+        #     * skip ONLY when it is clearly (>=60% of its own area) buried under
+        #       an already-placed rect — bubbles are normally disjoint, so this
+        #       fires only on detection duplicates / heavy overlap. Light overlap
+        #       is kept (suppressing real dialogue is worse than a small touch).
         if is_clamped:
             suppress = False
             for pr in placed_rects:
@@ -596,6 +610,21 @@ def compose_final(
                     suppress = True
                     break
                 if _is_sfx_sized(block):  # stray SFX over another caption
+                    suppress = True
+                    break
+            if suppress:
+                continue
+        else:
+            rr_area = max(1, (rendered_rect[2] - rendered_rect[0])
+                          * (rendered_rect[3] - rendered_rect[1]))
+            suppress = False
+            for pr in placed_rects:
+                ix0, iy0 = max(rendered_rect[0], pr[0]), max(rendered_rect[1], pr[1])
+                ix1, iy1 = min(rendered_rect[2], pr[2]), min(rendered_rect[3], pr[3])
+                if ix1 <= ix0 or iy1 <= iy0:
+                    continue
+                inter = (ix1 - ix0) * (iy1 - iy0)
+                if inter / rr_area >= 0.60:  # clearly buried
                     suppress = True
                     break
             if suppress:
@@ -615,16 +644,21 @@ def compose_final(
             lw = bb[2] - bb[0]
             # ink-bbox correction so the line is centered on the block center.
             left = cx - lw // 2 - bb[0]
-            if is_clamped:
-                # FIX A.1: clamp the line strictly to the BLOCK bbox width so it
-                # never spills past x0/x1 onto neighbours.
-                left = max(x0 - bb[0], min(left, x1 - lw - bb[0]))
-            else:
-                # Dialogue: clamp horizontally to keep the line on-canvas.
-                left = max(2 - bb[0], min(left, img_w - lw - 2 - bb[0]))
+            # FIX #4: clamp the line strictly to the clamp box for BOTH branches
+            # so it never spills past the bubble interior / block bbox. The bb[0]
+            # offset is preserved so the visible ink lands inside [clamp_x0,
+            # clamp_x1]. min<max guard handles a line wider than the box (pins
+            # to the left edge instead of inverting the clamp).
+            lo_left = clamp_x0 - bb[0]
+            hi_left = clamp_x1 - lw - bb[0]
+            if hi_left < lo_left:
+                hi_left = lo_left
+            left = max(lo_left, min(left, hi_left))
             y = top + i * line_h
             draw_stroked_text(draw, (left, y), ln, font,
                               fill=fill, stroke=stroke, stroke_width=stroke_w)
+        # FIX #4: record DIALOGUE rendered rects too (was clamped-only) so later
+        # blocks see dialogue ink and can avoid burying it.
         placed_rects.append((*rendered_rect, is_dialogue))
     return np.array(pil)
 
