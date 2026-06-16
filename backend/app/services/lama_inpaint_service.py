@@ -89,10 +89,30 @@ _BUBBLEFILL_TOLERANCE = 22.0
 _DARK_LUMA_THRESHOLD = 128.0
 _DARK_REMNANT_MAX_FRACTION = 0.70
 
+# Flat-fill safety guards (FIX #2 — blob/rectangle artifacts). With neural LaMa
+# off in prod, fills come from the solid-color tiers below. Two failure modes:
+#   (a) a dark/red background median gets flat-filled over the masked region,
+#       painting opaque dark blobs over faces. Reject any flat-fill whose median
+#       luminance is below this BT.601 threshold — legit speech bubbles are
+#       near-white (luma ≫ 110), so they are unaffected — and route to inpaint.
+_MIN_FLATFILL_LUMA = 110.0
+#   (b) flat-filling a LARGE connected component produces a big opaque patch.
+#       Components whose masked-pixel area exceeds this cap skip the flat-fill
+#       tiers entirely and fall through to classical/neural inpaint. ~6000 px²
+#       comfortably covers normal dialogue glyphs/lines while excluding the
+#       oversized regions that read as patches.
+_MAX_FLATFILL_AREA = 6000
+
 
 def _luma(px: np.ndarray) -> np.ndarray:
     """Rec.601 luminance of an (N,3) RGB float array."""
     return px[:, 0] * 0.299 + px[:, 1] * 0.587 + px[:, 2] * 0.114
+
+
+def _luma_scalar(rgb: np.ndarray) -> float:
+    """Rec.601 (BT.601) luminance of a single RGB triple. Matches the RGB
+    channel order used throughout this module (R=ch0, G=ch1, B=ch2)."""
+    return float(rgb[0]) * 0.299 + float(rgb[1]) * 0.587 + float(rgb[2]) * 0.114
 
 
 def _trim_dark_remnants(px: np.ndarray) -> np.ndarray:
@@ -381,10 +401,17 @@ class LamaInpaintService:
             if not crop_msk.any():
                 continue
 
+            # FIX #2b — oversized-component guard. Flat-filling a large masked
+            # component produces a big opaque patch, so skip both flat-fill tiers
+            # (interior fill + fastpath) for components above the area cap and let
+            # them go to classical/neural inpaint. Small components are unchanged.
+            comp_area = int((crop_msk > 0).sum())
+            allow_flatfill = comp_area <= _MAX_FLATFILL_AREA
+
             # Tier 0 — bubbleRect interior solid-fill (R1 hybrid). If this
             # component's center sits inside a matched bubble, try to fill its
             # flat interior background and skip everything downstream.
-            if scaled_rects:
+            if allow_flatfill and scaled_rects:
                 ccx = bx + bw / 2.0
                 ccy = by + bh / 2.0
                 rect = _rect_for_component(ccx, ccy)
@@ -400,10 +427,12 @@ class LamaInpaintService:
                         _clear_region_in_mask(working_mask, binary_mask, l, t, r, b)
                         continue
 
-            # Balloon-fill fast path.
-            filled_img, filled_msk, filled_count = _apply_bubble_fastpath(
-                crop_img, crop_msk
-            )
+            # Balloon-fill fast path (skipped for oversized components — FIX #2b).
+            filled_count = 0
+            if allow_flatfill:
+                filled_img, filled_msk, filled_count = _apply_bubble_fastpath(
+                    crop_img, crop_msk
+                )
             if filled_count > 0:
                 _composite_masked(out, filled_img, crop_msk, l, t)
                 # The balloon fill cleared only the pixels it painted; the
@@ -592,6 +621,11 @@ def _apply_bubble_interior_fill(
     if float(within.mean()) < _BUBBLEFILL_UNIFORM_FRACTION:
         return crop_img, crop_msk, 0
 
+    # Reject dark medians (FIX #2a): never flat-fill a dark/red background over
+    # the mask — that paints opaque blobs over faces. Fall through to inpaint.
+    if _luma_scalar(med) < _MIN_FLATFILL_LUMA:
+        return crop_img, crop_msk, 0
+
     fill = np.clip(np.round(med), 0, 255).astype(np.uint8)
     filled = crop_img.copy()
     masked_pixels = crop_msk > 0
@@ -642,7 +676,12 @@ def _apply_bubble_fastpath(
         # Trimmed uniformity: tolerate a small fraction of outliers (stray
         # screentone dots, neighbouring stroke tips) instead of a global std.
         within = (np.abs(ring_px - med) <= _RING_TOLERANCE).all(axis=1)
-        if float(within.mean()) >= _RING_UNIFORM_FRACTION:
+        # Reject dark medians (FIX #2a): a dark/red ring median would paint an
+        # opaque blob over the mask (e.g. over a face) — route to inpaint.
+        if (
+            float(within.mean()) >= _RING_UNIFORM_FRACTION
+            and _luma_scalar(med) >= _MIN_FLATFILL_LUMA
+        ):
             fill = np.clip(np.round(med), 0, 255).astype(np.uint8)
             filled = crop_img.copy()
             masked_pixels = crop_msk > 0
@@ -665,6 +704,11 @@ def _apply_bubble_fastpath(
         inpaint_thresh = _SIMPLE_BG_THRESHOLD_LOW_VARIANCE
 
     if float(std_rgb.max()) >= inpaint_thresh:
+        return crop_img, crop_msk, 0
+
+    # Reject dark medians (FIX #2a): never flat-fill a dark background over the
+    # mask — route to inpaint so we don't paint opaque blobs over art.
+    if _luma_scalar(median_rgb) < _MIN_FLATFILL_LUMA:
         return crop_img, crop_msk, 0
 
     fill = np.clip(np.round(median_rgb), 0, 255).astype(np.uint8)
