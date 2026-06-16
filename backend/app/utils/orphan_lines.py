@@ -99,9 +99,74 @@ def cluster_orphan_lines(orphans: List[Dict]) -> List[List[Dict]]:
     return list(groups.values())
 
 
+def _order_vertical_columns(cluster: List[Dict]) -> List[Dict]:
+    """Manga reading order for vertical-Japanese line fragments.
+
+    A naive ``sorted(key=(-minX, minY))`` breaks when columns overlap in X or
+    when a single column wraps: fragments belonging to the SAME column but with
+    slightly different ``minX`` get split apart, and the right-to-left grouping
+    interleaves fragments across columns. Concretely, two stacked fragments of
+    the left column whose ``minX`` differ by a pixel sort as ``B2`` before
+    ``B1`` (descending ``minX``), scrambling the column top-to-bottom order.
+
+    Instead we group fragments into COLUMNS by X-proximity: a new column starts
+    only when a fragment's X-center is more than ~one char-width left of the
+    current column's running center. Columns are then ordered right-to-left and
+    each column is read top-to-bottom, finally concatenated column-by-column.
+
+    The char-width threshold is derived from the fragments themselves (median of
+    the SHORT axis = the glyph width for a vertical column), so it adapts to the
+    page scale and stays dependency-free.
+    """
+    if len(cluster) <= 1:
+        return list(cluster)
+
+    def cx(ln: Dict) -> float:
+        return (ln["minX"] + ln["maxX"]) / 2.0
+
+    # Char width ~= median short-axis of the fragments. For a vertical column
+    # the short axis is the column WIDTH (one glyph wide). Use it as the
+    # same-column X tolerance so two columns one glyph apart stay distinct
+    # while jitter within a column does not spawn a phantom column.
+    shorts = sorted(
+        min(ln["maxX"] - ln["minX"], ln["maxY"] - ln["minY"]) for ln in cluster
+    )
+    mid = len(shorts) // 2
+    char_w = shorts[mid] if shorts[mid] > 0 else 12.0
+    tol = 0.6 * char_w  # within ~0.6 glyph width => same column
+
+    # Sweep fragments right-to-left by X-center, accreting into columns. A
+    # fragment joins the current column when its center is within ``tol`` of the
+    # column's running mean center; otherwise it opens a new (further-left)
+    # column. Running mean keeps a gently sloping column from drifting open.
+    by_x = sorted(cluster, key=lambda ln: -cx(ln))
+    columns: List[List[Dict]] = []
+    col_centers: List[float] = []
+    for ln in by_x:
+        c = cx(ln)
+        if columns and abs(c - col_centers[-1]) <= tol:
+            col = columns[-1]
+            col.append(ln)
+            # Update running mean center for the active column.
+            col_centers[-1] = sum(cx(f) for f in col) / len(col)
+        else:
+            columns.append([ln])
+            col_centers.append(c)
+
+    # Columns are already right-to-left (sweep order). Within each column read
+    # top-to-bottom. Concatenate column-by-column.
+    ordered: List[Dict] = []
+    for col in columns:
+        ordered.extend(sorted(col, key=lambda ln: ln["minY"]))
+    return ordered
+
+
 def order_cluster_lines(cluster: List[Dict]) -> List[Dict]:
     """Reading order. Horizontal lines (w > h): top-to-bottom. Vertical
-    columns: right-to-left, then top-to-bottom — matches manga convention.
+    columns: right-to-left columns, top-to-bottom within each — matches the
+    manga convention. Vertical ordering groups fragments into columns by
+    X-proximity (see ``_order_vertical_columns``) so overlapping-X / wrapped
+    columns no longer scramble.
     """
     horiz = sum(
         1
@@ -110,7 +175,7 @@ def order_cluster_lines(cluster: List[Dict]) -> List[Dict]:
     )
     if horiz >= len(cluster) / 2:
         return sorted(cluster, key=lambda ln: (ln["minY"], ln["minX"]))
-    return sorted(cluster, key=lambda ln: (-ln["minX"], ln["minY"]))
+    return _order_vertical_columns(cluster)
 
 
 def cluster_bbox(cluster: List[Dict]) -> Dict:
