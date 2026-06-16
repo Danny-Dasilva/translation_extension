@@ -176,10 +176,15 @@ def clean_translation_output(translation: str) -> str:
 
     translation = translation.strip()
 
+    # Collapse an immediately-repeated phrase ("in this world, in this world")
+    # before the garble check so the de-duplicated form is evaluated/returned.
+    translation = _dedup_repeated_phrase(translation)
+
     # Non-Latin garble guard: the small model occasionally falls out of the
     # target language (a Russian/Cyrillic leak was observed) or emits CJK /
-    # replacement-box characters. Rendering that to the page is worse than a
-    # silent gap, so replace clearly-off-target output with an ellipsis.
+    # replacement-box characters. It also emits ASCII garble — dictionary
+    # glosses, dotted/spaced emphasis, single-letter run-ons. Rendering that to
+    # the page is worse than a silent gap, so replace it with an ellipsis.
     if translation and _is_garbled(translation):
         return "..."
 
@@ -194,16 +199,71 @@ _CJK_OR_BOX_RE = re.compile(
     r"[぀-ヿ㐀-䶿一-鿿가-힯＀-￯�□]"
 )
 
+# ASCII garble guards (FIX #6). These catch corruption the char-class guards
+# miss: dictionary glosses, dotted/spaced emphasis, single-letter run-ons.
+# Dict-gloss markers (only fire on short outputs — see _is_garbled scoping).
+_DICT_GLOSS_RE = re.compile(r"\bsee also\b|\bromaji\b|\bpronounced\b")
+# letter[.․+]letter repeated: "S.h.i.+p", "U.S.A." (acronym handled separately).
+_DOTTED_LETTERS_RE = re.compile(r"\b(?:[A-Za-z][.․+]){2,}[A-Za-z]?\b")
+# A single letter repeated >=6 times: "KIKIUUUUUU" caught, "Nooooo" (5) survives.
+_LETTER_RUNON_RE = re.compile(r"([A-Za-z])\1{5,}")
+# Legit dotted "acronyms" we must NOT flag when no non-letter separator present.
+_KNOWN_ACRONYMS = {
+    "usa", "fbi", "cia", "ufo", "ok", "diy", "pm", "am", "uk", "eu",
+}
+
+
+def _dedup_repeated_phrase(text: str) -> str:
+    """Collapse an immediately-repeated phrase, conservatively.
+
+    "in this world, in this world" -> "in this world" but legit emphatic
+    repeats survive: only collapse when the phrase repeats >2 times OR the
+    repeated unit is reasonably long (>=8 chars). So "No! No!" and
+    "very very good" are left untouched.
+    """
+    if not text:
+        return text
+    m = re.match(r"^(.+?)([\s,;:.!?-]+\1)+\s*$", text)
+    if not m:
+        return text
+    unit = m.group(1).strip()
+    copies = len(re.findall(re.escape(m.group(1)), text))
+    if copies > 2 or len(unit) >= 8:
+        return unit
+    return text
+
 
 def _is_garbled(text: str) -> bool:
     """True if a translated line fell out of the (Latin) target language.
 
     Heuristics:
     - any CJK / Hangul / full-width / replacement-box / tofu char present, OR
-    - more than 30% of the letters are Cyrillic (a non-English leak).
+    - more than 30% of the letters are Cyrillic (a non-English leak), OR
+    - ASCII garble: dict-gloss markers (short outputs), dotted/spaced
+      emphasis on non-acronyms, or a single letter run on >=6 times.
     """
     if _CJK_OR_BOX_RE.search(text):
         return True
+
+    # Dict-gloss: only on short outputs (a real sentence may legitimately
+    # contain "pronounced" or "see also"); a gloss is a terse artifact.
+    if len(text) <= 60 and _DICT_GLOSS_RE.search(text.lower()):
+        return True
+
+    # Single-letter run-on ("KIKIUUUUUU").
+    if _LETTER_RUNON_RE.search(text):
+        return True
+
+    # Dotted/spaced emphasis ("S.h.i.+p"). A `+`-style separator is always
+    # garble; pure-dot tokens are only garble when not a known acronym.
+    for m in _DOTTED_LETTERS_RE.finditer(text):
+        token = m.group(0)
+        if "+" in token or "․" in token:
+            return True
+        bare = re.sub(r"[^A-Za-z]", "", token).lower()
+        if bare not in _KNOWN_ACRONYMS:
+            return True
+
     letters = [c for c in text if c.isalpha()]
     if not letters:
         return False
