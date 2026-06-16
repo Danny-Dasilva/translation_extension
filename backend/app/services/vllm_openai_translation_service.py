@@ -43,6 +43,38 @@ V11_PAGE_INSTR = (
 V11_PLAIN_INSTR = "Translate the following Japanese to English. Output only the translation."
 
 
+import re as _nre  # noqa: E402  (local alias for short-utterance normalize)
+
+# Hiragana, katakana, the long-vowel mark, and the katakana middle dot.
+_KANA_CLASS = "぀-ゟ゠-ヿー"
+# A separator (interpunct / dot / ascii-or-fullwidth space) WEDGED between two
+# kana: バ.カ / わ け. We keep `・` unless it sits between two kana (handled by
+# including it in the separator class only for the between-kana rule).
+_BETWEEN_KANA_SEP_RE = _nre.compile(
+    rf"(?<=[{_KANA_CLASS}])[\.・‧·\s　]+(?=[{_KANA_CLASS}])"
+)
+# A single char repeated >=4 times (runaway kana: ですですですです / ーーーーー).
+_KANA_RUNAWAY_RE = _nre.compile(r"(.)\1{3,}")
+
+
+def normalize_short_utterance(jp: str, max_len: int = 8) -> str:
+    """Normalize a SHORT Japanese utterance before translation.
+
+    Strips interpunct/dot/space separators wedged BETWEEN two kana
+    (バ.カ -> バカ; わ け -> わけ) and collapses runaway repeated kana
+    ((.)\\1{3,} -> two copies). Longer lines (> max_len chars) are left
+    untouched. `・` is only removed when it sits between two kana on a short
+    line; otherwise it survives.
+    """
+    if not jp:
+        return jp
+    if len(jp) > max_len:
+        return jp
+    out = _BETWEEN_KANA_SEP_RE.sub("", jp)
+    out = _KANA_RUNAWAY_RE.sub(r"\1\1", out)
+    return out.strip()
+
+
 def build_v11_context_prompt(lines: List[str], k_idx: int) -> str:
     """CONTEXT-AUGMENTED single-line user message (page translation).
 
@@ -53,10 +85,14 @@ def build_v11_context_prompt(lines: List[str], k_idx: int) -> str:
     """
     numbered = "\n".join(f"{i + 1}. {ln}" for i, ln in enumerate(lines))
     k = k_idx + 1
+    # Normalize ONLY the target line (context lines stay verbatim).
+    target = lines[k_idx]
+    if getattr(settings, "short_utterance_normalize_enabled", True):
+        target = normalize_short_utterance(target)
     return (
         f"{V11_PAGE_INSTR}\n\n"
         f"Page:\n{numbered}\n\n"
-        f"Translate line {k}: {lines[k_idx]}"
+        f"Translate line {k}: {target}"
     )
 
 
@@ -66,6 +102,8 @@ def build_v11_plain_prompt(jp: str) -> str:
     Mirrors build_v11_dataset.build_plain_prompt:
         {PLAIN_INSTR}\n\nJapanese: {jp}
     """
+    if getattr(settings, "short_utterance_normalize_enabled", True):
+        jp = normalize_short_utterance(jp)
     return f"{V11_PLAIN_INSTR}\n\nJapanese: {jp}"
 
 

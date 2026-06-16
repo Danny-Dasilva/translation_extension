@@ -186,6 +186,10 @@ class Settings(BaseSettings):
     # Serving v10it with this ON would feed v10it an out-of-distribution prompt.
     translation_v11_pagecontext: bool = True
 
+    # Normalize short Japanese utterances (interpunct/dot/space-separated kana,
+    # runaway repeated kana) before translation so the model isn't destabilized.
+    short_utterance_normalize_enabled: bool = True
+
     # Per-bubble translation generation budget. Manga lines are short, but
     # longer context-aware lines (page-level numbered-block translation, multi-
     # clause narration) need headroom so they aren't truncated mid-sentence.
