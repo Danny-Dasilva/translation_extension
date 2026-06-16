@@ -25,6 +25,7 @@ from app.utils.image_processing import (
 from app.utils.ctd_utils import build_text_regions, build_inpaint_mask, match_blocks_to_bubbles
 from app.utils.japanese_text_filter import is_japanese_text, filter_japanese_texts
 from app.utils.ocr_confidence_gate import is_garbled_low_conf, should_erase_dropped
+from app.services.translation_postedit import postedit_one
 from app.utils.orphan_lines import (
     find_orphan_lines,
     cluster_orphan_lines,
@@ -647,6 +648,10 @@ async def process_single_image(
         for block, ocr_text, translated_text, text_regions, fit_rect in zip(
             blocks, ocr_texts, translations, all_text_regions, fit_rects
         ):
+            # Post-translation glossaries (pure post-edit; v11 prompt untouched).
+            # Shared with the batch pipeline via translation_postedit.
+            translated_text = postedit_one(translated_text, ocr_text)
+
             # Font sizing target: the translation is typeset to the bubble
             # INTERIOR when one was matched (wide, horizontal) — not the tight
             # vertical-JP column. Size against the bubbleRect so a roomy balloon

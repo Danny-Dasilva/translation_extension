@@ -572,6 +572,13 @@ class ChapterPipeline:
                         except Exception:
                             tr = ""
                         translations.append(tr)
+            # Post-translation glossaries (register/names/SFX) — shared with the
+            # API router so both paths render identical corrected text.
+            if translations:
+                from app.services.translation_postedit import (
+                    apply_postedit_glossaries,
+                )
+                translations = apply_postedit_glossaries(translations, kept_texts)
             stats["translate_ms"] = (time.time() - t0) * 1000
         else:
             stats["translate_ms"] = 0.0
