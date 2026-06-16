@@ -1,0 +1,75 @@
+model:
+  # FROM BASE -it (not warm-started from v10it). Same base v10/v11 used, so the
+  # gemma-4-E4B-it-assistant MTP drafter stays compatible.
+  name_or_path: unsloth/gemma-4-E4B-it
+  dtype: bfloat16
+  max_seq_length: 1024
+  load_in_4bit: false
+  full_finetuning: false
+
+lora:
+  # Proven v10/v11 recipe — UNCHANGED.
+  r: 16
+  alpha: 32
+  dropout: 0.0
+  bias: none
+  target_modules_regex: '^model\.language_model\.layers\.\d+\.(self_attn|mlp)\.(q_proj|k_proj|v_proj|o_proj|gate_proj|up_proj|down_proj)$'
+  expected_module_count: 258
+
+data:
+  # v12: the full v11 page-context mix PLUS heavier NSFW/slang sources.
+  #
+  # NEW v12 sources merged on top of the proven v11 mix:
+  #   - vntl_chat.parquet        (register_tag=vn_eroge, NSFW slang)   -> plain
+  #   - vntl_dpo.parquet         (register_tag=vn_eroge, NSFW slang)   -> plain
+  #   - parallelfiction_v2.parquet (register_tag=novel)                -> windowed/plain
+  #   - opensubtitles.parquet    (register_tag=dialogue, NSFW/slang)   -> plain
+  #   - alt_parallel.parquet     (register_tag=general, gold)          -> plain
+  #   - doujin/doujin_pairs.parquet (register_tag=nsfw_doujin)         -> page-context
+  #
+  # NSFW/slang registers {vn_eroge, nsfw_doujin, dialogue} are OVERSAMPLED
+  # (--nsfw-oversample, default 2x) so the model gets MUCH heavier NSFW/slang
+  # coverage than v11 (which only carried VNTL eroge). Sources that did not exist
+  # at build time are skipped+logged; the builder still produces the full v11
+  # base mix. See scripts/data/v12/build_v12_dataset.py for the composition report.
+  #
+  # Schema [prompt, en, src, register_tag, gold_flag]; `prompt` is the full user
+  # message, so the template is passthrough. The shared training script
+  # (sft_gemma4_e4b_v10it.py) already prefers the `prompt` column and falls back
+  # to `jp`, so NO training-script change is needed (v10 behavior intact).
+  train_path: backend/scripts/data/v12/data_v12_pagecontext.parquet
+  eval_size: 1000
+  prompt_user_template: "{prompt}"
+  completion_field: en
+  use_chat_template: true
+
+train:
+  # Proven v10/v11 recipe — UNCHANGED.
+  num_train_epochs: 1
+  per_device_train_batch_size: 4
+  gradient_accumulation_steps: 4   # eff batch = 16
+  learning_rate: 2.0e-4
+  lr_scheduler_type: cosine
+  warmup_ratio: 0.03
+  max_grad_norm: 1.0
+  weight_decay: 0.01
+  bf16: true
+  optim: adamw_8bit
+  packing: false
+  completion_only_loss: true
+  logging_steps: 20
+  save_steps_pct: 0.25
+  eval_steps_pct: 0.05
+  save_total_limit: 5
+  seed: 42
+  dataloader_num_workers: 4
+  report_to: none
+
+output:
+  dir: backend/training/runs/manga-bubbles/gemma4_e4b_v12_pagecontext
+  log_file: backend/training/runs/manga-bubbles/gemma4_e4b_v12_pagecontext/training.log
+
+dry_run:
+  enable: true
+  fraction: 0.01
+  max_steps: 100

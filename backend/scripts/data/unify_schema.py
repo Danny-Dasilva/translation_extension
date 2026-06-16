@@ -25,9 +25,12 @@ VALID_REGISTER_TAGS: frozenset[str] = frozenset(
         "vn_eroge",
         "vn",
         "anime_sub",
+        "dialogue",      # subtitle / spoken casual register (v12)
         "novel",
         "sfx",
         "anchor",
+        "general",       # clean general-purpose anchor (v12)
+        "nsfw_doujin",   # mined NSFW doujin bubble pairs (v12)
         "synthetic",
         "garbage",  # OCR-noise -> "..." refusal examples
     }

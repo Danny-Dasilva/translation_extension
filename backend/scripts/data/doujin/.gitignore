@@ -1,0 +1,5 @@
+# Smoke-test / generated pipeline outputs (durable output lives on local disk,
+# but is regenerable and not committed).
+*.parquet
+__pycache__/
+.pytest_cache/
