@@ -18,6 +18,19 @@ from __future__ import annotations
 from typing import Dict, List
 
 
+def _join_sep() -> str:
+    """Separator for joining per-cluster OCR lines.
+
+    Mirrors ``settings.ocr_line_join_newline`` (defaults to ""); defensive
+    local import so these pure-geometry helpers stay import-safe in isolation.
+    """
+    try:
+        from app.config import settings
+        return "\n" if getattr(settings, "ocr_line_join_newline", False) else ""
+    except Exception:
+        return ""
+
+
 def find_orphan_lines(
     blocks: List[Dict], text_lines: List[Dict]
 ) -> List[Dict]:
@@ -193,12 +206,20 @@ def merge_orphans_into_blocks(
 
         o = blocks[match_i]
         ot = texts[match_i]
-        # Order the two boxes in manga reading order; lead text comes first.
-        ordered = order_cluster_lines([o, s])
-        if ordered and ordered[0] is s:
-            merged_text = (st + ot)
+        # Dedup before concatenating: overlapping detections often re-OCR the
+        # same text, so an exact/substring match would yield "X X". If one
+        # normalized string contains the other (or they are equal), keep the
+        # longer/containing one. Normalized exact/substring, not fuzzy.
+        no, ns = "".join(ot.split()), "".join(st.split())
+        if no and ns and (no == ns or ns in no or no in ns):
+            merged_text = ot if len(no) >= len(ns) else st
         else:
-            merged_text = (ot + st)
+            # Order the two boxes in manga reading order; lead text comes first.
+            ordered = order_cluster_lines([o, s])
+            if ordered and ordered[0] is s:
+                merged_text = (st + ot)
+            else:
+                merged_text = (ot + st)
         blocks[match_i] = {
             **o,
             "minX": int(min(o["minX"], s["minX"])),
@@ -244,7 +265,7 @@ async def ocr_orphan_clusters(
     for ci, t in zip(owner, texts):
         if t:
             joined[ci].append(t)
-    return ["".join(parts) for parts in joined]
+    return [_join_sep().join(parts) for parts in joined]
 
 
 async def ocr_orphan_clusters_with_conf(
@@ -290,6 +311,6 @@ async def ocr_orphan_clusters_with_conf(
         confs[ci].append(c)
         if t:
             joined[ci].append(t)
-    texts_out = ["".join(parts) for parts in joined]
+    texts_out = [_join_sep().join(parts) for parts in joined]
     confs_out = [min(cs) if cs else 0.0 for cs in confs]
     return texts_out, confs_out
