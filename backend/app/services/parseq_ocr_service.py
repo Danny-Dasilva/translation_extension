@@ -551,8 +551,25 @@ class ParseqOCRService:
             per_block_conf[owner].append(conf)
             if text:
                 per_block[owner].append(text)
-        texts = ["".join(parts) for parts in per_block]
+        try:
+            from app.config import settings
+            sep = "\n" if getattr(settings, "ocr_line_join_newline", False) else ""
+            gate = float(getattr(settings, "ocr_confidence_gate_threshold", 0.0))
+        except Exception:
+            sep = ""
+            gate = 0.0
+        texts = [sep.join(parts) for parts in per_block]
         if return_confidence:
-            confs = [min(cs) if cs else 0.0 for cs in per_block_conf]
+            # Per-line gating instead of a blanket min(): one garbled line must
+            # not drop the whole bubble. Block conf = max of lines clearing the
+            # gate; if none clear it, keep text but report the (low) max so the
+            # downstream garble gate still applies.
+            confs: List[float] = []
+            for cs in per_block_conf:
+                if not cs:
+                    confs.append(0.0)
+                    continue
+                kept = [c for c in cs if c >= gate]
+                confs.append(max(kept) if kept else max(cs))
             return texts, confs
         return texts

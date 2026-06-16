@@ -207,6 +207,11 @@ class Settings(BaseSettings):
     ocr_confidence_gate_enabled: bool = True
     ocr_confidence_gate_threshold: float = 0.65
 
+    # Join per-block OCR lines with "\n" instead of "" (the default). Changing
+    # the LLM input delimiter is format-sensitive (v11) and MUST be holdout-
+    # eval'd before flipping; default False keeps the input byte-identical.
+    ocr_line_join_newline: bool = False
+
     # Confidence-gated HYBRID OCR. Default path is the fast non-AR PARSeq model;
     # crops whose recognition confidence is below ocr_confidence_gate_threshold
     # (stylized/handwritten SFX the non-AR model garbles) are re-OCR'd in ONE
