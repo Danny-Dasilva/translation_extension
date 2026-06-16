@@ -483,6 +483,7 @@ class ChapterPipeline:
             and getattr(settings, "ocr_confidence_gate_threshold", 0.0) > 0
         )
         gate_thresh = getattr(settings, "ocr_confidence_gate_threshold", 0.65)
+        from app.services.lama_inpaint_service import is_leave_intact_label
         valid_idx: list[int] = []
         gate_dropped: list[int] = []
         for i, t in enumerate(ocr_texts):
@@ -491,6 +492,14 @@ class ChapterPipeline:
                 settings.japanese_filter_min_ratio,
                 settings.japanese_filter_katakana_max_length,
             ):
+                continue
+            if is_leave_intact_label(t):
+                # Editorial/margin label (e.g. 表紙用イラスト, 奥付) — leave as
+                # original art: do not erase, translate, or typeset over it
+                # (matches human handling; avoids erase-without-replace smear).
+                print(
+                    f"  [{image_path.name}] leave-intact label idx {i}: {t[:18]!r}"
+                )
                 continue
             conf = ocr_confs[i] if i < len(ocr_confs) else 1.0
             if gate_on and is_garbled_low_conf(t, conf, conf_threshold=gate_thresh):
