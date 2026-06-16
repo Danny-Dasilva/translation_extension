@@ -376,22 +376,34 @@ def _rects_overlap(a: tuple, b: tuple, pad: int = 0) -> bool:
     )
 
 
-def sample_bg_luminance(image: np.ndarray, x0: int, y0: int, x1: int, y1: int) -> float:
-    """Mean 0-255 luminance of the background where we're about to draw.
+def sample_bg_luminance(
+    image: np.ndarray, x0: int, y0: int, x1: int, y1: int
+) -> tuple[float, float]:
+    """Background luminance stats where we're about to draw, as
+    ``(median_luma, dark_fraction)`` over 0-255 BT.601 luminance.
+
     Koharu picks text/stroke color from a prediction model; we fall back
     to luminance-based auto-contrast (KOHARU_COMPARISON.md item #9).
+
+    FIX #5: the old MEAN over the full rect failed on wet/dark art — a
+    mostly-dark crop with a few bright specks averaged "light", so we'd
+    draw black text on a dark background. We now return the MEDIAN (robust
+    to outliers) plus ``dark_fraction`` (share of pixels with luma<96) so
+    the caller can flip to white text whenever a meaningful chunk is dark.
     """
     h, w = image.shape[:2]
     x0, y0 = max(0, x0), max(0, y0)
     x1, y1 = min(w, x1), min(h, y1)
     if x1 <= x0 or y1 <= y0:
-        return 255.0
+        return 255.0, 0.0
     crop = image[y0:y1, x0:x1].astype(np.float32)
     if crop.size == 0:
-        return 255.0
+        return 255.0, 0.0
     # BT.601 luminance
     lum = 0.299 * crop[..., 0] + 0.587 * crop[..., 1] + 0.114 * crop[..., 2]
-    return float(lum.mean())
+    median_luma = float(np.median(lum))
+    dark_fraction = float(np.mean(lum < 96))
+    return median_luma, dark_fraction
 
 
 def compose_final(
@@ -535,17 +547,24 @@ def compose_final(
         # letter, etc.) — prevents tofu squares in the final composite.
         font_path = _pick_renderable_font(pick_font(text), text)
         # Minimum legible floor. Below this, text is unreadable at reading
-        # size — prefer a little overflow over microscopic text. Kept modest
-        # (13px) so small bubbles don't get text that dwarfs them.
-        # FIX A.1: for clamped (no-bubble) blocks we let the binary search go
-        # below the floor so the text actually fits the bbox; if it still
-        # overflows the bbox height we CLIP whole lines (with a "…" marker)
-        # rather than spilling onto neighbours.
-        min_floor = 13
-        fit_floor = 6 if is_clamped else min_floor
+        # size — prefer a little overflow over microscopic text.
+        # FIX #5: raise the soft floor to 14px and give clamped (no-bubble)
+        # blocks a HARD floor of 9px (was 6px → illegibly tiny). We fit at the
+        # soft floor first; only if the result still overflows the box AND the
+        # block is clamped do we retry once down to the hard floor, leaning on
+        # the trailing-line clip+"…" path below to absorb any residual overflow.
+        # Net: clamped captions stay >=9px (usually >=14px).
+        min_floor = 14
+        hard_floor = 9
         font, lines = find_best_fit(draw, text, eff_w, eff_h, font_path,
-                                    min_size=fit_floor, max_size=max_cap)
+                                    min_size=min_floor, max_size=max_cap)
         mw, mh = measure_block(draw, lines, font)
+        if is_clamped and (mw > eff_w or mh > eff_h):
+            # Still overflowing at the soft floor: retry once, allowing the
+            # binary search down to the hard floor before accepting overflow.
+            font, lines = find_best_fit(draw, text, eff_w, eff_h, font_path,
+                                        min_size=hard_floor, max_size=max_cap)
+            mw, mh = measure_block(draw, lines, font)
 
         line_h = line_height_px(font)
         # Center the rendered block on the original block's center.
@@ -602,14 +621,18 @@ def compose_final(
                 continue
 
         # Auto-contrast: flip to white text on dark plates.
-        bg_lum = sample_bg_luminance(inpainted, x0, y0, x1, y1)
-        if bg_lum < 128:
+        # FIX #5: use median luma + dark_fraction so wet/dark art (a dark
+        # background with bright specks) still gets WHITE text. We go white
+        # when the median is dark OR a meaningful share of pixels is dark.
+        bg_median, dark_fraction = sample_bg_luminance(inpainted, x0, y0, x1, y1)
+        if bg_median < 140 or dark_fraction > 0.35:
             fill, stroke = (255, 255, 255), (0, 0, 0)
         else:
             fill, stroke = (0, 0, 0), (255, 255, 255)
 
-        # Stroke ~10 % of font size, capped so it doesn't close counters on tiny text.
-        stroke_w = max(2, min(5, round(font.size * 0.10)))
+        # FIX #5: heavier stroke (~14 % of font size, 3..8px) so the outline
+        # reads against noisy backgrounds; was ~10 % / 2..5px and too thin.
+        stroke_w = max(3, min(8, round(font.size * 0.14)))
         for i, ln in enumerate(lines):
             bb = font.getbbox(ln)
             lw = bb[2] - bb[0]
