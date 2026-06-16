@@ -535,7 +535,10 @@ class ParseqOCRService:
                 flat_owner.append(bi)
                 continue
             # Manga reading order: right-to-left columns, top-to-bottom within.
-            lines_sorted = sorted(lines, key=lambda ln: (-ln["minX"], ln["minY"]))
+            # Use the shared column-grouping ordering (robust to wrapped/
+            # overlapping-X columns) rather than a flat (-minX, minY) sort.
+            from app.utils.orphan_lines import order_cluster_lines
+            lines_sorted = order_cluster_lines(lines)
             for ln in lines_sorted:
                 x0 = max(0, ln["minX"] - padding)
                 y0 = max(0, ln["minY"] - padding)
