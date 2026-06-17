@@ -34,6 +34,7 @@ import app.services._ort_init  # noqa: E402,F401  (side-effect: preload CUDA lib
 import argparse  # noqa: E402
 import asyncio  # noqa: E402
 import json  # noqa: E402
+import os  # noqa: E402
 import statistics  # noqa: E402
 import time  # noqa: E402
 from typing import Optional  # noqa: E402
@@ -750,7 +751,27 @@ async def main() -> None:
             "discovered page stems. If absent, process all."
         ),
     )
+    ap.add_argument(
+        "--ocr-batch-size",
+        type=int,
+        default=None,
+        help=(
+            "PARSeq OCR batch size. Defaults to 2 here (this script co-locates "
+            "with vLLM on one GPU; the production config default of 8 OOM-spams "
+            "the OCR softmax on dense pages with ~8GB free). Pass a higher value "
+            "for a non-contended GPU. Env PARSEQ_BATCH_SIZE still overrides."
+        ),
+    )
     args = ap.parse_args()
+
+    # Co-located default: unless PARSEQ_BATCH_SIZE was set in the env (which
+    # pydantic already applied) or --ocr-batch-size was passed, cap the OCR
+    # batch at 2 so a vLLM-shared GPU doesn't OOM-retry the softmax node.
+    if args.ocr_batch_size is not None:
+        settings.parseq_batch_size = args.ocr_batch_size
+    elif "PARSEQ_BATCH_SIZE" not in os.environ:
+        settings.parseq_batch_size = 2
+    print(f"ocr batch size: {settings.parseq_batch_size}")
 
     pages = discover_pages(args.input_dir)
     if args.pages:
