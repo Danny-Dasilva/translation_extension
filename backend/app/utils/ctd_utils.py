@@ -70,8 +70,21 @@ def build_inpaint_mask(
     text_lines: List[Dict],
     detector_mask: Optional[np.ndarray],
     erase_blocks: Optional[List[Dict]] = None,
+    fit_rects: Optional[List[Optional[Dict]]] = None,
 ) -> np.ndarray:
     """Binary 0/255 LaMa mask covering ONLY regions that will be re-rendered.
+
+    BUBBLE-AWARE FILL (2026-06-17): only blocks matched to a speech bubble
+    (``fit_rects[i] is not None`` — i.e. dialogue inside a balloon) get a SOLID
+    rectangular fill (line-rect / block-bbox). Blocks with no bubble (SFX or text
+    over artwork) rely on the TIGHT detector seg-mask ink instead, so the eraser
+    never paints solid rectangles over art. This is the flooding fix: with the
+    high-recall v26 detector (~40 blocks / 86 lines per page) the old
+    unconditional solid fills covered ~40% of a dense page; gating them to bubbles
+    drops that to the ~4-6% tight-ink footprint. Bubble interiors are still fully
+    cleared for re-render by the separate ``enable_bubble_solid_fill`` inpaint tier
+    (via ``bubble_rects``). ``fit_rects`` must align index-for-index with ``blocks``;
+    when None (no bubble detector) ALL blocks fall back to tight ink.
 
     `blocks` must be the post-filter ("kept") blocks — the ones whose OCR text
     passed the Japanese filter and will receive a rendered translation. Erasing
@@ -101,6 +114,16 @@ def build_inpaint_mask(
     if not blocks and not erase_blocks:
         return mask
 
+    # Bubble-aware fill: a block is "dialogue in a balloon" iff it matched a
+    # bubble. Only those get solid rectangular fills; the rest (SFX / text over
+    # art) use the tight detector seg-mask ink (OR-ed in below, clipped to
+    # block_area). Without a bubble detector (fit_rects None) nothing is bubble,
+    # so every block uses tight ink — strictly safe against over-erasure.
+    is_bubble = [False] * len(blocks)
+    if fit_rects:
+        for i in range(min(len(blocks), len(fit_rects))):
+            is_bubble[i] = fit_rects[i] is not None
+
     # Same center-containment rule recognize_blocks_with_lines uses, so the
     # erased area always matches the OCR'd area.
     blocks_with_lines = set()
@@ -118,7 +141,9 @@ def build_inpaint_mask(
                 pad = max(4, int(0.35 * min(lw, lh)))
                 x0 = max(0, int(ln["minX"]) - pad); y0 = max(0, int(ln["minY"]) - pad)
                 x1 = min(w, int(ln["maxX"]) + pad); y1 = min(h, int(ln["maxY"]) + pad)
-                if x1 > x0 and y1 > y0:
+                # Solid line-rect only for bubble dialogue; SFX/over-art lines
+                # rely on the tight seg-mask ink OR-ed in below.
+                if is_bubble[bi] and x1 > x0 and y1 > y0:
                     cv2.rectangle(mask, (x0, y0), (x1, y1), 255, thickness=-1)
                 blocks_with_lines.add(bi)
                 break
@@ -130,7 +155,9 @@ def build_inpaint_mask(
         if x1 <= x0 or y1 <= y0:
             continue
         cv2.rectangle(block_area, (x0, y0), (x1, y1), 255, thickness=-1)
-        if bi not in blocks_with_lines:
+        # Solid bbox fill only for line-less bubble dialogue; SFX/over-art blocks
+        # rely on the tight seg-mask ink (clipped to block_area) instead.
+        if bi not in blocks_with_lines and is_bubble[bi]:
             cv2.rectangle(mask, (x0, y0), (x1, y1), 255, thickness=-1)
 
     # Extend block_area to cover erase-only (dropped-but-real-JP) blocks so the

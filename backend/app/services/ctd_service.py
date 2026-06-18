@@ -485,10 +485,16 @@ class ComicTextDetectorService:
         If ``legacy=True``, falls back to the pre-koharu behavior (plain
         threshold without block-aware refinement) for A/B comparisons.
         """
+        # v26 emits a 2-channel mask: ch0=text, ch1=onomatopoeia (SFX). Combine
+        # both (pixelwise max) so SFX ink is in the erase mask, not just dialogue
+        # text. The block-bounds refinement below still clips it to detected
+        # blocks/SFX regions, so this cannot leak onto un-detected art. (When the
+        # model's ono channel is dead — e.g. round1seg — this is a near no-op; the
+        # SFX capability lives in the model's ono head, trained on COO/MS92 ono.)
         if mask.ndim == 4:
-            mask = mask[0, 0]
+            mask = mask[0].max(axis=0) if mask.shape[1] >= 2 else mask[0, 0]
         elif mask.ndim == 3:
-            mask = mask[0]
+            mask = mask.max(axis=0) if mask.shape[0] >= 2 else mask[0]
 
         pw, ph = padded_size
         mask = mask[:ph, :pw]

@@ -145,15 +145,19 @@ def _build_inpaint_mask(
     text_lines: List[dict],
     detector_mask: Optional[np.ndarray],
     erase_only_blocks: Optional[List[dict]] = None,
+    fit_rects: Optional[List[Optional[dict]]] = None,
 ) -> np.ndarray:
     """Mask only what will be re-rendered (kept blocks) PLUS erase-only regions.
     See app.utils.ctd_utils.build_inpaint_mask — `blocks` must be the post-filter
     list so dropped detections keep their original text instead of being
     erased without replacement. `erase_only_blocks` are gate-dropped real-JP SFX
-    that are erased (inpaint-only) but never translated/rendered."""
+    that are erased (inpaint-only) but never translated/rendered. `fit_rects`
+    (per-kept-block bubble match) drives bubble-aware solid fill — only bubble
+    dialogue gets solid rects, SFX/over-art uses tight seg-ink."""
     return build_inpaint_mask(
         image_shape, blocks, text_lines, detector_mask,
         erase_blocks=erase_only_blocks or [],
+        fit_rects=fit_rects,
     )
 
 
@@ -185,6 +189,7 @@ def _run_inpaint_sync(
     detector_mask: Optional[np.ndarray],
     bubble_rects: Optional[List[Optional[Tuple[int, int, int, int]]]],
     erase_only_blocks: Optional[List[dict]] = None,
+    fit_rects: Optional[List[Optional[dict]]] = None,
 ) -> Optional[str]:
     """Build the erase mask, run the inpaint router (interior fill → ring fast
     path → classical → LaMa) and return the encoded plate data URL. Runs in a
@@ -192,6 +197,7 @@ def _run_inpaint_sync(
     inpaint_mask = _build_inpaint_mask(
         image_np.shape, blocks, text_lines, detector_mask,
         erase_only_blocks=erase_only_blocks,
+        fit_rects=fit_rects,
     )
     inpainted_rgb = inpaint_service.inpaint(
         image_np, inpaint_mask, bubble_rects=bubble_rects
@@ -227,6 +233,7 @@ def _maybe_start_inpaint_task(
             detector_mask,
             bubble_rects,
             erase_only_blocks,
+            fit_rects,
         )
     )
 
