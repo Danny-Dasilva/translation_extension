@@ -60,12 +60,20 @@ class Settings(BaseSettings):
     animetext_confidence_threshold: float = 0.272  # From model's threshold.json
 
     # Comic Text Detector (CTD) - includes text_lines and mask
-    ctd_model_path: str = "models/comictextdetector.onnx"
-    ctd_input_size: int = 1024
-    ctd_text_threshold: float = 0.3
+    #
+    # v26 retrain (round1seg / "v4", 2026-06-12). Contract differs from V5:
+    #   outputs = det[1,300,6] (axis-aligned blocks, NMS-free) +
+    #             mask[1,2,H,W] (ch0=text, ch1=onomatopoeia) +
+    #             obb[1,300,7] (oriented text lines).
+    # The export has a FIXED 1280x1280 input, so ctd_input_size MUST be 1280
+    # (feeding 1024 raises a shape error). The seg head is tuned for a 0.8 text
+    # threshold; the legacy 0.3 over-flags ~2x on screentone/dark art.
+    ctd_model_path: str = "models/comictextdetector_v26_round1seg_20260612.onnx"
+    ctd_input_size: int = 1280
+    ctd_text_threshold: float = 0.8
     ctd_block_confidence: float = 0.4
     ctd_min_text_area: int = 100
-    ctd_nms_free: bool = False  # Enable NMS to filter duplicate overlapping boxes
+    ctd_nms_free: bool = True  # v26 det head is NMS-free (one-to-one, 300 slots)
 
     # Orphan-line recovery: text_lines whose center sits inside NO detected
     # block are otherwise silently dropped before OCR (SMS balloons, vertical

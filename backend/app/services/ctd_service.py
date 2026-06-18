@@ -175,6 +175,20 @@ class ComicTextDetectorService:
         output_names = [out.name.lower() for out in self.session.get_outputs()]
         name_map = {name: output for name, output in zip(output_names, outputs)}
 
+        # --- v26 contract: det (axis-aligned blocks) + mask (2ch seg) + obb
+        # (oriented text lines). The legacy name heuristic below misroutes the
+        # v26 "det" output (which is BLOCKS) into lines_map and ignores "obb",
+        # so detect it explicitly. obb is a [1,N,>=6] box tensor, NOT a DBNet
+        # probability map, so it is parsed by _parse_obb_lines (not the prob-map
+        # path); we return it as lines_map and branch on ndim downstream.
+        if "det" in name_map and "mask" in name_map and "obb" in name_map:
+            # v26's axis-aligned "det" block head is unreliable in this export
+            # (blk_det is an external path in the .pt, not fused into the ONNX;
+            # confidences peak ~0.1, below block_confidence). The "obb" oriented
+            # line head IS trained, so we drive text-lines from obb and let
+            # detect() derive blocks from those lines. blks=None forces that path.
+            return None, name_map["mask"], name_map["obb"]
+
         blks = None
         lines_map = None
         mask = None
@@ -370,9 +384,42 @@ class ComicTextDetectorService:
         padded_size: Tuple[int, int],
         orig_size: Tuple[int, int]
     ) -> List[Dict]:
-        """Extract tight text boxes from the DBNet probability map."""
+        """Extract tight text boxes from the DBNet probability map (V5) or from
+        the v26 OBB oriented-line box tensor."""
         if lines_map is None:
             return []
+
+        # v26 OBB path: a [1, N, C] box tensor (C ~ 7), NOT a spatial prob map.
+        # Columns: [cx, cy, w, h, cls0_conf, cls1_conf, angle] in input-letterbox
+        # pixel space. We emit axis-aligned bboxes (the small angle is folded into
+        # the AABB) so downstream gating/crops work; blocks are then derived from
+        # these lines by detect().
+        arr = lines_map[0] if lines_map.ndim == 3 else lines_map
+        if arr.ndim == 2 and arr.shape[1] <= 16:
+            w, h = orig_size
+            line_conf = min(self.block_confidence, 0.3)  # OBB op-point (~0.25-0.4)
+            out: List[Dict] = []
+            for row in arr:
+                cx, cy, bw, bh = (float(v) for v in row[:4])
+                conf = float(np.max(row[4:6])) if arr.shape[0] and row.shape[0] >= 6 else float(row[4])
+                if conf < line_conf or bw <= 1 or bh <= 1:
+                    continue
+                x1, y1 = cx - bw / 2.0, cy - bh / 2.0
+                x2, y2 = cx + bw / 2.0, cy + bh / 2.0
+                min_x = int(max(0, min(x1 / scale, w)))
+                min_y = int(max(0, min(y1 / scale, h)))
+                max_x = int(max(0, min(x2 / scale, w)))
+                max_y = int(max(0, min(y2 / scale, h)))
+                if max_x <= min_x or max_y <= min_y:
+                    continue
+                area_orig = (max_x - min_x) * (max_y - min_y)
+                if area_orig < self.min_area:
+                    continue
+                out.append({
+                    "minX": min_x, "minY": min_y, "maxX": max_x, "maxY": max_y,
+                    "area": int(area_orig), "confidence": conf,
+                })
+            return out
 
         if lines_map.ndim == 4:
             prob_map = lines_map[0, 0]
