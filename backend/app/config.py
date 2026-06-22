@@ -11,8 +11,11 @@ class Settings(BaseSettings):
     gemini_api_key: Optional[str] = None
 
     # Server
+    # Canonical port layout: vLLM serves on 8000 (vllm_base_url below), this
+    # FastAPI backend serves on 8001, and the browser extension talks to 8001.
+    # This avoids the old collision where both defaulted to 8000.
     host: str = "0.0.0.0"
-    port: int = 8000
+    port: int = 8001
     debug: bool = True
 
     # CORS
@@ -68,7 +71,7 @@ class Settings(BaseSettings):
     # The export has a FIXED 1280x1280 input, so ctd_input_size MUST be 1280
     # (feeding 1024 raises a shape error). The seg head is tuned for a 0.8 text
     # threshold; the legacy 0.3 over-flags ~2x on screentone/dark art.
-    ctd_model_path: str = "models/comictextdetector_v26_round1seg_20260612.onnx"
+    ctd_model_path: str = "models/comictextdetector_v26_round9_onofix_20260622.onnx"
     ctd_input_size: int = 1280
     ctd_text_threshold: float = 0.8
     ctd_block_confidence: float = 0.4
@@ -101,6 +104,17 @@ class Settings(BaseSettings):
 
     # Weights directory (for downloaded models)
     weights_dir: str = "app/weights"
+
+    # Flag-for-finetune storage. Users flag poor translations from the
+    # extension; POST /flag persists the ORIGINAL source image + metadata here
+    # as a fine-tune dataset seed (image PNGs + flagged.jsonl record per flag).
+    # Relative to the backend working directory; gitignored (data/).
+    flagged_dir: str = "data/flagged"
+
+    # Async/non-blocking logging. Structured translation logs are written to a
+    # rotating JSONL file under this directory via a QueueListener background
+    # thread (logging never blocks the request path). See app/logging_config.py.
+    log_dir: str = "logs"
 
     # Performance Tuning
     detection_confidence: float = 0.25
@@ -203,6 +217,15 @@ class Settings(BaseSettings):
     # clause narration) need headroom so they aren't truncated mid-sentence.
     # Lower = fewer decode steps on overlong generations. Raise if truncation seen.
     translate_max_tokens: int = 64
+
+    # English early-exit (post-OCR). When a detected region reads HORIZONTALLY
+    # (Latin layout, per the CTD per-line `direction`) AND its OCR text is NOT
+    # recognized as Japanese, the region is left as original pixels: not
+    # OCR-translated, not inpainted, no TextBox emitted. Japanese is near-always
+    # vertical in manga; horizontal Latin is English UI/watermark/caption text
+    # the reader wants untouched. Guards against horizontal JP SFX via the
+    # content (is_japanese) check. The user wants this ON by default.
+    english_early_exit_enabled: bool = True
 
     # Japanese text filter (post-OCR)
     # Filters out non-Japanese text that MangaOCR may hallucinate from English
