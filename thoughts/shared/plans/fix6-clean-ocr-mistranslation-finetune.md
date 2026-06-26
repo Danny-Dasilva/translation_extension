@@ -229,7 +229,17 @@ Reuse the existing harness and add a targeted probe:
 ## 9. Sequence (effort)
 
 1. Run `extract_mistranslation_pairs.py` over the Ikenie 4 bench dirs → seed JSONL of
-   `(jp, our_en, human_en)` triples (human_en is a vision-OCR DRAFT or empty placeholder). [skeleton delivered]
+   `(jp, our_en, human_en)` triples (human_en is a vision-OCR DRAFT or empty placeholder).
+   **[DONE — extraction half functional + run.]** The `(jp, our_en)` extraction half is
+   implemented (clean-OCR filter: `ocr_conf ≥ 0.85`, not `filtered`/`ocr_gate_dropped`,
+   `translation_en` present, garble rejected via `is_garbled` + the production
+   `is_implausible_japanese` gate) and produced **1085 clean-OCR candidate rows** across all
+   134 pages → `backend/scripts/data/v11/seed_cleanocr_pairs.jsonl`. Each row also carries a
+   coarse `submode_guess` (vocab 48 / negation 45 / idiom 2 / other 990) to pre-sort the review
+   queue. **`human_en` is left EMPTY** — it is TYPESET into the GT page `.webp` and is NOT in any
+   structured field; **GT human-EN recovery (vision-OCR draft or manual transcription, then human
+   verification) is the remaining step before these become training rows.** No `human_en` is
+   fabricated.
 2. Human pass: fill/verify `human_en`, assign sub-mode + register_tag, euphemism-audit (c). Drop
    bad pairs (garbled JP, euphemized GT, ambiguous polarity).
 3. Expand from the broader corpus + author the gloss rows (§5).
