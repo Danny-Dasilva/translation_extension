@@ -566,7 +566,11 @@ async def process_single_image(
                                 ):
                                     ctx_dropped.append((i, text))
                                 continue
-                            results.append((i, text))
+                            # Carry the REAL recognition confidence alongside the
+                            # kept (i, text) so the post-edit name-invention
+                            # suppressor can fire on the WS/pipelined path too
+                            # (batch path already threads it via kept_ocr_confs).
+                            results.append((i, text, conf))
                     return results
 
                 paired = await ocr_pipelined()
@@ -576,12 +580,13 @@ async def process_single_image(
                     await emit("done", 5, 5, note="all_filtered")
                     return (idx, [], None)
 
-                # Extract OCR results and filter parallel lists to kept indices
-                kept_indices = [i for i, _ in paired]
-                ocr_texts = [text for _, text in paired]
+                # Extract OCR results and filter parallel lists to kept indices.
+                # `paired` is (block_index, ocr_text, ocr_conf) per kept bubble.
+                kept_indices = [i for i, _t, _c in paired]
+                ocr_texts = [text for _i, text, _c in paired]
                 # WHOLE-PAGE v11 context: numbered page = kept dialogue + dropped
                 # dialogue lines, in reading (block) order; targets = kept lines.
-                ctx_map = {i: t for i, t in paired}
+                ctx_map = {i: t for i, t, _c in paired}
                 ctx_map.update({i: t for i, t in ctx_dropped})
                 context_order = sorted(ctx_map)
                 page_context_lines = [ctx_map[i] for i in context_order]
@@ -590,14 +595,12 @@ async def process_single_image(
                 blocks = [blocks[i] for i in kept_indices]
                 crops = [crops[i] for i in kept_indices]
                 all_text_regions = [all_text_regions[i] for i in kept_indices]
-                # NOTE: the pipelined OCR path consumes recognition confidence
-                # inside the garble gate (ocr_pipelined) and does not retain it
-                # per kept bubble. To enable low-conf name-invention suppression
-                # here too, `paired` would need to carry conf as a 3-tuple
-                # (i, text, conf). Until then we pass None (no suppression),
-                # which is the prior behaviour. The batch branch threads real
-                # confidence via kept_ocr_confs.
-                kept_ocr_confs = [None] * len(ocr_texts)
+                # Thread the REAL per-bubble OCR recognition confidence (kept in
+                # `paired`, aligned 1:1 with ocr_texts) so the post-edit
+                # low-confidence name-invention suppressor activates on the
+                # WS/pipelined live path — matching the batch branch's contract.
+                # Defaults to None only when a confidence genuinely isn't present.
+                kept_ocr_confs = [c for _i, _t, c in paired]
 
                 ocr_time = time.time() - ocr_start
 
