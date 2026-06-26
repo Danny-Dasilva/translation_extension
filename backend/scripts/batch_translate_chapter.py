@@ -47,6 +47,7 @@ from app.services.detector_factory import create_detector  # noqa: E402
 from app.services.parseq_ocr_service import ParseqOCRService  # noqa: E402
 from app.services.translation_text_utils import format_sources  # noqa: E402
 from app.utils.japanese_text_filter import is_japanese_text  # noqa: E402
+from app.utils.english_region import should_skip_as_english  # noqa: E402
 from app.utils.ocr_confidence_gate import is_garbled_low_conf  # noqa: E402
 from app.utils.ctd_utils import (  # noqa: E402
     build_inpaint_mask,
@@ -58,6 +59,10 @@ from app.utils.orphan_lines import (  # noqa: E402
     ocr_orphan_clusters_with_conf,
     cluster_bbox,
     merge_orphans_into_blocks,
+    reading_order_sort,
+)
+from app.utils.ocr_confidence_gate import (  # noqa: E402
+    is_dialogue_context_candidate,
 )
 
 from PIL import ImageDraw, ImageFont  # noqa: E402
@@ -475,6 +480,23 @@ class ChapterPipeline:
                 stats["orphan_blocks_added"] = added
                 stats["orphan_blocks_merged"] = merged
 
+        # --- COLUMN-MAJOR RTL reading order over the FULL merged block list ---
+        # The v11 page-context model was trained with the page's bubbles in
+        # column-major right-to-left order (build_v11_dataset.manga_reading_order).
+        # Re-sort blocks (and the parallel ocr_texts/ocr_confs) into that exact
+        # order so the "Page:" context the model sees matches training AND orphan
+        # blocks land in their true reading position (not appended at the end).
+        # reading_order_sort returns the SAME block objects in new order, so we
+        # permute the parallel lists by object identity.
+        if len(blocks) > 1:
+            ordered_blocks = reading_order_sort(blocks)
+            pos = {id(b): i for i, b in enumerate(blocks)}
+            perm = [pos[id(b)] for b in ordered_blocks]
+            blocks = ordered_blocks
+            ocr_texts = [ocr_texts[i] for i in perm]
+            if len(ocr_confs) == len(perm):
+                ocr_confs = [ocr_confs[i] for i in perm]
+
         # --- Japanese filter + OCR-confidence garble gate ---
         # Keep a bubble only if it is Japanese AND not (low-OCR-confidence AND
         # garbled). The gate stops hallucinated captions on stylized SFX/scrawl
@@ -487,6 +509,11 @@ class ChapterPipeline:
         from app.services.lama_inpaint_service import is_leave_intact_label
         valid_idx: list[int] = []
         gate_dropped: list[int] = []
+        # Block-ordered indices of lines that should appear in the page CONTEXT:
+        # all kept dialogue PLUS gate-dropped DIALOGUE lines (not rendered, but
+        # they inform speaker/pronoun continuity). Pure-SFX / non-dialogue drops
+        # are excluded. Used to build the whole-page v11 context below.
+        context_idx: list[int] = []
         for i, t in enumerate(ocr_texts):
             if not is_japanese_text(
                 t,
@@ -502,19 +529,45 @@ class ChapterPipeline:
                     f"  [{image_path.name}] leave-intact label idx {i}: {t[:18]!r}"
                 )
                 continue
+            if getattr(settings, "english_early_exit_enabled", True) and should_skip_as_english(
+                blocks[i], text_lines, t, is_japanese_text
+            ):
+                # Horizontal/Latin (non-Japanese) region — leave as ORIGINAL
+                # pixels: not translated, not erased (NOT added to kept_blocks,
+                # so build_inpaint_mask never sees it), no TextBox. Same clean
+                # skip as the leave-intact label above.
+                print(
+                    f"  [{image_path.name}] English early-exit skipped idx {i}: {t[:30]!r}"
+                )
+                continue
             conf = ocr_confs[i] if i < len(ocr_confs) else 1.0
             if gate_on and is_garbled_low_conf(t, conf, conf_threshold=gate_thresh):
                 gate_dropped.append(i)
+                # A dropped DIALOGUE line still belongs in the page context (no
+                # holes for the v11 model); a pure-SFX / garble drop does not.
+                if (
+                    getattr(settings, "translation_pagecontext_whole_page", True)
+                    and is_dialogue_context_candidate(t, ocr_confidence=conf)
+                ):
+                    context_idx.append(i)
                 print(
                     f"  [{image_path.name}] OCR-gate dropped idx {i} "
                     f"(conf={conf:.2f}) {t[:24]!r} — garbled, not sent to LLM"
                 )
                 continue
             valid_idx.append(i)
+            context_idx.append(i)
         kept_blocks = [blocks[i] for i in valid_idx]
         kept_texts = [ocr_texts[i] for i in valid_idx]
         kept_confs = [ocr_confs[i] if i < len(ocr_confs) else 1.0 for i in valid_idx]
+        # Whole-page v11 context: numbered page = all context_idx lines in
+        # reading order; targets = the kept lines' positions within that page.
+        context_idx.sort()
+        page_context_lines = [ocr_texts[i] for i in context_idx]
+        ctx_pos = {orig: p for p, orig in enumerate(context_idx)}
+        target_positions = [ctx_pos[i] for i in valid_idx]
         stats["num_kept"] = len(kept_texts)
+        stats["num_context"] = len(page_context_lines)
         stats["ocr_gate_dropped"] = len(gate_dropped)
 
         # --- inpaint mask from KEPT blocks only ---
@@ -542,8 +595,39 @@ class ChapterPipeline:
         if self.translator is not None and kept_texts:
             t0 = time.time()
             translations = []
-            if (
+            # WHOLE-PAGE v11 context: when the v11 page-context path is on and the
+            # context is wider than the kept set (dropped dialogue lines), mark
+            # ONLY the kept lines but pass the FULL page (page_context_lines) as
+            # context so the model sees the page it was trained on with no holes.
+            use_whole_page = (
                 settings.batch_translate
+                and settings.translation_v11_pagecontext
+                and getattr(settings, "translation_pagecontext_whole_page", True)
+                and len(page_context_lines) > 1
+                and hasattr(self.translator, "translate_page_context_marked")
+            )
+            if use_whole_page:
+                try:
+                    marked = await self.translator.translate_page_context_marked(
+                        page_context_lines, target_positions, "English"
+                    )
+                    if len(marked) == len(kept_texts) and any(
+                        b.strip() for b in marked
+                    ):
+                        translations = marked
+                    else:
+                        print(
+                            f"  [{image_path.name}] whole-page context produced "
+                            "empty/mismatched output; falling back"
+                        )
+                except Exception as exc:
+                    print(
+                        f"  [{image_path.name}] whole-page context translate "
+                        f"failed ({exc}); falling back"
+                    )
+            if (
+                not translations
+                and settings.batch_translate
                 and len(kept_texts) > 1
                 and hasattr(self.translator, "translate_numbered_block")
             ):
@@ -588,7 +672,12 @@ class ChapterPipeline:
                 from app.services.translation_postedit import (
                     apply_postedit_glossaries,
                 )
-                translations = apply_postedit_glossaries(translations, kept_texts)
+                # kept_confs is aligned 1:1 with kept_texts (built at filter
+                # time) — thread it so low-OCR-conf bubbles don't get an
+                # invented proper name.
+                translations = apply_postedit_glossaries(
+                    translations, kept_texts, ocr_confs=kept_confs
+                )
             stats["translate_ms"] = (time.time() - t0) * 1000
         else:
             stats["translate_ms"] = 0.0

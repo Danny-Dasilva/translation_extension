@@ -24,7 +24,12 @@ from app.utils.image_processing import (
 )
 from app.utils.ctd_utils import build_text_regions, build_inpaint_mask, match_blocks_to_bubbles
 from app.utils.japanese_text_filter import is_japanese_text, filter_japanese_texts
-from app.utils.ocr_confidence_gate import is_garbled_low_conf, should_erase_dropped
+from app.utils.english_region import should_skip_as_english
+from app.utils.ocr_confidence_gate import (
+    is_garbled_low_conf,
+    should_erase_dropped,
+    is_dialogue_context_candidate,
+)
 from app.services.translation_postedit import postedit_one
 from app.utils.orphan_lines import (
     find_orphan_lines,
@@ -33,6 +38,7 @@ from app.utils.orphan_lines import (
     ocr_orphan_clusters_with_conf,
     cluster_bbox,
     merge_orphans_into_blocks,
+    reading_order_sort,
 )
 from app.utils.zindex_utils import assign_smart_zindex
 from app.utils.progress_bus import bus as progress_bus
@@ -356,6 +362,10 @@ async def process_single_image(
             # Step 4 & 5: OCR and Translation
             await emit("ocr", 2, 5, note=f"{len(crops)} crops")
             ocr_start = time.time()
+            # Per-kept-bubble OCR confidence, aligned 1:1 with the final
+            # ocr_texts. Each OCR branch overwrites this; default None means
+            # "no confidence info" -> no low-conf name-invention suppression.
+            kept_ocr_confs: List[Optional[float]] = []
 
             # PARSeq is a single-line STR model. If the detector exposes
             # text_lines, precompute per-block OCR by cropping individual lines
@@ -437,6 +447,27 @@ async def process_single_image(
                             f"into originals (blocks {n_before} -> {len(blocks)})"
                         )
 
+            # COLUMN-MAJOR RTL reading order over the FULL merged block list.
+            # The v11 page-context model was trained with the page's bubbles in
+            # column-major right-to-left order (build_v11_dataset.manga_reading_order);
+            # the detector emitted a naive (-minX, minY) order that interleaves
+            # columns. Re-sort blocks (and EVERY parallel list) into the training
+            # order so the served "Page:" context matches training AND orphan
+            # blocks land in their true reading position (not appended at the end).
+            # reading_order_sort returns the SAME block objects, so we permute the
+            # parallel lists by object identity.
+            if len(blocks) > 1:
+                _ordered = reading_order_sort(blocks)
+                _pos = {id(b): i for i, b in enumerate(blocks)}
+                _perm = [_pos[id(b)] for b in _ordered]
+                blocks = _ordered
+                crops = [crops[i] for i in _perm]
+                all_text_regions = [all_text_regions[i] for i in _perm]
+                if prefetched_texts is not None and len(prefetched_texts) == len(_perm):
+                    prefetched_texts = [prefetched_texts[i] for i in _perm]
+                if prefetched_confs is not None and len(prefetched_confs) == len(_perm):
+                    prefetched_confs = [prefetched_confs[i] for i in _perm]
+
             # OCR (GPU) runs INSIDE the semaphore; the inpaint task is launched
             # here too (it only needs detection geometry, not translations) so it
             # can overlap the network-bound translate. Translation + inpaint-await
@@ -449,11 +480,21 @@ async def process_single_image(
             # they are never added to the parallel kept lists used by render.
             orig_blocks = blocks
             erase_only_blocks: List[dict] = []
+            # Whole-page v11 context (filled by each OCR branch). Defaults assume
+            # every kept line is also context; branches widen the context with
+            # dropped DIALOGUE lines so the served page has no holes.
+            page_context_lines: List[str] = []
+            target_positions: List[int] = []
             if settings.use_pipeline_overlap and len(crops) > 1:
                 # PIPELINE OVERLAP with mini-batching: OCR crops in batches of 3,
                 # filtering non-Japanese as we go. OCR stays on the GPU inside the
                 # semaphore; translation is run after release (see below).
                 MINI_BATCH_SIZE = 3
+
+                # Block-ordered indices of gate-dropped DIALOGUE lines (not
+                # rendered, but kept as v11 page context for speaker/pronoun
+                # continuity). Filled inside ocr_pipelined alongside `results`.
+                ctx_dropped: List[Tuple[int, str]] = []
 
                 async def ocr_pipelined():
                     results = []
@@ -475,6 +516,18 @@ async def process_single_image(
                             confs = [c for _t, c in tc]
 
                         for i, text, conf in zip(batch_indices, texts, confs):
+                            # English early-exit: a horizontal/Latin (non-Japanese)
+                            # region is left as ORIGINAL pixels — not translated,
+                            # not inpainted, no TextBox. Mirror is_leave_intact_label:
+                            # just `continue` (do NOT add to kept lists OR to
+                            # erase_only_blocks).
+                            if settings.english_early_exit_enabled and should_skip_as_english(
+                                orig_blocks[i], text_lines, text, is_japanese_text
+                            ):
+                                logger.info(
+                                    "English early-exit skipped idx %d: %r", i, text[:30]
+                                )
+                                continue
                             # Filter non-Japanese before keeping
                             if settings.japanese_filter_enabled:
                                 if not is_japanese_text(
@@ -504,6 +557,14 @@ async def process_single_image(
                                 # the parallel kept lists.
                                 if should_erase_dropped(text):
                                     erase_only_blocks.append(orig_blocks[i])
+                                # A dropped DIALOGUE line still belongs in the
+                                # v11 page context (no holes for the model); a
+                                # pure-SFX / garble drop does not.
+                                if (
+                                    settings.translation_pagecontext_whole_page
+                                    and is_dialogue_context_candidate(text, ocr_confidence=conf)
+                                ):
+                                    ctx_dropped.append((i, text))
                                 continue
                             results.append((i, text))
                     return results
@@ -518,9 +579,25 @@ async def process_single_image(
                 # Extract OCR results and filter parallel lists to kept indices
                 kept_indices = [i for i, _ in paired]
                 ocr_texts = [text for _, text in paired]
+                # WHOLE-PAGE v11 context: numbered page = kept dialogue + dropped
+                # dialogue lines, in reading (block) order; targets = kept lines.
+                ctx_map = {i: t for i, t in paired}
+                ctx_map.update({i: t for i, t in ctx_dropped})
+                context_order = sorted(ctx_map)
+                page_context_lines = [ctx_map[i] for i in context_order]
+                ctx_pos = {orig: p for p, orig in enumerate(context_order)}
+                target_positions = [ctx_pos[i] for i in kept_indices]
                 blocks = [blocks[i] for i in kept_indices]
                 crops = [crops[i] for i in kept_indices]
                 all_text_regions = [all_text_regions[i] for i in kept_indices]
+                # NOTE: the pipelined OCR path consumes recognition confidence
+                # inside the garble gate (ocr_pipelined) and does not retain it
+                # per kept bubble. To enable low-conf name-invention suppression
+                # here too, `paired` would need to carry conf as a 3-tuple
+                # (i, text, conf). Until then we pass None (no suppression),
+                # which is the prior behaviour. The batch branch threads real
+                # confidence via kept_ocr_confs.
+                kept_ocr_confs = [None] * len(ocr_texts)
 
                 ocr_time = time.time() - ocr_start
 
@@ -569,6 +646,27 @@ async def process_single_image(
                         settings.japanese_filter_min_ratio,
                         settings.japanese_filter_katakana_max_length
                     )
+                    # English early-exit: drop horizontal/Latin (non-Japanese)
+                    # regions from valid_indices so they are left as ORIGINAL
+                    # pixels — never added to the kept lists, never inpainted
+                    # (NOT added to erase_only_blocks), no TextBox. Mirrors
+                    # is_leave_intact_label's clean skip.
+                    if settings.english_early_exit_enabled:
+                        kept_after_english = []
+                        for i in valid_indices:
+                            if should_skip_as_english(
+                                orig_blocks[i], text_lines, ocr_texts[i], is_japanese_text
+                            ):
+                                logger.info(
+                                    "English early-exit skipped idx %d: %r",
+                                    i, ocr_texts[i][:30],
+                                )
+                                continue
+                            kept_after_english.append(i)
+                        valid_indices = kept_after_english
+                    # Block-ordered indices of gate-dropped DIALOGUE lines kept
+                    # as v11 page context (not rendered). Pure-SFX drops excluded.
+                    ctx_dropped_idx: List[int] = []
                     if settings.ocr_confidence_gate_enabled and settings.ocr_confidence_gate_threshold > 0:
                         gated = []
                         for i in valid_indices:
@@ -586,6 +684,11 @@ async def process_single_image(
                                 # the parallel kept lists below.
                                 if should_erase_dropped(ocr_texts[i]):
                                     erase_only_blocks.append(orig_blocks[i])
+                                if (
+                                    settings.translation_pagecontext_whole_page
+                                    and is_dialogue_context_candidate(ocr_texts[i], ocr_confidence=conf)
+                                ):
+                                    ctx_dropped_idx.append(i)
                                 continue
                             gated.append(i)
                         valid_indices = gated
@@ -599,11 +702,31 @@ async def process_single_image(
                         await emit("done", 5, 5, note="all_filtered")
                         return (idx, [], None)
 
+                    # WHOLE-PAGE v11 context: numbered page = kept + dropped
+                    # dialogue lines in reading (block) order; targets = kept.
+                    context_order = sorted(set(valid_indices) | set(ctx_dropped_idx))
+                    page_context_lines = [ocr_texts[i] for i in context_order]
+                    ctx_pos = {orig: p for p, orig in enumerate(context_order)}
+                    target_positions = [ctx_pos[i] for i in valid_indices]
+
                     # Filter all parallel lists to maintain alignment
                     ocr_texts = [ocr_texts[i] for i in valid_indices]
                     blocks = [blocks[i] for i in valid_indices]
                     crops = [crops[i] for i in valid_indices]
                     all_text_regions = [all_text_regions[i] for i in valid_indices]
+                    # Keep OCR confidence aligned 1:1 so the post-edit can
+                    # suppress name invention on low-confidence bubbles.
+                    kept_ocr_confs = [
+                        ocr_confs[i] if i < len(ocr_confs) else None
+                        for i in valid_indices
+                    ]
+                else:
+                    # japanese_filter disabled: no per-index filtering happened,
+                    # so confidences (if any) stay aligned with ocr_texts as-is.
+                    kept_ocr_confs = list(ocr_confs)
+                    # All lines kept -> page context == kept lines, in order.
+                    page_context_lines = list(ocr_texts)
+                    target_positions = list(range(len(ocr_texts)))
 
                 # Match kept blocks to bubbles ONCE (reused for both the inpaint
                 # interior-fill tier and the response build below).
@@ -637,7 +760,12 @@ async def process_single_image(
         # Translation (batched page-level [N] protocol, or parallel/sequential fallback)
         await emit("translate", 3, 5, note=f"{len(ocr_texts)} bubbles")
         translate_start = time.time()
-        translations = await _run_translation(ocr_texts, target_language)
+        translations = await _run_translation(
+            ocr_texts,
+            target_language,
+            page_context_lines=page_context_lines,
+            target_positions=target_positions,
+        )
         translate_time = time.time() - translate_start
         logger.info(f"Image {idx + 1}: Translation completed in {translate_time*1000:.1f}ms ({len(ocr_texts)} texts)")
 
@@ -651,13 +779,20 @@ async def process_single_image(
         translate_time_per_text = (translate_time * 1000) / num_items
 
         # Step 6: Build response
+        # kept_ocr_confs is set in BOTH OCR branches above, aligned 1:1 with
+        # ocr_texts (real confidence in the batch branch, None in the pipelined
+        # branch — see the note there). Re-align defensively if the lengths
+        # diverged (e.g. an OCR sub-path that didn't populate it).
+        if len(kept_ocr_confs) != len(ocr_texts):
+            kept_ocr_confs = [None] * len(ocr_texts)
         text_boxes = []
-        for block, ocr_text, translated_text, text_regions, fit_rect in zip(
-            blocks, ocr_texts, translations, all_text_regions, fit_rects
+        for block, ocr_text, translated_text, text_regions, fit_rect, ocr_conf in zip(
+            blocks, ocr_texts, translations, all_text_regions, fit_rects, kept_ocr_confs
         ):
             # Post-translation glossaries (pure post-edit; v11 prompt untouched).
             # Shared with the batch pipeline via translation_postedit.
-            translated_text = postedit_one(translated_text, ocr_text)
+            # ocr_conf (when available) suppresses low-confidence name invention.
+            translated_text = postedit_one(translated_text, ocr_text, ocr_conf=ocr_conf)
 
             # Font sizing target: the translation is typeset to the bubble
             # INTERIOR when one was matched (wide, horizontal) — not the tight
@@ -744,12 +879,45 @@ async def process_single_image(
         return (idx, [], None)
 
 
-async def _run_translation(texts: List[str], target_language: str) -> List[str]:
+async def _run_translation(
+    texts: List[str],
+    target_language: str,
+    page_context_lines: Optional[List[str]] = None,
+    target_positions: Optional[List[int]] = None,
+) -> List[str]:
     """Dispatch to batched page-level translation when enabled + worthwhile,
     falling back to the legacy per-bubble parallel/sequential paths.
+
+    ``texts`` are the KEPT lines (1:1 with the render). ``page_context_lines`` is
+    the WHOLE page's dialogue (kept + dropped-dialogue) in reading order and
+    ``target_positions`` indexes the kept lines within it — when both are present
+    and the v11 page-context path is on, the model is given the full page as
+    context while only the kept lines are translated/returned (no holes where
+    dropped dialogue used to be). Output stays aligned 1:1 with ``texts``.
     """
     if not texts:
         return []
+    # WHOLE-PAGE v11 context: the full page (incl. dropped dialogue) as context,
+    # only the kept lines marked/returned. The strongest train/serve match.
+    if (
+        settings.batch_translate
+        and settings.translation_v11_pagecontext
+        and settings.translation_pagecontext_whole_page
+        and page_context_lines
+        and target_positions is not None
+        and len(target_positions) == len(texts)
+        and len(page_context_lines) > 1
+        and hasattr(translation_service, "translate_page_context_marked")
+    ):
+        try:
+            marked = await translation_service.translate_page_context_marked(
+                page_context_lines, target_positions, target_language
+            )
+            if len(marked) == len(texts) and any(b.strip() for b in marked):
+                return marked
+            logger.warning("Whole-page context translate produced empty/mismatched output; falling back")
+        except Exception as exc:
+            logger.warning(f"Whole-page context translate raised {exc!r}; falling back")
     # TRUE single-call numbered-block path (QUALITY-GATED, default OFF). Packs
     # the whole page into one vLLM generate call. Falls back cleanly to the
     # per-bubble paths below on empty/short/mismatched output.
