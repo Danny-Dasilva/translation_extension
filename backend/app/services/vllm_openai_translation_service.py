@@ -128,9 +128,19 @@ def append_haha(en: str) -> str:
         return "haha"
     if _nre.search(r"\b(haha|lol)\b\W*$", s, _nre.IGNORECASE):
         return s
-    # Drop a single trailing sentence punctuation so we get "Hey, haha" not
-    # "Hey!, haha"; keep "?"/"!" feel by re-attaching after the tail is added
-    # only for "." (commas read fine after ! or ?).
+    # Place the tag naturally relative to trailing terminal punctuation:
+    #   "Curry."   -> "Curry, haha"      (drop a lone sentence period)
+    #   "Stop it!" -> "Stop it, haha!"   (keep !/?, tag goes inside)
+    #   "Really?"  -> "Really, haha?"
+    #   "Wait..."  -> "Wait, haha..."    (keep ellipsis feel)
+    m = _nre.search(r"[.!?…]+$", s)
+    if m:
+        punct = m.group(0)
+        body = s[: m.start()].rstrip()
+        if body:
+            if punct == ".":
+                return f"{body}, haha"
+            return f"{body}, haha{punct}"
     return f"{s}, haha"
 
 
