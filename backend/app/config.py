@@ -276,6 +276,22 @@ class Settings(BaseSettings):
     # [batch,51,4407]); decode is byte-identical to the trusted AR_single model.
     parseq_ar_model_path: str = "models/parseq_manga_ep60_AR_dynbatch.onnx"
 
+    # Vertical-AR-by-default routing. The dominant garble (144-bubble Ikenie-4
+    # cohort) is the NAR decode duplicating adjacent kana on dense VERTICAL crops
+    # at FALSELY-HIGH confidence (身代わり -> 身身わわ at 0.92), so the conf-gated
+    # AR retry above NEVER fires on the worst cases. This routes tall/narrow
+    # (h/w >= aspect, the vertical-text signature) crops to the AR model UP FRONT
+    # by geometry — independent of confidence and independent of hybrid_ocr_enabled.
+    # Horizontal crops stay on the fast NAR path, so only the garble-prone vertical
+    # set pays the AR cost. AR is the autoregressive decode that cannot fall into
+    # the parallel-decode duplication loops (per-line A/B: vertical CER 24% NAR vs
+    # AR clean). Set False to disable (NAR for everything, conf-gated AR retry only).
+    ocr_vertical_ar_default: bool = True
+    # Aspect trigger: route crops with h/w >= this to AR. Default 1.5 ties to the
+    # existing _maybe_rotate_vertical threshold so "rotated-for-vertical" and
+    # "routed-to-AR" are the SAME crop set (no surprises). Config-tunable for ablation.
+    ocr_vertical_ar_aspect: float = 1.5
+
     class Config:
         env_file = ".env"
         case_sensitive = False

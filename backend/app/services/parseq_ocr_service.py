@@ -103,6 +103,8 @@ class ParseqOCRService:
         hybrid_enabled: bool = False,
         ar_model_path: str | None = None,
         hybrid_conf_threshold: float = 0.65,
+        vertical_ar_default: bool = True,
+        vertical_ar_aspect: float = 1.5,
     ):
         # --- Confidence-gated HYBRID OCR config -----------------------------
         # When enabled, low-confidence crops (the ones the gate treats as
@@ -116,6 +118,19 @@ class ParseqOCRService:
         self._ar_input_np_dtype = np.float32
         # Cumulative count of crops re-OCR'd with AR (for per-page logging).
         self.ar_retry_count = 0
+
+        # --- Vertical-AR-by-default routing ---------------------------------
+        # The NAR decode duplicates adjacent kana on dense VERTICAL crops at
+        # falsely-high confidence (身代わり -> 身身わわ @0.92), so the conf-gated
+        # retry above never fires on the worst cases. Route tall/narrow crops
+        # (h/w >= aspect) to the AR model UP FRONT, by geometry — independent of
+        # confidence AND independent of hybrid_enabled (so it works even when the
+        # conf-gated retry is disabled). Horizontal crops stay on the fast NAR
+        # path. The same lazily-loaded AR session is reused (no double-load).
+        self.vertical_ar_default = bool(vertical_ar_default)
+        self.vertical_ar_aspect = float(vertical_ar_aspect)
+        # Cumulative count of crops routed to AR by geometry (per-page logging).
+        self.vertical_ar_count = 0
 
         model_file = Path(model_path)
         if not model_file.is_absolute():
@@ -212,6 +227,22 @@ class ParseqOCRService:
             return cv2.rotate(crop, cv2.ROTATE_90_COUNTERCLOCKWISE)
         return crop
 
+    def _is_vertical_crop(self, crop: np.ndarray) -> bool:
+        """True if a crop is tall/narrow (the vertical-text signature).
+
+        Uses the SAME ``h > aspect * w`` test as ``_maybe_rotate_vertical`` (with
+        the configured ``vertical_ar_aspect``, default 1.5) so the crop set that
+        gets ROTATED-for-vertical is exactly the set ROUTED-to-AR — no surprises.
+        Strict ``>`` (h exactly == aspect*w is NOT vertical) matches the rotate
+        predicate. Vertical crops carry the NAR dup-garble, so they go to AR.
+        """
+        if crop is None or crop.size == 0:
+            return False
+        h, w = crop.shape[:2]
+        if w <= 0:
+            return False
+        return h > self.vertical_ar_aspect * w
+
     def _preprocess(self, crops: List[np.ndarray]) -> np.ndarray:
         """Resize to (H, W) bicubic, scale to [0,1], normalize to [-1,1]."""
         batch = np.empty((len(crops), 3, self.img_h, self.img_w), dtype=np.float32)
@@ -270,7 +301,20 @@ class ParseqOCRService:
             batch = batch.astype(self._input_np_dtype, copy=False)
         return self.session.run(None, {self._input_name: batch})[0]
 
-    # ----------------------------- HYBRID (AR) -----------------------------
+    # ----------------------------- AR session -----------------------------
+    def _ar_wanted(self) -> bool:
+        """True if any AR path (conf-gated retry OR vertical routing) is on.
+
+        The AR session is shared by BOTH the legacy conf-gated retry
+        (``hybrid_enabled``) and the new vertical-AR-by-default routing
+        (``vertical_ar_default``). Either one wanting AR is enough to load it —
+        in particular vertical routing must work even when the conf-gated retry
+        is disabled (the GPU validation runs HYBRID_OCR_ENABLED=false).
+        """
+        return bool(self.hybrid_enabled) or bool(
+            getattr(self, "vertical_ar_default", False)
+        )
+
     def _ensure_ar_session(self) -> bool:
         """Lazily load the AR ONNX session (CUDA-bound, fail-loud on CPU drop).
 
@@ -278,20 +322,22 @@ class ParseqOCRService:
         CUDAExecutionProvider first and RAISES if ORT silently falls back to
         CPU (the AR model is ~10x heavier; a silent CPU bind would tank
         latency). Returns True once a CUDA-bound session is ready. On any load
-        failure it disables hybrid (logs once) and returns False so OCR still
-        serves non-AR results.
+        failure it disables ALL AR paths (logs once) and returns False so OCR
+        still serves non-AR results. Shared by the conf-gated retry and the
+        vertical-AR routing.
         """
         if self._ar_session is not None:
             return True
-        if not self.hybrid_enabled or not self._ar_model_path:
+        if not self._ar_wanted() or not self._ar_model_path:
             return False
 
         ar_file = Path(self._ar_model_path)
         if not ar_file.is_absolute():
             ar_file = Path(__file__).resolve().parents[2] / ar_file
         if not ar_file.exists():
-            logger.error("HYBRID OCR: AR model not found: %s — disabling hybrid", ar_file)
+            logger.error("AR OCR: AR model not found: %s — disabling AR paths", ar_file)
             self.hybrid_enabled = False
+            self.vertical_ar_default = False
             return False
 
         so = ort.SessionOptions()
@@ -326,8 +372,9 @@ class ParseqOCRService:
             )
             return True
         except Exception as e:
-            logger.error("HYBRID OCR: AR session load failed (%s) — disabling hybrid", e)
+            logger.error("AR OCR: AR session load failed (%s) — disabling AR paths", e)
             self.hybrid_enabled = False
+            self.vertical_ar_default = False
             self._ar_session = None
             return False
 
@@ -384,22 +431,73 @@ class ParseqOCRService:
             self.ar_retry_count += len(sub)
             j += len(sub)
 
-    async def _recognize_batch_with_conf(
+    async def _ar_decode_indices(
         self,
-        image_crops: List[np.ndarray],
-        batch_size: int = 24,
-    ) -> List[tuple[str, float]]:
-        """Core batched inference returning (text, ocr_confidence) per crop."""
-        if not image_crops:
-            return []
+        crops: List[np.ndarray],
+        idxs: List[int],
+        results: List[tuple[str, float]],
+        batch_size: int,
+    ) -> bool:
+        """Decode ``idxs`` crops with the AR model, writing into ``results``.
 
-        total_start = time.perf_counter()
-        out: List[tuple[str, float]] = []
+        Used by the vertical-AR-by-default routing: vertical crops are sent to
+        the AR model UP FRONT (not as a low-conf retry). Runs as batches over the
+        vertical set with the same OOM-halving guard as ``_ar_retry`` (the AR
+        model's Softmax over [B,51,4407] is ~10x heavier than NAR). On a bs==1
+        OOM (or AR load failure) the caller's NAR result for that crop is kept.
+        Returns True if the AR session was available and at least attempted.
+        """
+        if not idxs:
+            return False
+        if not self._ensure_ar_session():
+            return False
+        ar_bs = min(batch_size, len(idxs)) or 1
+        j = 0
+        while j < len(idxs):
+            sub = idxs[j : j + ar_bs]
+            ar_batch = self._preprocess([crops[k] for k in sub])
+            try:
+                ar_logits = await asyncio.to_thread(self._run_ar_sync, ar_batch)
+            except ort.capi.onnxruntime_pybind11_state.RuntimeException as e:
+                if "Failed to allocate memory" in str(e) and ar_bs > 1:
+                    ar_bs = max(1, ar_bs // 2)
+                    logger.warning(
+                        "VERTICAL-AR OCR: AR OOM; reducing AR batch to %d", ar_bs
+                    )
+                    continue
+                logger.warning(
+                    "VERTICAL-AR OCR: AR decode failed for %d crop(s) (%s); "
+                    "keeping NAR",
+                    len(sub), e,
+                )
+                j += len(sub)
+                continue
+            ar_tc = self._decode_with_conf(ar_logits)
+            for idx, (text, conf) in zip(sub, ar_tc):
+                results[idx] = (text, conf)
+            self.vertical_ar_count += len(sub)
+            j += len(sub)
+        return True
+
+    async def _nar_decode_indices(
+        self,
+        crops: List[np.ndarray],
+        idxs: List[int],
+        results: List[tuple[str, float]],
+        batch_size: int,
+    ) -> None:
+        """Decode ``idxs`` crops with the fast NAR model, writing into ``results``.
+
+        Same OOM-halving guard as the legacy single-pass loop. ``results`` must be
+        pre-sized to the full crop list; this fills only the requested indices.
+        """
+        if not idxs:
+            return
         current_bs = batch_size
-        i = 0
-        while i < len(image_crops):
-            chunk = image_crops[i : i + current_bs]
-            batch = self._preprocess(chunk)
+        j = 0
+        while j < len(idxs):
+            sub = idxs[j : j + current_bs]
+            batch = self._preprocess([crops[k] for k in sub])
             try:
                 logits = await asyncio.to_thread(self._run_sync, batch)
             except ort.capi.onnxruntime_pybind11_state.RuntimeException as e:
@@ -408,22 +506,80 @@ class ParseqOCRService:
                     logger.warning("PARSeq OOM; reducing batch to %d", current_bs)
                     continue
                 raise
-            out.extend(self._decode_with_conf(logits))
-            i += len(chunk)
+            nar_tc = self._decode_with_conf(logits)
+            for idx, (text, conf) in zip(sub, nar_tc):
+                results[idx] = (text, conf)
+            j += len(sub)
 
-        nonar_ms = (time.perf_counter() - total_start) * 1000
+    async def _recognize_batch_with_conf(
+        self,
+        image_crops: List[np.ndarray],
+        batch_size: int = 24,
+    ) -> List[tuple[str, float]]:
+        """Core batched inference returning (text, ocr_confidence) per crop.
 
-        # --- HYBRID: AR-retry on low-confidence crops -----------------------
-        # Collect the crops the gate would treat as garbled (conf < threshold)
-        # and re-OCR ONLY those with the higher-quality AR model in one batch.
-        # The replaced results then flow through the same downstream garble
-        # gate, so order is: non-AR -> AR-retry-on-low-conf -> gate.
+        Routing (when ``vertical_ar_default`` and an AR model are configured):
+          * partition crops by geometry — tall/narrow (h/w >= aspect) -> AR,
+            the rest -> fast NAR;
+          * AR-batch the vertical set UP FRONT (the dup-garble-prone columns),
+            NAR-batch the horizontal set;
+          * stitch back into original order (results are 1:1 with inputs);
+          * the legacy conf-gated AR retry then still runs on any NAR-decoded
+            crop below threshold (the vertical crops already went through AR).
+        Falls back to the plain NAR-all single pass when routing is disabled.
+        """
+        if not image_crops:
+            return []
+
+        n = len(image_crops)
+        total_start = time.perf_counter()
+        out: List[tuple[str, float]] = [("", 0.0)] * n
+
+        # --- partition by crop geometry -------------------------------------
+        use_vertical_ar = (
+            getattr(self, "vertical_ar_default", False)
+            and bool(self._ar_model_path)
+        )
+        if use_vertical_ar:
+            vertical_idx = [k for k in range(n) if self._is_vertical_crop(image_crops[k])]
+            horizontal_idx = [k for k in range(n) if k not in set(vertical_idx)]
+        else:
+            vertical_idx = []
+            horizontal_idx = list(range(n))
+
+        # AR over the vertical (garble-prone) set, up front, by geometry. If the
+        # AR session is unavailable, fall back to NAR for those crops too.
+        n_vertical_ar = 0
+        vertical_ms = 0.0
+        if vertical_idx:
+            v_start = time.perf_counter()
+            before = self.vertical_ar_count
+            ar_ok = await self._ar_decode_indices(
+                image_crops, vertical_idx, out, batch_size
+            )
+            n_vertical_ar = self.vertical_ar_count - before
+            vertical_ms = (time.perf_counter() - v_start) * 1000
+            if not ar_ok:
+                # AR could not load — decode the verticals on NAR instead so we
+                # never leave them blank.
+                horizontal_idx = horizontal_idx + vertical_idx
+                vertical_idx = []
+
+        # NAR over the horizontal (clean) set.
+        nar_start = time.perf_counter()
+        await self._nar_decode_indices(image_crops, horizontal_idx, out, batch_size)
+        nonar_ms = (time.perf_counter() - nar_start) * 1000
+
+        # --- HYBRID: AR-retry on low-confidence NAR crops -------------------
+        # Re-OCR ONLY low-conf crops that were decoded by NAR (the verticals
+        # already went through AR, so they are excluded). The replaced results
+        # flow through the same downstream garble gate.
         ar_ms = 0.0
         n_retry = 0
-        if self.hybrid_enabled and self._ar_model_path:
+        if self.hybrid_enabled and self._ar_model_path and horizontal_idx:
             low_idx = [
-                k for k, (_t, c) in enumerate(out)
-                if c < self.hybrid_conf_threshold
+                k for k in horizontal_idx
+                if out[k][1] < self.hybrid_conf_threshold
             ]
             if low_idx:
                 ar_start = time.perf_counter()
@@ -433,23 +589,26 @@ class ParseqOCRService:
                 ar_ms = (time.perf_counter() - ar_start) * 1000
 
         total_ms = (time.perf_counter() - total_start) * 1000
-        if n_retry:
+        if n_vertical_ar or n_retry:
             logger.info(
-                "PARSeq OCR batch: %d crops in %.1fms (non-AR %.1fms + AR-retry "
-                "%d crops %.1fms; avg %.1fms/crop)",
-                len(image_crops),
+                "PARSeq OCR batch: %d crops in %.1fms (NAR %d/%.1fms + "
+                "vertical-AR %d/%.1fms + AR-retry %d/%.1fms; avg %.1fms/crop)",
+                n,
                 total_ms,
+                len(horizontal_idx),
                 nonar_ms,
+                n_vertical_ar,
+                vertical_ms,
                 n_retry,
                 ar_ms,
-                total_ms / len(image_crops),
+                total_ms / n,
             )
         else:
             logger.info(
                 "PARSeq OCR batch: %d crops in %.1fms (avg %.1fms/crop)",
-                len(image_crops),
+                n,
                 total_ms,
-                total_ms / len(image_crops),
+                total_ms / n,
             )
         return out
 

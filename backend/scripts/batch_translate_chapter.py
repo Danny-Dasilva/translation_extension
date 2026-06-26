@@ -328,6 +328,8 @@ class ChapterPipeline:
             hybrid_enabled=getattr(settings, "hybrid_ocr_enabled", False),
             ar_model_path=getattr(settings, "parseq_ar_model_path", None),
             hybrid_conf_threshold=getattr(settings, "ocr_confidence_gate_threshold", 0.65),
+            vertical_ar_default=getattr(settings, "ocr_vertical_ar_default", True),
+            vertical_ar_aspect=getattr(settings, "ocr_vertical_ar_aspect", 1.5),
         )
 
         self.lama = None

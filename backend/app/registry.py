@@ -220,6 +220,12 @@ class ServiceRegistry:
                     hybrid_enabled=settings.hybrid_ocr_enabled,
                     ar_model_path=settings.parseq_ar_model_path,
                     hybrid_conf_threshold=settings.ocr_confidence_gate_threshold,
+                    vertical_ar_default=getattr(
+                        settings, "ocr_vertical_ar_default", True
+                    ),
+                    vertical_ar_aspect=getattr(
+                        settings, "ocr_vertical_ar_aspect", 1.5
+                    ),
                 )
             elif backend in ("manga-ocr", "manga_ocr", "mangaocr"):
                 from app.services.manga_ocr_service import MangaOCRService
