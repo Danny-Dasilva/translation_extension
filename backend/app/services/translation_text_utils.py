@@ -151,6 +151,34 @@ def split_legacy_lines(output: str, n: int) -> List[str]:
     return lines
 
 
+# Foreign net-slang "laugh" markers that leak verbatim onto the END of an
+# otherwise-good English line: Korean ㅋㅋ (kkk = "lol") / ㅎㅎ (heh), and any
+# trailing run of Hangul. The small model occasionally copies these straight
+# through from the source instead of translating them, and because they are
+# non-Latin the garble guard would nuke the whole (good) line to "...". We strip
+# the trailing run here, BEFORE the garble check, so every backend benefits.
+# Conservative: only a run anchored to the END of the string is removed, and
+# only after any trailing ASCII punctuation/space — interior Hangul (a genuine
+# Korean quote) is never touched.
+_TRAILING_FOREIGN_LAUGH_RE = re.compile(
+    r"[\s]*"                     # optional whitespace BEFORE the Hangul run only
+    r"[ㄱ-ㅎㅏ-ㅣ가-힯]+"          # one or more Hangul jamo / syllables (incl. ㅋ ㅎ)
+    r"[\s,.!?~ｗw]*$"             # trailing punct / laugh tails AFTER the run
+)
+
+
+def strip_trailing_foreign_laugh(text: str) -> str:
+    """Strip a trailing run of Korean ㅋㅋ/ㅎㅎ/Hangul off an English line.
+
+    "Stop it ㅋㅋ" -> "Stop it"; "ㅋㅋㅋ" (whole line) -> "". Interior Hangul
+    (a real quoted Korean phrase mid-sentence) is left untouched because the
+    pattern is anchored to the end of the string.
+    """
+    if not text:
+        return text
+    return _TRAILING_FOREIGN_LAUGH_RE.sub("", text).strip()
+
+
 def clean_translation_output(translation: str) -> str:
     """Clean up translation output by removing model artifacts.
 
@@ -167,6 +195,14 @@ def clean_translation_output(translation: str) -> str:
     # Remove "Assistant:" prefix if present (model chat template artifact)
     if translation.startswith("Assistant:"):
         translation = translation[len("Assistant:"):].strip()
+
+    # Strip a trailing Korean ㅋㅋ/ㅎㅎ/Hangul "laugh" run that leaked verbatim
+    # from the source onto an otherwise-English line. Must run BEFORE the garble
+    # guard, which would otherwise nuke the whole good line to "..." on the
+    # non-Latin chars. Only fires when there is real Latin text left over.
+    _foreign_stripped = strip_trailing_foreign_laugh(translation)
+    if _foreign_stripped != translation and re.search(r"[A-Za-z]", _foreign_stripped):
+        translation = _foreign_stripped
 
     # Strip any special tokens that may have leaked through
     # Use regex to catch all variants (e.g. <|im_end|>, <|im_end+], <|im_end/>, etc.)
@@ -193,10 +229,11 @@ def clean_translation_output(translation: str) -> str:
 
 # Character-class guards for _is_garbled.
 _CYRILLIC_RE = re.compile(r"[Ѐ-ӿ]")
-# CJK ideographs, hiragana, katakana, full-width forms, Hangul, plus the
-# Unicode replacement char and the literal "tofu" box.
+# CJK ideographs, hiragana, katakana, full-width forms, Hangul (syllables AND
+# compatibility jamo so stray ㅋㅋ/ㅎㅎ are caught), plus the Unicode replacement
+# char and the literal "tofu" box.
 _CJK_OR_BOX_RE = re.compile(
-    r"[぀-ヿ㐀-䶿一-鿿가-힯＀-￯�□]"
+    r"[぀-ヿ㐀-䶿一-鿿ㄱ-ㅣ가-힯＀-￯�□]"
 )
 
 # ASCII garble guards (FIX #6). These catch corruption the char-class guards

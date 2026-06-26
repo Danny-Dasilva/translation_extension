@@ -208,6 +208,20 @@ class Settings(BaseSettings):
     # Serving v10it with this ON would feed v10it an out-of-distribution prompt.
     translation_v11_pagecontext: bool = True
 
+    # WHOLE-PAGE context for v11 page-context translation. The v11 LoRA was
+    # trained to translate one marked line while seeing the WHOLE page's dialogue
+    # (all lines, in reading order) as the numbered "Page:" context. When True
+    # (default), DIALOGUE lines dropped before translation (OCR-gate / garble,
+    # see is_dialogue_context_candidate) are still passed as CONTEXT-ONLY lines so
+    # the served page has no holes — but they are NOT translated/rendered. Pure
+    # SFX boxes are never included as dialogue context. When False, only the KEPT
+    # lines form the context (the prior behaviour).
+    #
+    # NOTE: garbled-OCR dropped lines carry noisy text; including them is a
+    # train/serve-faithfulness win (no gaps) but adds OCR noise to the context.
+    # This flag exists so the trade-off is empirically tunable; validated ON.
+    translation_pagecontext_whole_page: bool = True
+
     # Normalize short Japanese utterances (interpunct/dot/space-separated kana,
     # runaway repeated kana) before translation so the model isn't destabilized.
     short_utterance_normalize_enabled: bool = True

@@ -119,6 +119,58 @@ class SourceConditionedFix:
     replacement: str
 
 
+# --------------------------------------------------------------------------- #
+# 2b. Hard name-locks (kana name in source -> ONE canonical EN spelling)
+# --------------------------------------------------------------------------- #
+@dataclass(frozen=True)
+class NameLock:
+    """A hard lock: when the jp source contains ``jp_kana`` (the character's
+    name written in kana), force the EN output to ``canonical``.
+
+    Unlike :class:`SourceConditionedFix` (which only rewrites a *specific*
+    known mis-romanisation), a lock also rewrites *any* of ``mis_romaji`` the
+    model invents for this kana name. We deliberately do NOT blanket-replace
+    every capitalised token — we only swap the enumerated wrong spellings — so
+    an unrelated proper noun in the same bubble survives. List every observed
+    mis-spelling in ``mis_romaji`` (longest-first is handled at compile time).
+
+    This is the extension point for the per-title cast. The full cast list for
+    THIS title is not yet known to the post-edit; add a NameLock per character
+    as their kana name + observed mis-romanisations are collected from bench
+    output. See the TODO marker below.
+    """
+
+    canonical: str
+    jp_kana: str
+    mis_romaji: tuple[str, ...]
+
+
+# >>> PER-TITLE CAST GLOSSARY — EXTEND ME <<<
+# Only ユリエ -> "Yurie" is confirmed. The remainder of the cast still needs to
+# be enumerated from bench output (kana name + the wrong romaji the model
+# emits). Do NOT guess names: add a NameLock only once both the kana and the
+# observed mis-spelling are verified, otherwise a real proper noun could be
+# clobbered. TODO(cast): populate the full character roster for this title.
+NAME_LOCKS: tuple[NameLock, ...] = (
+    # ユリエ (Yurie) — model emits "Julie" / "Lucia" page to page.
+    NameLock(
+        canonical="Yurie",
+        jp_kana="ユリエ",
+        mis_romaji=("Julie", "Lucia", "Yulie", "Yurié"),
+    ),
+)
+
+
+# Pre-compile (canonical, jp_kana, [compiled wrong-spelling patterns]) once.
+_COMPILED_LOCKS: list[tuple[str, str, list[Pattern[str]]]] = []
+for _lock in NAME_LOCKS:
+    _pats = [
+        re.compile(rf"\b{re.escape(v)}\b")
+        for v in sorted(_lock.mis_romaji, key=len, reverse=True)
+    ]
+    _COMPILED_LOCKS.append((_lock.canonical, _lock.jp_kana, _pats))
+
+
 SOURCE_CONDITIONED: tuple[SourceConditionedFix, ...] = (
     # 愛菜 (Aina, a little girl) once mistranslated as "the milk" / "milk".
     # Only correct when 愛菜 is actually in the source bubble.
@@ -152,15 +204,154 @@ def _normalize_jp(jp: str) -> str:
 
 
 # --------------------------------------------------------------------------- #
+# 2c. Counted-number kana (じゅうさん = 33, not "Jus-san"/honorific)
+# --------------------------------------------------------------------------- #
+# A bare counted-number bubble is a few number-kana with optional small
+# punctuation / emphasis. The model mis-reads the さん in じゅうさん (=3 in
+# 10+3) as the honorific "-san", or transliterates ひゃく -> "hyaku". We only
+# fire when the WHOLE bubble (separator-stripped) is a number reading, so a
+# real "○○さん" honorific on a name (田中さん) is never touched.
+
+# Base digit readings (1-9) used both standalone and as multipliers/units.
+_KANA_DIGITS: dict[str, int] = {
+    "いち": 1, "に": 2, "さん": 3, "し": 4, "よん": 4,
+    "ご": 5, "ろく": 6, "なな": 7, "しち": 7, "はち": 8,
+    "きゅう": 9, "く": 9,
+}
+# Powers of ten.
+_KANA_TENS = ("じゅう", "ひゃく", "せん", "まん")
+_KANA_POWERS: dict[str, int] = {
+    "じゅう": 10, "ひゃく": 100, "せん": 1000, "まん": 10000,
+}
+
+# A bubble is "number-ish" only if it is composed solely of these kana.
+_NUMBER_KANA_TOKENS = tuple(_KANA_DIGITS.keys()) + _KANA_TENS
+# longest-first so にじゅう parses じゅう as a power, not に+じゅう ambiguity.
+_NUMBER_TOKEN_RE = re.compile(
+    "|".join(re.escape(t) for t in sorted(_NUMBER_KANA_TOKENS, key=len, reverse=True))
+)
+# Whole-bubble guard: nothing but number kana (separators already stripped).
+_PURE_NUMBER_RE = re.compile(rf"^(?:{_NUMBER_TOKEN_RE.pattern})+$")
+
+
+# Colloquial / elided counting forms that do NOT equal the literal place-value
+# arithmetic. In casual counting the leading multiplier digit is dropped:
+#   じゅうさん   spoken "san-juu-san"  = 33  (literal じゅう+さん would be 13)
+#   にじゅうご   = literal 25 (no elision) — handled by the general parser
+# These documented overrides take precedence over _parse_number_kana. Keep this
+# list to verified bench cases only.
+_COLLOQUIAL_NUMBER_FORMS: dict[str, int] = {
+    "じゅうさん": 33,
+}
+
+
+def _parse_number_kana(s: str) -> Optional[int]:
+    """Parse a separator-stripped all-kana number reading to an int.
+
+    Handles the common manga range with standard place-value arithmetic
+    (じゅう=10, にじゅう=20, ひゃく=100, にじゅうご=25). Documented colloquial
+    elisions (see ``_COLLOQUIAL_NUMBER_FORMS``) are applied first. Returns None
+    if the string is not a pure number reading.
+    """
+    if not s or not _PURE_NUMBER_RE.match(s):
+        return None
+    if s in _COLLOQUIAL_NUMBER_FORMS:
+        return _COLLOQUIAL_NUMBER_FORMS[s]
+    tokens = _NUMBER_TOKEN_RE.findall(s)
+    if not tokens:
+        return None
+    total = 0
+    current = 0
+    for tok in tokens:
+        if tok in _KANA_POWERS:
+            power = _KANA_POWERS[tok]
+            if power >= 10000:  # まん scales the running total
+                total = (total + max(current, 1)) * power
+                current = 0
+            else:
+                current = max(current, 1) * power
+                total += current
+                current = 0
+        else:
+            current += _KANA_DIGITS[tok]
+    return total + current
+
+
+def _maybe_number_bubble(jp: Optional[str]) -> Optional[int]:
+    """If the jp bubble is essentially a bare counted-number reading, return
+    its integer value; else None.
+
+    Conservative: the bubble must reduce (after stripping dots/spaces/emphasis)
+    to ONLY number kana. ``田中さん`` contains 田中 kanji -> not pure -> ignored.
+    ``さんは三人います`` contains 三人います -> not pure -> ignored.
+    """
+    if not jp:
+        return None
+    stripped = _normalize_jp(jp)
+    # Also drop long-vowel marks / repeated emphasis the strip missed.
+    stripped = stripped.replace("ー", "").replace("〜", "").replace("~", "")
+    if not stripped:
+        return None
+    return _parse_number_kana(stripped)
+
+
+# --------------------------------------------------------------------------- #
+# 2d. Low-OCR-confidence name-invention suppression
+# --------------------------------------------------------------------------- #
+# Default: postedit does nothing about confidence (back-compat). When a caller
+# threads a low ocr_conf for a bubble whose source is a common *generic* kana
+# word (e.g. おばさん = auntie), we refuse to let the model's single invented
+# proper-noun token stand. We neutralise to a generic gloss instead of a name.
+LOW_CONF_THRESHOLD = 0.50
+
+# Generic kana source words that the model is known to promote into a fake
+# proper name when OCR confidence is low. Maps source -> safe generic gloss.
+_GENERIC_KANA_GLOSS: dict[str, str] = {
+    "おばさん": "auntie",
+    "おじさん": "mister",
+    "おばあさん": "grandma",
+    "おじいさん": "grandpa",
+}
+
+# A single capitalised token (optionally with trailing punctuation) that looks
+# like an invented proper name.
+_LONE_PROPER_NOUN_RE = re.compile(r"^[A-Z][a-z]+[.!?…]*$")
+
+
+def _suppress_low_conf_invention(
+    en: str, jp: Optional[str], ocr_conf: Optional[float]
+) -> str:
+    """If OCR conf is low and the EN looks like a lone invented proper name for
+    a generic kana source word, replace it with a safe generic gloss."""
+    if ocr_conf is None or ocr_conf >= LOW_CONF_THRESHOLD or not en or not jp:
+        return en
+    stripped = _normalize_jp(jp)
+    gloss = _GENERIC_KANA_GLOSS.get(stripped)
+    if gloss is None:
+        return en
+    if _LONE_PROPER_NOUN_RE.match(en.strip()):
+        return gloss
+    return en
+
+
+# --------------------------------------------------------------------------- #
 # 3. Public API
 # --------------------------------------------------------------------------- #
-def canonicalize_names(en: str, jp: Optional[str] = None) -> str:
+def canonicalize_names(
+    en: str, jp: Optional[str] = None, ocr_conf: Optional[float] = None
+) -> str:
     """Repair known character-name corruptions in a translated EN bubble.
 
     Args:
         en: the model's English output for one bubble.
         jp: the OCR'd Japanese source for the same bubble, if available.
-            Enables source-conditioned fixes (愛菜→Aina, お姉ちゃん→Sis).
+            Enables source-conditioned fixes (愛菜→Aina, お姉ちゃん→Sis),
+            hard name-locks (ユリエ→Yurie) and the counted-number-kana rule
+            (じゅうさん→33, not "-san").
+        ocr_conf: optional OCR recognition confidence in [0, 1] for this bubble.
+            When low (< LOW_CONF_THRESHOLD) it suppresses name *invention* for
+            generic kana source words (おばさん must not become "Sue"). Omitting
+            it preserves the prior behaviour exactly.
 
     Returns:
         The EN text with known name corruptions normalised. Conservative and
@@ -168,6 +359,16 @@ def canonicalize_names(en: str, jp: Optional[str] = None) -> str:
     """
     if not en:
         return en
+
+    jp_norm = _normalize_jp(jp) if jp else ""
+
+    # Pass 0: counted-number kana. If the whole bubble is a bare number reading,
+    # replace the (mis-honorific / romaji) EN with the digits and stop — there
+    # is no name in a number bubble. Done first so a downstream "-san" rule can
+    # never fire on じゅうさん.
+    number_value = _maybe_number_bubble(jp)
+    if number_value is not None:
+        return str(number_value)
 
     out = en
 
@@ -177,9 +378,19 @@ def canonicalize_names(en: str, jp: Optional[str] = None) -> str:
 
     # Pass 2: source-conditioned fixes (require a jp trigger to be present).
     if jp:
-        jp_norm = _normalize_jp(jp)
         for fix in SOURCE_CONDITIONED:
             if any(t in jp_norm for t in fix.jp_triggers):
                 out = fix.en_pattern.sub(fix.replacement, out)
+
+    # Pass 3: hard name-locks. When the locked kana is in the source, force any
+    # known mis-romanisation of that name to the one canonical spelling.
+    if jp:
+        for canonical, jp_kana, patterns in _COMPILED_LOCKS:
+            if jp_kana in jp_norm:
+                for pat in patterns:
+                    out = pat.sub(canonical, out)
+
+    # Pass 4: low-confidence name-invention suppression (opt-in via ocr_conf).
+    out = _suppress_low_conf_invention(out, jp, ocr_conf)
 
     return out

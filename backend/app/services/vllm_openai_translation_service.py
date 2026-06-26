@@ -19,6 +19,7 @@ from typing import List
 import httpx
 
 from app.config import settings
+from app.services.sfx_glossary import sfx_pre_translate
 from app.services.translation_text_utils import (
     LIGHT_SYSTEM_PROMPT,
     clean_translation_output,
@@ -73,6 +74,64 @@ def normalize_short_utterance(jp: str, max_len: int = 8) -> str:
     out = _BETWEEN_KANA_SEP_RE.sub("", jp)
     out = _KANA_RUNAWAY_RE.sub(r"\1\1", out)
     return out.strip()
+
+
+# --------------------------------------------------------------------------- #
+# 笑 (net-slang "lol"/"haha") sentence-final marker
+# --------------------------------------------------------------------------- #
+# The Japanese net-slang sentence-final 笑 means "lol"/"haha", NOT the verb
+# "to laugh". The small model systematically renders おばさん笑 -> "Laugh, lady!",
+# カレー笑 -> "Curry laughter", etc. We strip a TRAILING standalone 笑 (incl.
+# 笑笑) from the JP before prompting, translate the remainder unchanged, then
+# append ", haha" to the cleaned English. A bare 笑-only bubble -> "haha".
+#
+# CONSERVATIVE GUARD: 笑 is only stripped when it is a trailing run that is NOT
+# preceded by a kanji — so it never touches 笑 inside a word: 笑顔, 笑う/笑った/
+# 笑える, 爆笑, 微笑, 苦笑, 嘲笑 all keep their 笑. Trailing punctuation / emoji /
+# whitespace AFTER the 笑 run, and a few common emphatic marks wedged between
+# the body and the 笑 (! ! ？ ～ ♪ ♡ ☆ w), are tolerated.
+_WARAI_MARK_RE = _nre.compile(
+    r"(?<![一-鿿])"            # NOT preceded by a kanji (guards 爆笑/微笑/苦笑/嘲笑)
+    r"[\s!！?？~〜ｗw♪♡☆、。,.…・]*"  # optional emphatic glue before the marker
+    r"(笑+)"                    # the trailing 笑 run itself
+    r"[\s!！?？~〜♪♡☆、。,.…]*$"   # optional trailing punctuation / emoji
+)
+
+
+def strip_warai_marker(jp: str) -> tuple[str, bool]:
+    """Split a trailing net-slang 笑 marker off a Japanese line.
+
+    Returns ``(body, had_marker)``. ``body`` is the JP with the trailing 笑
+    run (and any trailing punctuation after it) removed; ``had_marker`` is True
+    when a marker was stripped. 笑 that is part of a word (笑顔, 笑う, 爆笑, ...)
+    is NEVER stripped — the regex requires the 笑 run to NOT be preceded by a
+    kanji, and 笑う/笑った/笑顔 have either a kanji-adjacent okurigana or are
+    word-initial-followed-by-more-text (not a *trailing* run).
+    """
+    if not jp or "笑" not in jp:
+        return jp, False
+    m = _WARAI_MARK_RE.search(jp)
+    if not m:
+        return jp, False
+    body = jp[: m.start()].rstrip()
+    return body, True
+
+
+def append_haha(en: str) -> str:
+    """Append the net-slang ", haha" tail to a cleaned English translation.
+
+    A bare 笑-only bubble (empty body -> empty translation) becomes "haha".
+    An already-present trailing "haha"/"lol" is not duplicated.
+    """
+    s = (en or "").strip()
+    if not s:
+        return "haha"
+    if _nre.search(r"\b(haha|lol)\b\W*$", s, _nre.IGNORECASE):
+        return s
+    # Drop a single trailing sentence punctuation so we get "Hey, haha" not
+    # "Hey!, haha"; keep "?"/"!" feel by re-attaching after the tail is added
+    # only for "." (commas read fine after ! or ?).
+    return f"{s}, haha"
 
 
 def build_v11_context_prompt(lines: List[str], k_idx: int) -> str:
@@ -226,6 +285,18 @@ class VLLMOpenAITranslationService:
     ) -> str:
         if not text.strip():
             return ""
+        # PRE-LLM GATE 1: glossary-matched SFX bypass the model entirely
+        # (ぬちょ -> "Squelch", ビクン -> "Twitch", ガバガバに -> "so loose").
+        sfx = sfx_pre_translate(text)
+        if sfx is not None:
+            return sfx
+        # PRE-LLM GATE 2: net-slang 笑 marker. Strip a trailing standalone 笑,
+        # translate the remainder with a BYTE-IDENTICAL prompt, append ", haha".
+        body, had_warai = strip_warai_marker(text)
+        if had_warai:
+            if not body.strip():
+                return "haha"  # bare 笑 / 笑笑 bubble
+            return append_haha(await self.translate_single(body, target_language))
         if settings.translation_v11_pagecontext:
             # v11 PLAIN single-line format (byte-for-byte the trained template).
             # v11 is JP->EN only; target_language is ignored on this path (the
@@ -292,33 +363,103 @@ class VLLMOpenAITranslationService:
         Returns a list of length N (one translation per input bubble). Empty
         inputs map to "". On a per-call failure the slot is left "" so the caller
         can gap-fill or fall back; the whole list is never silently dropped.
+
+        This is the "all lines are targets" case of
+        ``translate_page_context_marked``: every input line is BOTH context AND a
+        translation target. Use ``translate_page_context_marked`` when the page
+        context (all detected dialogue) is wider than the set of lines you want
+        translated back (e.g. dropped/garbled dialogue lines that should still
+        inform pronouns/speakers but are not rendered).
         """
         if not texts:
             return []
-        n = len(texts)
-        # Full ordered page is the shared context for every marked-line call.
-        # (texts already arrive in reading order from the OCR/detection stage.)
         page_lines = [t if t is not None else "" for t in texts]
+        return await self.translate_page_context_marked(
+            page_lines, list(range(len(page_lines))), target_language
+        )
 
-        async def _one(k_idx: int) -> str:
-            src = page_lines[k_idx]
-            if not src.strip():
-                return ""
-            prompt = build_v11_context_prompt(page_lines, k_idx)
-            msg = [{"role": "user", "content": prompt}]
-            try:
-                raw = await self._chat(
-                    msg,
-                    max_tokens=settings.translate_max_tokens,
-                    temperature=0.0,
-                )
-            except Exception as e:  # noqa: BLE001
-                logger.warning(f"vLLM translate_page_context line {k_idx + 1} failed: {e!r}")
-                return ""
-            # One line out; clean exactly as the single-line path does.
-            return clean_translation_output(raw)
+    async def _translate_one_marked(
+        self, page_lines: List[str], k_idx: int, target_language: str
+    ) -> str:
+        """Translate ONE marked line (``k_idx``) of a fully-specified page.
 
-        results = await asyncio.gather(*(_one(i) for i in range(n)))
+        ``page_lines`` is the COMPLETE numbered context (every detected dialogue
+        line, in reading order); ``k_idx`` is the 0-based marked target within
+        it. The numbered "Page:" block is byte-compatible with
+        ``build_v11_context_prompt`` so the served prompt matches the v11 LoRA's
+        training template exactly. Pre-LLM SFX-glossary and net-slang 笑 gates
+        run on the MARKED line only (context lines stay verbatim).
+        """
+        src = page_lines[k_idx]
+        if not src.strip():
+            return ""
+        # PRE-LLM GATE 1: glossary-matched SFX bypass the model entirely.
+        sfx = sfx_pre_translate(src)
+        if sfx is not None:
+            return sfx
+        # PRE-LLM GATE 2: net-slang 笑 marker on the MARKED line. Strip the
+        # trailing 笑 from the target only (context lines stay verbatim), so the
+        # v11 template/context is byte-identical for non-笑 targets.
+        body, had_warai = strip_warai_marker(src)
+        append_warai = had_warai
+        if had_warai and not body.strip():
+            return "haha"  # bare 笑 / 笑笑 bubble — no model call needed
+        if had_warai:
+            # Substitute ONLY the marked line with its 笑-stripped body; the
+            # numbered context list is otherwise unchanged.
+            lines_for_prompt = list(page_lines)
+            lines_for_prompt[k_idx] = body
+        else:
+            lines_for_prompt = page_lines
+        prompt = build_v11_context_prompt(lines_for_prompt, k_idx)
+        msg = [{"role": "user", "content": prompt}]
+        try:
+            raw = await self._chat(
+                msg,
+                max_tokens=settings.translate_max_tokens,
+                temperature=0.0,
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"vLLM translate_page_context line {k_idx + 1} failed: {e!r}")
+            return ""
+        # One line out; clean exactly as the single-line path does.
+        cleaned = clean_translation_output(raw)
+        return append_haha(cleaned) if append_warai else cleaned
+
+    async def translate_page_context_marked(
+        self,
+        page_lines: List[str],
+        target_indices: List[int],
+        target_language: str = "English",
+    ) -> List[str]:
+        """v11 page-context translation over a WIDER context than the targets.
+
+        ``page_lines`` is the WHOLE page's dialogue, in reading order — EVERY
+        detected dialogue line, including ones dropped downstream (garbled / low
+        OCR-conf dialogue) that must still inform speaker/pronoun/continuity but
+        are NOT rendered. Pure-SFX boxes are NOT dialogue and must be excluded by
+        the caller before building ``page_lines``.
+
+        ``target_indices`` are the 0-based positions in ``page_lines`` to
+        actually translate and return (the KEPT lines). For each target we issue
+        ONE marked-line call whose numbered "Page:" context is the FULL
+        ``page_lines`` — so the model sees the same page it was trained on, with
+        no gaps where dropped dialogue used to be. Context-only lines are never
+        marked / never requested.
+
+        Returns a list aligned 1:1 with ``target_indices`` (same order). Empty
+        target lines map to "". The shared full-page prefix is byte-identical
+        across calls, so vLLM prefix-caching amortizes it.
+        """
+        if not target_indices:
+            return []
+        page_lines = [t if t is not None else "" for t in page_lines]
+        results = await asyncio.gather(
+            *(
+                self._translate_one_marked(page_lines, k, target_language)
+                for k in target_indices
+            )
+        )
         return list(results)
 
     async def translate_numbered_block(

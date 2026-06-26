@@ -45,7 +45,9 @@ __all__ = [
     "clean_sfx_output",
     "is_sfx_meta_description",
     "suppress_or_transliterate",
+    "sfx_pre_translate",
     "SFX_MAP",
+    "SFX_ADJ_MAP",
 ]
 
 
@@ -119,6 +121,48 @@ SFX_MAP: dict[str, str] = {
     "ピシ": "Crack",
     "ズドン": "Boom",
     "ガッ": "Grab",
+    # --- wet / squelch family (NSFW). ぬちょ->"menace" etc. were real misses. ---
+    # (ニチャ / グチュ katakana forms already mapped above; add hiragana forms.)
+    "ぬちょ": "Squelch", "ヌチョ": "Squelch",
+    "にちゃ": "Squelch",
+    "ぐちゅ": "Squelch",
+    "じゅぷ": "Squelch", "ジュプ": "Squelch",
+    "じゃぽ": "Squelch", "ジャポ": "Squelch",
+    "ねちょ": "Squelch", "ネチョ": "Squelch",
+    "びちゃ": "Squelch", "ビチャ": "Squelch",
+    "ずちゅ": "Squelch", "ズチュ": "Squelch",
+    # --- slurp / suck family ---
+    "ちゅぱ": "Slurp", "チュパ": "Slurp",
+    "じゅぽ": "Slurp", "ジュポ": "Slurp",
+    "れろ": "Lick", "レロ": "Lick",
+    "べろ": "Lick", "ベロ": "Lick",
+    "ちゅう": "Suck", "チュウ": "Suck",
+    "ぢゅる": "Slurp", "ヂュル": "Slurp",
+    # --- jiggle family ---
+    "たぷん": "Jiggle", "タプン": "Jiggle",  # たぷん->"Maybe" was a real miss
+    "ぷるん": "Jiggle", "プルン": "Jiggle",
+    "ぶるん": "Jiggle", "ブルン": "Jiggle",
+    "たゆん": "Jiggle", "タユン": "Jiggle",
+    "ぼいん": "Boing", "ボイン": "Boing",
+    # --- twitch / throb family ---
+    "ビクン": "Twitch", "びくん": "Twitch",  # ビクン->"Twinkle" was a real miss
+    "ピクン": "Twitch", "ぴくん": "Twitch",
+    # びくっ / ビクッ normalise (sokuon stripped) to びく / ビク, so map the bases.
+    "びく": "Twitch", "ビク": "Twitch",
+    "ドクン": "Throb", "どくん": "Throb",
+    "ズキン": "Throb", "ずきん": "Throb",
+    # --- thrust family ---
+    "ずぶ": "Thrust", "ズブ": "Thrust",
+    "ぬぷ": "Thrust", "ヌプ": "Thrust",
+    "ぐぽ": "Thrust", "グポ": "Thrust",
+}
+
+# Adjectival NSFW onomatopoeia: NOT a transliteration. ガバガバに -> "so loose"
+# was rendered "Gabagabani" (raw romaji leak). These map a normalised JP key to
+# a short English adjective/phrase (rendered verbatim, no romaji fallback).
+SFX_ADJ_MAP: dict[str, str] = {
+    "ガバガバ": "so loose",
+    "がばがば": "so loose",
 }
 
 
@@ -149,6 +193,29 @@ _SMALL_KANA_COMBINE = {"ャ": "ya", "ュ": "yu", "ョ": "yo", "ェ": "e", "ァ":
 # Chōonpu, small tsu (sokuon) and small kana to strip when normalising a SFX
 # key for SFX_MAP lookup.
 _NORMALISE_STRIP = "ーッｯっ"
+
+# Decorative / emphatic marks manga SFX trail with: hearts, stars, music notes,
+# tildes, ellipses, sentence punctuation, full/half spaces. Stripped before key
+# lookup so たぷん♡ and ビクン☆ normalise to their base SFX.
+_DECOR_STRIP_RE = re.compile(r"[♡♥❤☆★※♪♫〜~!！?？.。、,…・\s　　]+")
+
+
+def _collapse_sfx_repeat(key: str) -> str:
+    """Collapse a fully-repeated SFX (ぬちょぬちょ -> ぬちょ; ビクンビクン -> ビクン).
+
+    Only collapses when the WHOLE key is an integer number of copies of a unit,
+    so it never mangles a distinct two-part SFX. Single units pass through.
+    """
+    n = len(key)
+    if n < 2:
+        return key
+    for unit_len in range(1, n // 2 + 1):
+        if n % unit_len:
+            continue
+        unit = key[:unit_len]
+        if unit * (n // unit_len) == key:
+            return unit
+    return key
 
 
 def _to_romaji(jp: str) -> str:
@@ -184,7 +251,14 @@ def _to_romaji(jp: str) -> str:
 
 
 def _normalise_sfx_key(jp: str) -> str:
-    """Strip elongation / sokuon / trailing small kana for SFX_MAP lookup."""
+    """Strip elongation / sokuon / trailing small kana for SFX_MAP lookup.
+
+    Also strips decorative/emphatic trailing marks (♡ ☆ ♪ ～ ! ? … etc.) so a
+    SFX written as たぷん♡ or ビクン☆ normalises to its base key. Whole-SFX
+    repeats are NOT collapsed here (ドキドキ vs ドキ map to different values);
+    repeat-collapse is a separate fallback in the pre-LLM gate.
+    """
+    jp = _DECOR_STRIP_RE.sub("", jp)
     key = "".join(c for c in jp if c not in _NORMALISE_STRIP)
     return key
 
@@ -201,8 +275,19 @@ def suppress_or_transliterate(jp: Optional[str]) -> str:
     if not stripped:
         return "..."
     key = _normalise_sfx_key(stripped)
+    # Adjectival NSFW terms (ガバガバ -> "so loose") take precedence and are
+    # NEVER romaji-transliterated.
+    if key in SFX_ADJ_MAP:
+        return SFX_ADJ_MAP[key]
+    if _collapse_sfx_repeat(key) in SFX_ADJ_MAP:
+        return SFX_ADJ_MAP[_collapse_sfx_repeat(key)]
     if key in SFX_MAP:
         return SFX_MAP[key]
+    # Collapse a whole-SFX repeat (ぬちょぬちょ -> ぬちょ) and retry exact match
+    # before falling back to prefix/romaji.
+    collapsed = _collapse_sfx_repeat(key)
+    if collapsed != key and collapsed in SFX_MAP:
+        return SFX_MAP[collapsed]
     # progressive prefix match (e.g. パシ from パシッ already handled by strip,
     # but ザアザア vs ザア etc.)
     for k, v in SFX_MAP.items():
@@ -376,3 +461,78 @@ def clean_sfx_output(en: Optional[str], jp: Optional[str] = None) -> Optional[st
 
     # (4) Leave real dialogue (and already-good SFX) untouched.
     return en
+
+
+# ---------------------------------------------------------------------------
+# 5. PRE-LLM gate — bypass the model entirely for glossary-matched SFX
+# ---------------------------------------------------------------------------
+
+
+def _jp_matches_sfx_glossary(jp: str) -> Optional[str]:
+    """Return the mapped English for a JP box that is a KNOWN glossary SFX/term.
+
+    Returns None when the JP is not a confident glossary match (so the caller
+    falls through to the LLM). Tries, in order, on the normalised key and on a
+    whole-repeat-collapsed key:
+      1. SFX_ADJ_MAP  (adjectival: ガバガバ -> "so loose")
+      2. SFX_MAP      (impact + wet/jiggle/twitch/etc onomatopoeia)
+    Exact-key only — NO prefix/romaji guessing here, so ordinary kana dialogue
+    that merely starts like a SFX is never bypassed.
+    """
+    key = _normalise_sfx_key(jp.strip())
+    if not key:
+        return None
+    collapsed = _collapse_sfx_repeat(key)
+    for k in (key, collapsed):
+        if k in SFX_ADJ_MAP:
+            return SFX_ADJ_MAP[k]
+    for k in (key, collapsed):
+        if k in SFX_MAP:
+            return SFX_MAP[k]
+    return None
+
+
+# A trailing grammatical particle (に / と / で / の / が / は / を / って) that
+# can follow an adjectival SFX term: ガバガバに -> "so loose". Stripped only for
+# the ADJ-term match, never for the onomatopoeia map.
+_TRAILING_PARTICLE_RE = re.compile(r"(?:に|と|で|の|が|は|を|って|だ|です)$")
+
+
+def sfx_pre_translate(jp: Optional[str]) -> Optional[str]:
+    """PRE-LLM gate: short-circuit a pure-SFX box to its glossary English.
+
+    Returns the English string to render when ``jp`` is confidently a known
+    SFX / adjectival onomatopoeia (so the box NEVER reaches the LLM); returns
+    None when the box should be translated normally.
+
+    Gating (conservative, in priority order):
+      1. Adjectival term (ガバガバ / ガバガバに -> "so loose") — whole-box exact
+         key after stripping ONE trailing grammatical particle.
+      2. WHOLE-BOX exact onomatopoeia key (ぬちょ, たぷん, ビクン, ちゅぱ, ...):
+         the normalised / repeat-collapsed key EXACTLY equals a SFX_MAP key.
+         Glossary keys are non-lexical onomatopoeia, so a whole-box exact match
+         is safe — ordinary hiragana dialogue never equals one in full.
+      3. SFX-SHAPED katakana / marker-bearing kana box that also exact-matches.
+
+    Real dialogue (longer, with grammar/kanji, or only a PREFIX match) returns
+    None and is translated by the model as before.
+    """
+    if not jp:
+        return None
+    s = jp.strip()
+    if not s:
+        return None
+    # Reject anything with kanji / latin / digits outright — not a pure SFX box.
+    if re.search(r"[一-鿿A-Za-z0-9]", s):
+        return None
+
+    # (1) Adjectival term, tolerating one trailing particle (ガバガバに).
+    adj_key = _normalise_sfx_key(s)
+    adj_key = _TRAILING_PARTICLE_RE.sub("", adj_key)
+    if adj_key in SFX_ADJ_MAP:
+        return SFX_ADJ_MAP[adj_key]
+    if _collapse_sfx_repeat(adj_key) in SFX_ADJ_MAP:
+        return SFX_ADJ_MAP[_collapse_sfx_repeat(adj_key)]
+
+    # (2)+(3) Whole-box exact onomatopoeia match (no prefix/romaji guessing).
+    return _jp_matches_sfx_glossary(s)

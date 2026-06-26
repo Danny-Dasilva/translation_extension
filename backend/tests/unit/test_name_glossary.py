@@ -148,3 +148,96 @@ class TestConservative:
         # Generic sentence, no known corruption -> identity.
         s = "Hmm, I'll let you know if I find anything."
         assert canonicalize_names(s) == s
+
+
+# --------------------------------------------------------------------------- #
+# Hard name-lock: ユリエ -> "Yurie" (model emits "Julie" / "Lucia")
+# --------------------------------------------------------------------------- #
+class TestNameLockYurie:
+    def test_julie_locked_to_yurie(self):
+        jp = "ユリエ、こっち来て"
+        en = "Julie, come over here."
+        out = canonicalize_names(en, jp)
+        assert "Julie" not in out
+        assert "Yurie" in out
+
+    def test_lucia_locked_to_yurie(self):
+        jp = "ユリエ……"
+        en = "Lucia..."
+        out = canonicalize_names(en, jp)
+        assert "Lucia" not in out
+        assert "Yurie" in out
+
+    def test_yurie_already_correct_is_unchanged(self):
+        jp = "ユリエだよ"
+        en = "It's Yurie."
+        assert canonicalize_names(en, jp) == en
+
+    def test_lock_does_not_fire_without_jp_trigger(self):
+        # No ユリエ in source -> a person legitimately named "Julie" stays Julie.
+        en = "Julie went home early."
+        assert canonicalize_names(en, "彼女は早く帰った") == en
+        assert canonicalize_names(en) == en
+
+    def test_lock_idempotent(self):
+        jp = "ユリエ、こっち来て"
+        once = canonicalize_names("Julie, come over here.", jp)
+        twice = canonicalize_names(once, jp)
+        assert once == twice
+
+
+# --------------------------------------------------------------------------- #
+# Counted-number kana: じゅうさん (=33) must NOT become "Jus-san"/honorific.
+# Fire only when the bubble is essentially just a number reading.
+# --------------------------------------------------------------------------- #
+class TestCountedNumberKana:
+    def test_juusan_is_thirty_three(self):
+        # じゅうさん = 10 + 3 = 33, with emphasis punctuation.
+        out = canonicalize_names("Jus-san!!", "じゅうさん!!")
+        assert "san" not in out.lower()
+        assert ("33" in out) or ("thirty-three" in out.lower())
+
+    def test_hyaku_is_one_hundred(self):
+        out = canonicalize_names("hyaku", "ひゃく")
+        assert ("100" in out) or ("hundred" in out.lower())
+
+    def test_nijuu_is_twenty(self):
+        out = canonicalize_names("Niju", "にじゅう")
+        assert ("20" in out) or ("twenty" in out.lower())
+
+    def test_real_honorific_name_untouched(self):
+        # 田中さん is a real name + honorific, NOT a counted number.
+        jp = "田中さん、おはよう"
+        en = "Tanaka-san, good morning."
+        assert canonicalize_names(en, jp) == en
+
+    def test_number_rule_does_not_fire_on_sentence(self):
+        # さん inside a real sentence with a name is not a bare number bubble.
+        jp = "さんは三人います"
+        en = "There are three of them."
+        assert canonicalize_names(en, jp) == en
+
+
+# --------------------------------------------------------------------------- #
+# Low-confidence OCR must not let a generic word become an invented name.
+# おばさん (auntie) at low conf must NOT be promoted to a proper name "Sue".
+# --------------------------------------------------------------------------- #
+class TestLowConfidenceNoInvention:
+    def test_low_conf_obasan_not_invented(self):
+        jp = "おばさん"
+        en = "Sue"  # model invented a proper name from おばさん
+        out = canonicalize_names(en, jp, ocr_conf=0.30)
+        # At low confidence we refuse to keep an invented single-token name;
+        # it is neutralised (not promoted to a proper noun).
+        assert out != "Sue"
+
+    def test_high_conf_leaves_text_alone(self):
+        # With high confidence and no known corruption we do not touch it.
+        jp = "おばさん"
+        en = "Auntie"
+        assert canonicalize_names(en, jp, ocr_conf=0.95) == en
+
+    def test_ocr_conf_defaults_to_no_suppression(self):
+        # Omitting ocr_conf keeps backward-compatible behaviour (identity here).
+        en = "Some ordinary sentence."
+        assert canonicalize_names(en) == en

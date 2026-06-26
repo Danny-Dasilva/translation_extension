@@ -122,6 +122,104 @@ def _has_latin_intrusion(norm: str) -> bool:
     return any(_is_japanese_glyph(ch) for ch in norm)
 
 
+# --- duplication garble (FIX P1-2) ----------------------------------------
+# The DOMINANT real failure mode (144 bubbles, avg severity 2.53): PARSeq
+# misreads dense / stylized vertical kana into duplicated adjacent characters
+# and immediate phrase repetition, carrying FALSELY HIGH confidence (0.76-0.92)
+# so the confidence threshold never fires. Examples:
+#   身代わり -> 身身わわ      吐気 -> 吐吐気       濯濯バサミ
+#   また昨日みたいな -> また昨日みたいなまた昨日みたいな (whole-phrase dup)
+#   妄想止まらない -> 妄..妄ま定れいい妄.想止止らな (corrupt + 止止 dup)
+# These signals are confidence-INDEPENDENT (run in is_implausible_japanese).
+#
+# Conservatism: false-dropping real dialogue is worse than missing some garble,
+# so legitimate Japanese reduplication is whitelisted before flagging.
+
+# Legitimate doubled-KANJI words. Real reduplication normally uses the 々
+# iteration mark (人々), but PARSeq may emit the literal doubled kanji, so we
+# whitelist both members of each common pair. An adjacent doubled kanji NOT in
+# this set is the garble signal.
+_LEGIT_KANJI_REDUP = {
+    "様", "段", "人", "我", "色", "時", "方",
+    "国", "日", "別", "中", "数", "順", "程",
+    "個", "村", "家", "山", "木",  # 個々 村々 家々 etc.
+}
+
+# Iteration mark — a glyph that *is* legitimate reduplication; never a garble.
+_ITERATION_MARK = "々"
+
+# Legitimate doubled-KATAKANA fragments. We only treat doubled KATAKANA as a
+# garble signal (doubled hiragana is far too common in real text: long-vowel
+# spellings おお/ええ, mimetics, emphatic stretches), and even then we whitelist
+# katakana laughter (ハハ/フフ/ヘヘ/ホホ) which is genuine speech.
+_LEGIT_KATAKANA_DOUBLE = {"ハ", "フ", "ヘ", "ホ"}
+
+
+def _adjacent_dup_kanji(norm: str) -> bool:
+    """An adjacent ``X X`` kanji pair that is NOT legitimate reduplication.
+
+    Real reduplicated kanji words are whitelisted (``_LEGIT_KANJI_REDUP``); any
+    other doubled kanji (身身, 吐吐, 濯濯, 止止) is the PARSeq dup-garble signal.
+    """
+    for i in range(len(norm) - 1):
+        a, b = norm[i], norm[i + 1]
+        if a == b and _is_kanji(a) and a not in _LEGIT_KANJI_REDUP:
+            return True
+    return False
+
+
+def _adjacent_dup_kana(norm: str) -> bool:
+    """An adjacent ``X X`` KATAKANA pair that is not whitelisted laughter.
+
+    Deliberately KATAKANA-ONLY. Doubled hiragana is rejected as a signal because
+    it occurs in genuine text (long-vowel おお/ええ as in 大きい/大阪, mimetics),
+    so flagging it false-drops real dialogue. Doubled katakana is far more
+    garble-like (katakana long vowels use ー, not vowel doubling), and the only
+    common legit form is laughter (ハハ/フフ), which is whitelisted.
+    """
+    for i in range(len(norm) - 1):
+        a, b = norm[i], norm[i + 1]
+        if a == b and _is_katakana(a) and a not in _LEGIT_KATAKANA_DOUBLE:
+            return True
+    return False
+
+
+def _repeated_bigram_garble(norm: str) -> bool:
+    """High ratio of repeated character-bigrams -> phrase-repetition garble.
+
+    Whole-phrase OCR duplication (また昨日みたいなまた昨日みたいな) produces many
+    repeated bigrams. Genuine dialogue rarely exceeds ~30% repeated bigrams, so
+    a >= 0.5 ratio over a long-enough line is a strong dup signal. Gated on
+    length to avoid firing on tiny strings where one repeat dominates.
+    """
+    glyphs = [c for c in norm if _is_japanese_glyph(c)]
+    if len(glyphs) < 8:
+        return False
+    bigrams = [glyphs[i] + glyphs[i + 1] for i in range(len(glyphs) - 1)]
+    if not bigrams:
+        return False
+    unique = len(set(bigrams))
+    repeated_ratio = 1.0 - (unique / len(bigrams))
+    return repeated_ratio >= 0.5
+
+
+def _immediate_substring_dup(norm: str) -> bool:
+    """Line is ``P + P`` — a phrase repeated immediately back-to-back.
+
+    Catches whole-phrase OCR duplication whose two JP-glyph halves are identical
+    (また昨日みたいな + また昨日みたいな). Requires the repeated unit to be
+    non-trivial (>= 4 JP glyphs) so ordinary short doubled words don't trip it.
+    """
+    stripped = "".join(c for c in norm if _is_japanese_glyph(c))
+    n = len(stripped)
+    if n < 8 or n % 2 != 0:
+        return False
+    half = n // 2
+    if half < 4:
+        return False
+    return stripped[:half] == stripped[half:]
+
+
 def is_implausible_japanese(text: str) -> bool:
     """True if ``text`` reads as garbled OCR despite being mostly Japanese.
 
@@ -133,6 +231,9 @@ def is_implausible_japanese(text: str) -> bool:
     Signals (any one is sufficient):
       * Garbled leading small-tsu prefix (page 070 "..?っく混みますよ").
       * Heavy ASCII-letter intrusion in Japanese text (logo/URL/handle garble).
+      * Duplication garble (FIX P1-2): adjacent doubled kanji/kana, whole-phrase
+        immediate repetition, or a high repeated-bigram ratio — the dominant
+        PARSeq dense-kana failure mode, carrying falsely-high confidence.
     """
     norm = unicodedata.normalize("NFC", text).strip()
     if not norm:
@@ -140,6 +241,14 @@ def is_implausible_japanese(text: str) -> bool:
     if _has_garbled_leading_tsu(norm):
         return True
     if _has_latin_intrusion(norm):
+        return True
+    if _adjacent_dup_kanji(norm):
+        return True
+    if _adjacent_dup_kana(norm):
+        return True
+    if _immediate_substring_dup(norm):
+        return True
+    if _repeated_bigram_garble(norm):
         return True
     return False
 
@@ -210,6 +319,81 @@ def is_garbled_low_conf(
     if len(norm) < _DIALOGUE_MIN_LEN:
         return True
     return False
+
+
+# Speaker / pronoun references. A SHORT dropped line carrying one of these is
+# exactly the continuity context the v11 page is for (who is speaking / being
+# referred to), so we keep it even below the dialogue-length cutoff. Covers the
+# common first/second/third-person pronouns and the family-role address terms
+# that drive he/she/I/you selection in manga dialogue.
+_SPEAKER_REF_TOKENS = (
+    "僕", "私", "俺", "あたし", "わたし", "ぼく", "おれ",
+    "君", "きみ", "あなた", "お前", "おまえ", "貴方",
+    "お母さん", "母さん", "ママ", "お父さん", "父さん", "パパ",
+    "お兄ちゃん", "兄さん", "お姉ちゃん", "姉さん",
+    "おばさん", "おじさん", "先生", "彼", "彼女",
+)
+
+
+def _has_speaker_reference(norm: str) -> bool:
+    return any(tok in norm for tok in _SPEAKER_REF_TOKENS)
+
+
+# A short dropped line still needs a minimum substance to be context (avoid
+# admitting 1-2 char fragments). Half the dialogue cutoff.
+_CONTEXT_MIN_LEN_WITH_SPEAKER = 4
+
+
+def is_dialogue_context_candidate(
+    text: str, ocr_confidence: float | None = None
+) -> bool:
+    """True if a GATE-DROPPED line is real-enough DIALOGUE to keep as CONTEXT.
+
+    The v11 page-context model translates one marked line while seeing the whole
+    page's dialogue (speaker/pronoun continuity). A dialogue line dropped before
+    translation (OCR-gate / garble) still belongs in the numbered "Page:" context
+    so the page the model sees has no holes — BUT a pure-SFX box, or a genuinely
+    garbled low-confidence scrawl, must NOT pollute that dialogue context. This
+    decides which dropped lines are kept as CONTEXT-ONLY (never rendered).
+
+    Policy (validated on IK4 page 5):
+      * exclude empty / glossary-SFX / garble-char / mostly-non-Japanese,
+      * exclude LOW-OCR-confidence lines when ``ocr_confidence`` is supplied
+        (genuine garble like the conf-0.49 "平速ととの…" scrawl — pure noise),
+      * KEEP a short line that names a speaker / carries a pronoun
+        (お母さん, 僕, 私, …) — that is precisely the continuity the page is for
+        (IK4 p5 "お母さんは僕の…" fixes the He/She pronoun on the marked line),
+      * KEEP a dialogue-LENGTH mostly-Japanese line,
+      * otherwise exclude (short generic fragment / exclamation).
+    """
+    norm = unicodedata.normalize("NFC", text or "").strip()
+    if not norm:
+        return False
+    # Glossary-matched SFX (ぬちょ, ビクン, …) are handled out-of-band; never
+    # dialogue context. Local import keeps this module dependency-light.
+    try:
+        from app.services.sfx_glossary import sfx_pre_translate
+        if sfx_pre_translate(norm) is not None:
+            return False
+    except Exception:
+        pass
+    if _has_garble_chars(norm):
+        return False
+    analysis = analyze_characters(norm)
+    if analysis.japanese_ratio < _MIN_JP_RATIO_FOR_LOWCONF:
+        return False
+    # Genuinely-garbled low-confidence scrawl is noise, not context. Only applies
+    # when confidence is known (the gate has it); the text-only call stays
+    # length/JP-ratio based for back-compat.
+    if ocr_confidence is not None and ocr_confidence < DEFAULT_CONF_THRESHOLD:
+        return False
+    # A speaker/pronoun reference makes even a short line valuable context.
+    if _has_speaker_reference(norm) and len(norm) >= _CONTEXT_MIN_LEN_WITH_SPEAKER:
+        return True
+    # Otherwise require dialogue length: short generic fragments are SFX-ish.
+    if len(norm) < _DIALOGUE_MIN_LEN:
+        return False
+    return True
 
 
 def should_erase_dropped(text: str) -> bool:

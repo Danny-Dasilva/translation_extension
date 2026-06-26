@@ -82,3 +82,71 @@ def test_plausibility_check_can_be_disabled():
     # The plausibility signal is gated so behavior stays tunable. With it off,
     # a high-conf implausible line is NOT dropped (pre-P1-1 behavior).
     assert is_garbled_low_conf("..?っく混みますよ", 0.91, check_plausibility=False) is False
+
+
+# --- duplication garble (FIX P1-2): falsely-HIGH-confidence dup garble -----
+# PARSeq misreads dense/stylized vertical kana into duplicated adjacent
+# characters and immediate phrase repetition, carrying high confidence
+# (0.76-0.92) so the confidence gate never fires. These MUST be flagged.
+def test_implausible_dup_adjacent_kanji():
+    # 身代わり -> 身身わわ, 吐気 -> 吐吐気, 濯濯バサミ — duplicated adjacent glyphs.
+    assert is_implausible_japanese("身身わわ") is True
+    assert is_implausible_japanese("吐吐気") is True
+    assert is_implausible_japanese("濯濯バサミ") is True
+
+
+def test_implausible_immediate_phrase_dup():
+    # また昨日みたいな -> doubled back-to-back.
+    assert is_implausible_japanese("また昨日みたいなまた昨日みたいな") is True
+
+
+def test_implausible_corrupt_with_dup():
+    # 妄想止まらない -> corrupt run carrying an adjacent dup (止止).
+    assert is_implausible_japanese("妄..妄ま定れいい妄.想止止らな") is True
+
+
+def test_dup_garble_dropped_at_high_conf():
+    # The headline P1-2 case: high OCR confidence (0.88) but dup garble -> drop.
+    assert is_garbled_low_conf("身身わわ", 0.88) is True
+    assert is_garbled_low_conf("また昨日みたいなまた昨日みたいな", 0.9) is True
+
+
+# --- duplication garble: legitimate reduplication MUST NOT be flagged ------
+def test_plausible_kanji_reduplication_whitelist():
+    # Real Japanese reduplicated kanji words — must survive.
+    for s in [
+        "様々", "段々", "人々", "我々", "色々", "時々", "方々",
+        "国々", "日々", "別々", "中々", "数々", "順々", "程々",
+        "様々な事情があってね", "人々が集まってきた", "日々の暮らし",
+    ]:
+        assert is_implausible_japanese(s) is False, s
+
+
+def test_plausible_iteration_mark_and_adverbs():
+    # 々 iteration mark and common doubled-kana adverbs are legit.
+    for s in [
+        "色々な", "段々と暗くなる",
+        "ますます", "どんどん", "だんだん", "いよいよ", "そろそろ",
+        "わざわざ", "いちいち", "しばしば",
+        "ますます好きになる", "どんどん進めよう",
+    ]:
+        assert is_implausible_japanese(s) is False, s
+
+
+def test_plausible_doubled_kana_laughter():
+    # はは / ハハ (laughter) is real speech, not garble.
+    for s in ["はは", "ハハ", "ははっ", "あはは", "ふふ"]:
+        assert is_implausible_japanese(s) is False, s
+
+
+def test_dup_garble_does_not_flag_normal_dialogue():
+    # Ordinary dialogue with incidental repeated characters must pass.
+    for s in [
+        "イキたいんなら自分で動きなさい!",
+        "いつの話よそんなの",
+        "かわいい娘さんっすねー一緒写ってたの奥さんっすか?",
+        "そうそう、それでいいんだよ",
+        "もうやめてよ",
+        "ちょっと待ってよ",
+    ]:
+        assert is_implausible_japanese(s) is False, s

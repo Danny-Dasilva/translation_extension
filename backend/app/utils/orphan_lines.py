@@ -99,6 +99,54 @@ def cluster_orphan_lines(orphans: List[Dict]) -> List[List[Dict]]:
     return list(groups.values())
 
 
+def reading_order_sort(blocks: List[Dict]) -> List[Dict]:
+    """PAGE-LEVEL manga reading order: column-major, right-to-left, top-to-bottom.
+
+    This is the SERVE-SIDE twin of
+    ``scripts/data/v11/build_v11_dataset.manga_reading_order`` — the exact order
+    the v11 page-context LoRA's numbered "Page:" context was built in. The
+    detector previously emitted blocks via a naive ``sorted(key=(-minX, minY))``
+    key, which interleaves columns and reverses wrapped/jittered columns, so the
+    served page context did NOT match training. Keeping these two algorithms
+    byte-identical is a contract (a train/serve mismatch collapses chrF++).
+
+    Algorithm (verbatim from the trainer, on the minX/minY/maxX/maxY schema):
+      1. x-center each block; estimate page width; tol = max(40, page_w * 0.06).
+      2. sweep blocks right->left by x-center, accreting into columns: a block
+         joins the first existing column whose MEAN x-center is within ``tol``,
+         else opens a new column.
+      3. order columns by mean x-center descending (right-to-left).
+      4. within each column read top-to-bottom (ascending minY); concatenate.
+
+    Returns a NEW list of the SAME block dicts (not copies); does not mutate the
+    input list/order and never leaves scratch keys on the blocks.
+    """
+    if len(blocks) <= 1:
+        return list(blocks)
+    # x-centers computed on the side (do NOT pollute the block dicts).
+    cx = {id(b): (b["minX"] + b["maxX"]) / 2.0 for b in blocks}
+    page_w = max(b["maxX"] for b in blocks) - min(b["minX"] for b in blocks)
+    tol = max(40.0, page_w * 0.06)
+    by_x = sorted(blocks, key=lambda b: -cx[id(b)])
+    columns: List[List[Dict]] = []
+    for b in by_x:
+        placed = False
+        for col in columns:
+            col_cx = sum(cx[id(c)] for c in col) / len(col)
+            if abs(cx[id(b)] - col_cx) <= tol:
+                col.append(b)
+                placed = True
+                break
+        if not placed:
+            columns.append([b])
+    columns.sort(key=lambda col: -sum(cx[id(c)] for c in col) / len(col))
+    ordered: List[Dict] = []
+    for col in columns:
+        col.sort(key=lambda b: b["minY"])  # top -> bottom
+        ordered.extend(col)
+    return ordered
+
+
 def _order_vertical_columns(cluster: List[Dict]) -> List[Dict]:
     """Manga reading order for vertical-Japanese line fragments.
 
