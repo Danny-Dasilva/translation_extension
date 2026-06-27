@@ -66,6 +66,78 @@ def load_font(size: int, path: Path = DEFAULT_FONT_PATH) -> ImageFont.FreeTypeFo
 
 
 # ---------------------------------------------------------------------------
+# Readability floor + page-consistency policy (config-driven)
+# ---------------------------------------------------------------------------
+# These mirror app.config.Settings so the renderer has a single source of truth
+# while still being importable as a stand-alone script (the bench/inspect data
+# harness imports this module directly). We try to read the live settings; if
+# the import fails (e.g. running the file in isolation) we fall back to the same
+# defaults declared in app/config.py.
+try:  # pragma: no cover - exercised indirectly
+    from app.config import settings as _settings  # type: ignore
+
+    ABS_FONT_FLOOR: int = int(_settings.render_font_abs_floor)
+    FONT_FLOOR_FRAC: float = float(_settings.render_font_floor_frac)
+    CLAMPED_HARD_FLOOR: int = int(_settings.render_font_clamped_hard_floor)
+    FONT_MAX_CAP: int = int(_settings.render_font_max_cap)
+    CONSISTENT_FONT_DEFAULT: bool = bool(_settings.render_consistent_font)
+    CONSISTENT_FONT_PERCENTILE: int = int(_settings.render_consistent_font_percentile)
+except Exception:  # pragma: no cover - fallback defaults
+    ABS_FONT_FLOOR = 18
+    FONT_FLOOR_FRAC = 0.012
+    CLAMPED_HARD_FLOOR = 12
+    FONT_MAX_CAP = 96
+    CONSISTENT_FONT_DEFAULT = True
+    CONSISTENT_FONT_PERCENTILE = 35
+
+
+def resolution_font_floor(img_h: int) -> int:
+    """Resolution-aware minimum legible font size in pixels.
+
+    Manga pages here are ~1000-2000px tall, so an absolute floor alone is wrong:
+    a 14px line that's readable on a 600px crop is microscopic on a 1791px page.
+    We take ``max(ABS_FONT_FLOOR, round(img_h * FONT_FLOOR_FRAC))`` so the floor
+    scales with page resolution while never dropping below the absolute minimum.
+    """
+    return max(ABS_FONT_FLOOR, round(img_h * FONT_FLOOR_FRAC))
+
+
+def _percentile(values: list[int], pct: int) -> float:
+    """Nearest-rank percentile (no numpy dependency on the hot path)."""
+    if not values:
+        return 0.0
+    s = sorted(values)
+    if pct <= 0:
+        return float(s[0])
+    if pct >= 100:
+        return float(s[-1])
+    # nearest-rank: rank = ceil(pct/100 * N), 1-indexed
+    import math
+
+    rank = max(1, math.ceil(pct / 100.0 * len(s)))
+    return float(s[rank - 1])
+
+
+def page_dialogue_target(maxfit_sizes: list[int], floor: int,
+                         percentile: int = CONSISTENT_FONT_PERCENTILE) -> int:
+    """Shared dialogue font-size target for one page.
+
+    Given each dialogue bubble's *independent* max-fit size, drive the page
+    toward ONE consistent size: a LOW percentile of those sizes (not the min,
+    which would let a single cramped bubble shrink the whole page; not the max,
+    which would overflow most bubbles). Clamped to be >= the readability floor.
+
+    Most bubbles then render at this shared size; only genuinely tiny bubbles
+    (whose max-fit is below the target) deviate downward — but never below the
+    floor, because the renderer wraps / allows modest overflow instead.
+    """
+    if not maxfit_sizes:
+        return floor
+    target = round(_percentile(maxfit_sizes, percentile))
+    return max(floor, int(target))
+
+
+# ---------------------------------------------------------------------------
 # Display-text normalization & font coverage
 # ---------------------------------------------------------------------------
 
@@ -286,6 +358,37 @@ def find_best_fit(draw: ImageDraw.ImageDraw, text: str, max_w: int, max_h: int,
     return best_font, best_lines, fitted
 
 
+def block_max_fit_size(draw: ImageDraw.ImageDraw, text: str, max_w: int, max_h: int,
+                       font_path: Path = DEFAULT_FONT_PATH,
+                       min_size: int = 6, max_size: int = FONT_MAX_CAP) -> int:
+    """Largest font size at which ``text`` fits ``(max_w, max_h)``.
+
+    Used in the page-consistency first pass to learn each dialogue bubble's
+    independent max-fit so we can pick a shared page target. Returns ``min_size``
+    when nothing fits (caller treats that as "this bubble is too cramped").
+    """
+    if not text:
+        return min_size
+    font, _lines, fitted = find_best_fit(draw, text, max_w, max_h, font_path,
+                                         min_size=min_size, max_size=max_size)
+    return font.size if fitted else min_size
+
+
+def layout_at_size(draw: ImageDraw.ImageDraw, text: str, size: int, max_w: int,
+                   font_path: Path = DEFAULT_FONT_PATH) -> tuple[ImageFont.FreeTypeFont, list[str]]:
+    """Wrap ``text`` at a FIXED font ``size`` to ``max_w`` (no shrinking).
+
+    The page-consistency renderer picks a shared target size, then lays every
+    dialogue bubble out at that size — wrapping to as many lines as needed. The
+    caller decides whether the resulting block fits the bubble height, and if
+    not, applies the priority ladder (more lines already done here → modest
+    overflow → clip).
+    """
+    font = load_font(size, font_path)
+    lines = wrap_greedy(draw, text, font, max_w) or [text]
+    return font, lines
+
+
 # ---------------------------------------------------------------------------
 # Drawing
 # ---------------------------------------------------------------------------
@@ -419,7 +522,10 @@ def compose_final(
     translations: list[str],
     inset_margin: int = 4,
     fit_rects: list | None = None,
-) -> np.ndarray:
+    consistent_font: bool | None = None,
+    overflow_frac: float = 0.18,
+    _debug_sizes: bool = False,
+):
     """Render translated text onto the inpainted plate using koharu's layout
     semantics: binary-search fit, real ink bbox, line_height =
     max(ascent + descent + leading, font_size), and a stroke width scaled
@@ -436,11 +542,46 @@ def compose_final(
 
     Auto-picks black-on-white vs white-on-black based on sampled luminance
     of the inpainted background inside the rect.
+
+    READABILITY FLOOR (resolution-aware): the minimum rendered font size is
+    ``resolution_font_floor(img_h)`` = ``max(ABS_FONT_FLOOR, img_h*FONT_FLOOR_FRAC)``
+    so it scales with page resolution. When text does not fit a dialogue bubble
+    at this floor we do NOT shrink below it — instead, in priority order:
+    (a) wrap to more lines, (b) allow modest overflow/expansion beyond the bubble
+    interior (bounded by ``overflow_frac`` of the bubble size — the inpaint plate
+    is clean so a slight spill reads fine), (c) clip trailing lines as a last
+    resort. Clamped (no-bubble) SFX/caption blocks keep a lower hard floor and
+    are clipped rather than overflowing onto neighbouring art.
+
+    PAGE-LEVEL CONSISTENCY (``consistent_font``, default from config): instead of
+    sizing every dialogue bubble fully independently (which made adjacent bubbles
+    wildly different sizes), a first pass computes each dialogue bubble's max-fit
+    size and a shared page target (a low percentile of those sizes, never below
+    the floor). The render pass drives every dialogue bubble toward that one
+    target so most bubbles share a single readable size; only genuinely tiny
+    bubbles deviate. Clamped SFX/caption blocks stay on their own independent
+    track (they are legitimately variable). Set ``consistent_font=False`` to A/B.
+
+    When ``_debug_sizes`` is True, returns ``list[int|None]`` (parallel to
+    ``blocks``) of the rendered font size per block (None for suppressed/empty
+    blocks) instead of the composited image — used by the tests/AB harness.
     """
     pil = Image.fromarray(inpainted).convert("RGB")
     draw = ImageDraw.Draw(pil)
     img_h, img_w = inpainted.shape[:2]
     fit_rects = fit_rects or [None] * len(blocks)
+    if consistent_font is None:
+        consistent_font = CONSISTENT_FONT_DEFAULT
+
+    # Resolution-aware readability floor for this page.
+    min_floor = resolution_font_floor(img_h)
+    # Clamped (no-bubble) blocks get a lower hard floor — they are legitimately
+    # variable and must not overflow onto art, so we let them clip smaller.
+    clamped_hard_floor = min(CLAMPED_HARD_FLOOR, min_floor)
+    max_cap = FONT_MAX_CAP
+
+    # Per-block rendered font size (for _debug_sizes / AB harness).
+    rendered_size: list[int | None] = [None] * len(blocks)
 
     # FIX A: track ink rects already placed so a later block can be shrunk /
     # suppressed instead of overlapping an earlier one. Each entry is
@@ -461,6 +602,36 @@ def compose_final(
             * (int(blocks[i]["maxY"]) - int(blocks[i]["minY"])),  # then small-first
         ),
     )
+
+    def _dialogue_fit_box(rect: dict) -> tuple[int, int]:
+        """Effective (width, height) the text is fit to inside a dialogue
+        bubble — bubble interior minus the fixed-px inset. Mirrors the render
+        loop's inset math so the first-pass max-fit matches what we render."""
+        bw = int(rect["maxX"]) - int(rect["minX"])
+        bh = int(rect["maxY"]) - int(rect["minY"])
+        return max(20, bw - inset_margin * 2), max(12, bh - inset_margin * 2)
+
+    # PAGE-LEVEL CONSISTENCY first pass: learn each dialogue bubble's independent
+    # max-fit size, then derive ONE shared target (low percentile, >= floor).
+    page_target: int | None = None
+    if consistent_font:
+        maxfits: list[int] = []
+        for i, fr in enumerate(fit_rects):
+            if fr is None:
+                continue
+            t = translations[i]
+            if not t:
+                continue
+            t = normalize_for_display(t).strip().upper()
+            if not t:
+                continue
+            ew, eh = _dialogue_fit_box(fr)
+            fp = _pick_renderable_font(pick_font(t), t)
+            maxfits.append(block_max_fit_size(draw, t, ew, eh, fp,
+                                              min_size=min_floor, max_size=max_cap))
+        if maxfits:
+            page_target = page_dialogue_target(
+                maxfits, min_floor, percentile=CONSISTENT_FONT_PERCENTILE)
 
     for _idx in order:
         block = blocks[_idx]
@@ -547,34 +718,70 @@ def compose_final(
         # keep text inside its block and rely on all-caps + the min floor +
         # word-safe wrapping for legibility.
         eff_w, eff_h = inset_w, inset_h
-        max_cap = 96
 
         # Pick the display font, then swap in the widest-coverage fallback
         # if it can't render every glyph (smart-quote, CJK leak, accented
         # letter, etc.) — prevents tofu squares in the final composite.
         font_path = _pick_renderable_font(pick_font(text), text)
-        # Minimum legible floor. Below this, text is unreadable at reading
-        # size — prefer a little overflow over microscopic text.
-        # FIX #5: raise the soft floor to 14px and give clamped (no-bubble)
-        # blocks a HARD floor of 9px (was 6px → illegibly tiny). We fit at the
-        # soft floor first; only if the result still overflows the box AND the
-        # block is clamped do we retry once down to the hard floor, leaning on
-        # the trailing-line clip+"…" path below to absorb any residual overflow.
-        # Net: clamped captions stay >=9px (usually >=14px).
-        # FIX #4: find_best_fit also returns `fitted` (did the text fit the box).
-        min_floor = 14
-        hard_floor = 9
-        font, lines, fitted = find_best_fit(draw, text, eff_w, eff_h, font_path,
-                                            min_size=min_floor, max_size=max_cap)
-        mw, mh = measure_block(draw, lines, font)
-        if is_clamped and (mw > eff_w or mh > eff_h):
-            # Still overflowing at the soft floor: retry once, allowing the
-            # binary search down to the hard floor before accepting overflow.
-            font, lines, fitted = find_best_fit(draw, text, eff_w, eff_h, font_path,
-                                                min_size=hard_floor, max_size=max_cap)
+
+        # SIZE SELECTION
+        # ----------------------------------------------------------------
+        # Resolution-aware readability floor (computed once for the page).
+        # Clamped (no-bubble) SFX/caption blocks get the lower hard floor so
+        # they can clip smaller rather than overflow onto art; dialogue uses
+        # the full readability floor and is allowed modest overflow instead.
+        if is_clamped:
+            # Clamped track: independent shrink-to-fit, never below the hard
+            # floor, then clip. (Behaviour preserved — only the floor value is
+            # resolution-aware now.)
+            font, lines, fitted = find_best_fit(
+                draw, text, eff_w, eff_h, font_path,
+                min_size=clamped_hard_floor, max_size=max_cap)
             mw, mh = measure_block(draw, lines, font)
+        else:
+            # Dialogue track. With page consistency ON we drive toward the
+            # shared page target; otherwise we use the bubble's own max-fit.
+            if consistent_font and page_target is not None:
+                desired = page_target
+                # never exceed what actually fits this bubble (avoid overflow on
+                # roomy bubbles that could go bigger but should match the page),
+                # but never drop below the floor either.
+                own_max = block_max_fit_size(draw, text, eff_w, eff_h, font_path,
+                                             min_size=min_floor, max_size=max_cap)
+                size = max(min_floor, min(desired, max(own_max, min_floor)))
+            else:
+                font_fit, _l, _ok = find_best_fit(
+                    draw, text, eff_w, eff_h, font_path,
+                    min_size=min_floor, max_size=max_cap)
+                size = max(min_floor, font_fit.size)
+
+            # Lay out at the chosen size (priority (a): wrap to more lines).
+            font, lines = layout_at_size(draw, text, size, eff_w, font_path)
+            mw, mh = measure_block(draw, lines, font)
+            fitted = (mw <= eff_w and mh <= eff_h)
+
+            # Priority (b): the chosen size is at/above the floor but the text
+            # is taller than the bubble interior — allow MODEST overflow beyond
+            # the bubble (the inpaint plate is clean, a slight spill reads fine)
+            # rather than shrinking below the floor. We widen the clamp box by a
+            # bounded fraction of the bubble so the trailing-line clip below only
+            # fires after we've granted that slack. Width can also widen slightly
+            # to absorb a hard-to-wrap long word.
+            if mh > eff_h or mw > eff_w:
+                pad_x = int(round(bw * overflow_frac))
+                pad_y = int(round(bh * overflow_frac))
+                x0 -= pad_x // 2
+                x1 += pad_x // 2
+                y0 -= pad_y // 2
+                y1 += pad_y // 2
+                # re-wrap to the (slightly) wider interior so width overflow is
+                # also absorbed where possible.
+                eff_w = max(20, (x1 - x0) - inset_margin * 2)
+                font, lines = layout_at_size(draw, text, size, eff_w, font_path)
+                mw, mh = measure_block(draw, lines, font)
 
         line_h = line_height_px(font)
+        rendered_size[_idx] = int(font.size)
         # Center the rendered block on the original block's center.
         top = cy - mh // 2
         left_anchor = cx
@@ -633,6 +840,7 @@ def compose_final(
                     suppress = True
                     break
             if suppress:
+                rendered_size[_idx] = None
                 continue
         else:
             rr_area = max(1, (rendered_rect[2] - rendered_rect[0])
@@ -648,6 +856,7 @@ def compose_final(
                     suppress = True
                     break
             if suppress:
+                rendered_size[_idx] = None
                 continue
 
         # Auto-contrast: flip to white text on dark plates.
@@ -684,6 +893,8 @@ def compose_final(
         # FIX #4: record DIALOGUE rendered rects too (was clamped-only) so later
         # blocks see dialogue ink and can avoid burying it.
         placed_rects.append((*rendered_rect, is_dialogue))
+    if _debug_sizes:
+        return rendered_size
     return np.array(pil)
 
 

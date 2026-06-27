@@ -142,6 +142,35 @@ class Settings(BaseSettings):
     # browser canvas, so no frontend change is needed. Set False to restore PNG.
     plate_encode_webp: bool = True
     plate_webp_quality: int = 82
+
+    # --- Final-composite font readability + page consistency ---------------
+    # READABILITY FLOOR (resolution-aware). The minimum rendered font size is
+    # ``max(render_font_abs_floor, image_height * render_font_floor_frac)`` so the
+    # floor scales with page resolution (manga pages here are ~1000-2000px tall).
+    # When text doesn't fit at this floor we wrap to more lines / allow modest
+    # bubble overflow rather than shrinking below it (see compose_final). The
+    # absolute floor is the hard minimum for tiny pages; the fraction dominates
+    # at full manga resolution (e.g. 1791px * 0.012 ≈ 21px).
+    render_font_abs_floor: int = 18
+    render_font_floor_frac: float = 0.012
+    # Hard floor for clamped (no-bubble) SFX/caption blocks that genuinely cannot
+    # fit at the resolution-aware floor without burying neighbouring art. These
+    # are legitimately variable, so they get a lower hard minimum than dialogue.
+    render_font_clamped_hard_floor: int = 12
+    # Largest font the binary-search fit may select (prevents one-word bubbles
+    # from rendering at absurd sizes).
+    render_font_max_cap: int = 96
+    # PAGE-LEVEL CONSISTENCY. When True, dialogue (bubble-matched) blocks on a
+    # page are driven toward a SHARED target size — a low percentile of the
+    # per-bubble max-fit sizes — so most bubbles render at one readable size and
+    # only genuinely tiny bubbles deviate. SFX/caption (clamped, no-bubble)
+    # blocks stay on their own independent track (they are legitimately
+    # variable). Set False to A/B against the prior per-bubble-independent fit.
+    render_consistent_font: bool = True
+    # Percentile (0-100) of per-bubble max-fit sizes used as the shared dialogue
+    # target. A LOW percentile (not the min) keeps most bubbles readable while
+    # ensuring the chosen size fits the majority; the rest overflow/wrap.
+    render_consistent_font_percentile: int = 35
     # bubbleRect-gated interior solid-fill inpaint tier (R1 hybrid). When on, the
     # LaMa service fills flat speech-bubble interiors with their robust median
     # background and skips the neural forward for those components. Purely
