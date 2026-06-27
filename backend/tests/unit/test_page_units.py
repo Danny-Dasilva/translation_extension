@@ -119,13 +119,14 @@ def test_kept_confs_threaded_real_confidence():
 def test_dropped_dialogue_stays_in_context_not_rendered():
     # #3 DECOUPLE: a line dropped from RENDER (garble) that is still a DIALOGUE
     # context candidate must stay in the page CONTEXT so its sentence partner is
-    # not orphaned. "お母さんお母さん" at HIGH conf is duplication-garble
-    # (is_implausible_japanese -> is_garbled_low_conf True => not rendered) but
-    # carries a speaker reference at high conf (is_dialogue_context_candidate
-    # True => kept as context-only).
+    # not orphaned. "お母さん身身わわ" is substitution-garble (身代わり misread) at a
+    # conf the gate still drops (is_garbled_low_conf True => not rendered) but it
+    # carries a speaker reference (is_dialogue_context_candidate True => kept as
+    # context-only). (An exact P+P お母さんお母さん is now COLLAPSE-RECOVERED, not
+    # dropped, so it would render — hence a substitution garble here.)
     blocks = _column(2)
-    texts = ["お母さんは僕のことを心配して", "お母さんお母さん"]
-    confs = [0.92, 0.91]
+    texts = ["お母さんは僕のことを心配して", "お母さん身身わわ"]
+    confs = [0.92, 0.66]
     units = build_page_translation_units(
         blocks, texts, confs, None, _settings(),
         is_japanese_fn=_is_jp,
@@ -136,7 +137,7 @@ def test_dropped_dialogue_stays_in_context_not_rendered():
     assert units.kept_texts == ["お母さんは僕のことを心配して"]
     assert units.kept_indices == [0]
     assert len(units.page_context_lines) == 2
-    assert units.page_context_lines[1] == "お母さんお母さん"
+    assert units.page_context_lines[1] == "お母さん身身わわ"
     # Target marks the kept line at its position in the full page.
     assert units.target_positions == [0]
     # The dropped garble is real JP ink -> erase-only.
@@ -270,11 +271,12 @@ def test_parity_jp_filter_off_keeps_all():
 def test_target_positions_index_into_page_context():
     # Mixed: kept, dropped-dialogue (context), kept. target_positions must index
     # the kept lines' slots in the FULL page context. The middle line is
-    # duplication-garble at high conf -> dropped from render, kept as dialogue
-    # context (speaker reference).
+    # substitution-garble at a conf the gate still drops -> dropped from render,
+    # kept as dialogue context (speaker reference). (An exact P+P is now
+    # collapse-recovered, not dropped.)
     blocks = _column(3)
-    texts = ["ちゃんと聞いてほしいの", "お母さんお母さん", "だから言ったでしょう"]
-    confs = [0.95, 0.91, 0.93]
+    texts = ["ちゃんと聞いてほしいの", "お母さん身身わわ", "だから言ったでしょう"]
+    confs = [0.95, 0.66, 0.93]
     units = build_page_translation_units(
         blocks, texts, confs, None, _settings(),
         is_japanese_fn=_is_jp,
