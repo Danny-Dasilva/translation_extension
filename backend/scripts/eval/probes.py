@@ -63,6 +63,64 @@ NAME_GAZETTEER: dict[str, str] = {
 
 HONORIFIC_RE = re.compile(r"\b\w+-(san|kun|chan|sama|senpai|sensei)\b", re.IGNORECASE)
 
+# Negative gazetteer of hallucinated proper names this title's pipeline has been
+# observed to invent from garbled kana (see Ikenie4 judge synthesis).  Any of
+# these appearing as a whole word in the output is a hard fail.
+BANNED_INVENTED_NAMES: tuple[str, ...] = (
+    "Lona",
+    "Kinomiya",
+    "Torachance",
+    "Aki",
+    "Zuri",
+    "Nomi",
+    "Saki",
+    "Karu",
+    "Beignet",
+)
+_BANNED_NAME_RE = re.compile(
+    r"\b(" + "|".join(re.escape(n) for n in BANNED_INVENTED_NAMES) + r")\b",
+    re.IGNORECASE,
+)
+
+# Whole-word gendered pronoun detectors (word-boundary so "the" != "he").
+_HE_RE = re.compile(r"\b(he|him|his)\b", re.IGNORECASE)
+_SHE_RE = re.compile(r"\b(she|her|hers)\b", re.IGNORECASE)
+
+# Gloss/explainer shapes the model leaks onto pages instead of translating a
+# lone SFX/short token (see "Model meta-description / gloss leak" gap category).
+_META_LEAK_RES: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\bsfx for (a|an|the)\b", re.IGNORECASE),
+    re.compile(r"\b(lighter|heavier) version of\b", re.IGNORECASE),
+    re.compile(r"\byelled (by|with|when)\b", re.IGNORECASE),
+    re.compile(r"\b(said|used|shouted) (by|with|when)\b", re.IGNORECASE),
+    re.compile(r"\bsound effects?\b", re.IGNORECASE),
+    re.compile(r"\bonomatopoe", re.IGNORECASE),
+    re.compile(r"\bexpresses?\b.*\b(feeling|emotion|surprise)\b", re.IGNORECASE),
+)
+
+# JP number-words that must never be left romanized in the EN output.  Maps the
+# JP source token -> the romaji forms that constitute a "left romanized" fail.
+NUMBER_ROMAJI_MAP: dict[str, tuple[str, ...]] = {
+    "ひゃく": ("hyaku",),
+    "百": ("hyaku",),
+    "いち": ("ichi",),
+    "一": ("ichi",),
+    "に": ("ni",),
+    "さん": ("san",),  # note: also honorific; gated on JP number context below
+    "よん": ("yon",),
+    "ご": ("go",),
+    "ろく": ("roku",),
+    "なな": ("nana",),
+    "はち": ("hachi",),
+    "きゅう": ("kyuu", "kyu"),
+    "じゅう": ("juu", "ju"),
+    "せん": ("sen",),
+    "まん": ("man",),
+}
+# Only treat the ambiguous mono-kana number words (に/ご/さん) as numbers when a
+# counter/number marker co-occurs, to avoid false positives on real words.
+_NUMBER_COUNTER_RE = re.compile(r"[周回発本個枚回\d０-９!！?？]")
+
 CURLY_CHARS = set("‘’“”…")  # ' ' " " ...
 
 REFUSAL_RE = re.compile(
@@ -327,6 +385,102 @@ def check_idiom(jp: str, en_pred: str, **_: Any) -> bool:
     return not matched_any
 
 
+# ---------------------------------------------------------------------------
+# Deterministic, seedless gold-set probes (Ikenie4 regression harness)
+#
+# These take per-row config carried on the probe/gold row (banned/required
+# substrings, referent gender) so cases can be seeded from the gold set + the
+# judge worst_issues without touching code.
+# ---------------------------------------------------------------------------
+
+
+def check_reverse_sense(
+    jp: str,
+    en_pred: str,
+    *,
+    banned_en_substrings: list[str] | None = None,
+    required_en_substrings: list[str] | None = None,
+    **_: Any,
+) -> bool:
+    """Negation / sense-reversal guard.
+
+    Fails if ANY banned substring appears in the output (the reversed sense,
+    e.g. 'spit' for 吸い出せ='suck out'), OR if NONE of the required substrings
+    appears when a required list is given (the correct sense is missing).
+    Substring match is case-insensitive.
+    """
+    en = en_pred.lower()
+    for bad in banned_en_substrings or []:
+        if bad and bad.lower() in en:
+            return False
+    req = [r for r in (required_en_substrings or []) if r]
+    if req and not any(r.lower() in en for r in req):
+        return False
+    return True
+
+
+def check_pronoun_gender(
+    jp: str,
+    en_pred: str,
+    *,
+    referent: str | None = None,
+    **_: Any,
+) -> bool:
+    """Gendered-pronoun guard for subject-dropped JP.
+
+    With ``referent='she'``: fail if a he/him/his pronoun is present and no
+    she/her pronoun is present (wrong-gender inversion).  Symmetric for 'he'.
+    If no gendered pronoun is present at all, there is nothing to get wrong ->
+    pass.  Word-boundary matched so 'the' does not trip 'he'.
+    """
+    has_he = _HE_RE.search(en_pred) is not None
+    has_she = _SHE_RE.search(en_pred) is not None
+    ref = (referent or "").strip().lower()
+    if ref in ("she", "her", "female", "f"):
+        return not (has_he and not has_she)
+    if ref in ("he", "him", "male", "m"):
+        return not (has_she and not has_he)
+    # Unknown referent -> nothing to enforce.
+    return True
+
+
+def check_name_invention(jp: str, en_pred: str, **_: Any) -> bool:
+    """Negative-gazetteer guard: fail if a known hallucinated name appears."""
+    return _BANNED_NAME_RE.search(en_pred) is None
+
+
+def check_sfx_meta_leak(jp: str, en_pred: str, **_: Any) -> bool:
+    """Fail if the output is a gloss/explainer about the token rather than a
+    translation (the meta-description leak shapes)."""
+    for rx in _META_LEAK_RES:
+        if rx.search(en_pred):
+            return False
+    return True
+
+
+def check_number_romaji(jp: str, en_pred: str, **_: Any) -> bool:
+    """Fail if a JP number-word in the source is left romanized in the output.
+
+    e.g. ひゃく -> 'H-hyaku' (fail) vs 'one hundred' (pass).  The ambiguous
+    mono-kana readings (に/ご/さん) are only treated as numbers when a counter or
+    number marker co-occurs in the JP, to avoid false positives.
+    """
+    en_low = en_pred.lower()
+    ambiguous = {"に", "ご", "さん"}
+    has_counter = _NUMBER_COUNTER_RE.search(jp) is not None
+    for jp_num, romaji_forms in NUMBER_ROMAJI_MAP.items():
+        if jp_num not in jp:
+            continue
+        if jp_num in ambiguous and not has_counter:
+            continue
+        for rom in romaji_forms:
+            # Match the romaji as a token even when hyphen-stuttered, e.g.
+            # "H-hyaku" -> contains "hyaku".
+            if re.search(r"\b[a-z-]*" + re.escape(rom) + r"\b", en_low):
+                return False
+    return True
+
+
 PROBE_DISPATCH: dict[str, Any] = {
     "name": check_name,
     "honorific": check_honorific,
@@ -336,6 +490,12 @@ PROBE_DISPATCH: dict[str, Any] = {
     "length": check_length,
     "sfx": check_sfx,
     "idiom": check_idiom,
+    # Gold-set regression probes:
+    "reverse_sense": check_reverse_sense,
+    "pronoun_gender": check_pronoun_gender,
+    "name_invention": check_name_invention,
+    "sfx_meta_leak": check_sfx_meta_leak,
+    "number_romaji": check_number_romaji,
 }
 
 
@@ -350,7 +510,24 @@ PROBE_TARGETS: dict[str, float] = {
     "length": 0.99,
     "sfx": 0.70,
     "idiom": 0.80,
+    # Gold-set regression probes. These are seeded from KNOWN current failures,
+    # so the baseline pass-rate may be low; the regression gate (no probe drops
+    # vs the previous run) is what matters. Targets are set as "must not be
+    # WORSE than current", i.e. the harness compares to a baseline report rather
+    # than an absolute bar. Absolute targets here are conservative floors.
+    "reverse_sense": 0.90,
+    "pronoun_gender": 0.85,
+    "name_invention": 1.00,
+    "sfx_meta_leak": 1.00,
+    "number_romaji": 0.90,
 }
+
+# Config keys that must be forwarded from a probe/gold row into the check fn.
+_PROBE_CONFIG_KEYS: tuple[str, ...] = (
+    "banned_en_substrings",
+    "required_en_substrings",
+    "referent",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -392,7 +569,10 @@ def run_probes(
         if probe_type not in PROBE_DISPATCH:
             continue
         fn = PROBE_DISPATCH[probe_type]
-        passed = bool(fn(jp=row.get("jp", ""), en_pred=row.get("en_pred", "")))
+        cfg = {k: row[k] for k in _PROBE_CONFIG_KEYS if k in row}
+        passed = bool(
+            fn(jp=row.get("jp", ""), en_pred=row.get("en_pred", ""), **cfg)
+        )
         by_probe[probe_type].append(passed)
 
     per_probe: dict[str, float] = {}

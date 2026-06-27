@@ -108,7 +108,10 @@ def test_run_probes_all_pass_meets_targets() -> None:
         _row("idiom", "一石二鳥", "two birds with one stone"),
     ]
     result = run_probes(rows)
+    # Only assert on probes that actually had rows (others are nan with n=0).
     for probe, rate in result.per_probe.items():
+        if result.per_probe_counts[probe]["n"] == 0:
+            continue
         assert rate == 1.0, f"{probe} rate={rate}"
     assert result.overall_pass is True
 

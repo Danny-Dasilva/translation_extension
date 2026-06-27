@@ -56,7 +56,14 @@ backend/scripts/eval/bench_out/
 backend/scripts/eval/scorecards/
 backend/scripts/eval/openmantra_v10it/
 backend/scripts/eval/rag_index_v10/
-backend/scripts/eval/data/
+backend/scripts/eval/data/*
+# ...but the FROZEN Ikenie4 MT regression fixtures ARE version-controlled
+# (deterministic gold set + probe cases for the regression-eval harness).
+# Must un-ignore the dir before un-ignoring files inside it.
+!backend/scripts/eval/data/ikenie4/
+backend/scripts/eval/data/ikenie4/*
+!backend/scripts/eval/data/ikenie4/gold.jsonl
+!backend/scripts/eval/data/ikenie4/probes.jsonl
 backend/scripts/eval/*.json
 backend/scripts/eval/*.jsonl
 
