@@ -329,19 +329,70 @@ def passthrough_plain(df: pl.DataFrame, prefixes: tuple[str, ...]):
     return out
 
 
-def corrective_rows(df: pl.DataFrame):
-    """Re-express the v11 corrective seed in BOTH plain and (where it helps) a
-    minimal self-context form. Corrective pairs are isolated lines, so we emit
-    them as plain single-line in the unified schema."""
+# Share of corrective rows emitted in PAGE-CONTEXT shape (item 1 / fix6 shape
+# fix). The gender/speaker-inversion failures ONLY manifest in page-context
+# shape, so PLAIN-only corrective rows cannot move that bucket. Rows that carry
+# real surrounding JP lines (``context_jp`` + ``context_k``) can be page-context
+# shaped; rows without context fall back to plain (never dropped).
+CORRECTIVE_PAGECTX_FRAC = 0.5
+
+
+def corrective_rows(df, pagectx_frac: float = CORRECTIVE_PAGECTX_FRAC, seed: int = SEED):
+    """Re-express the v11 corrective seed in BOTH plain and PAGE-CONTEXT shape.
+
+    fix6 SHAPE FIX (item 1): the gender/speaker-inversion corrective failures
+    ONLY manifest in PAGE-CONTEXT shape (the model sees the page and inverts the
+    speaker/pronoun). Emitting corrective rows ONLY as plain single-line
+    therefore cannot move that bucket. So a configurable ``pagectx_frac`` of the
+    corrective rows are emitted via ``build_context_prompt`` (PAGE-CONTEXT, the
+    byte-exact trained template) using each row's real surrounding JP lines:
+
+        row["context_jp"]: list[str]  ordered page/window JP lines (incl. target)
+        row["context_k"] : int        0-based index of the corrective line in it
+
+    A corrective row WITHOUT usable ``context_jp`` cannot be page-context shaped,
+    so it always falls back to PLAIN (never dropped). The plain/pagectx partition
+    is deterministic in ``seed`` for reproducible builds.
+
+    ``df`` may be a polars DataFrame OR an iterable of dicts (so the data builders
+    and tests can pass plain records without constructing a frame).
+    """
+    rng = random.Random(seed)
+
+    def _iter(d):
+        if hasattr(d, "iter_rows"):  # polars DataFrame
+            yield from d.iter_rows(named=True)
+        else:
+            yield from d
+
     out = []
-    for r in df.iter_rows(named=True):
-        out.append({
-            "prompt": build_plain_prompt(r["jp"]),
-            "en": r["en"],
-            "src": r["src"],
-            "register_tag": r["register_tag"],
-            "gold_flag": r["gold_flag"],
-        })
+    for r in _iter(df):
+        # polars iter_rows(named=True) yields plain dicts, so .get works for both.
+        ctx = r.get("context_jp")
+        k = r.get("context_k")
+        want_pagectx = (
+            ctx is not None
+            and len(ctx) >= 1
+            and k is not None
+            and 0 <= int(k) < len(ctx)
+            and rng.random() < pagectx_frac
+        )
+        if want_pagectx:
+            out.append({
+                "prompt": build_context_prompt(PAGE_INSTR, list(ctx), int(k)),
+                "en": r["en"],
+                "src": str(r["src"]) + ":pagectx",
+                "register_tag": r["register_tag"],
+                "gold_flag": r["gold_flag"],
+            })
+        else:
+            out.append({
+                "prompt": build_plain_prompt(r["jp"]),
+                "en": r["en"],
+                "src": r["src"],
+                "register_tag": r["register_tag"],
+                "gold_flag": r["gold_flag"],
+            })
     return out
 
 

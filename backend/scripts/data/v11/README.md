@@ -169,4 +169,105 @@ the dedicated chrF++ page-context eval use `eval_pagecontext_heldout.jsonl`
 
 All other hyperparameters (LR 2e-4, 1 epoch, eff-batch 16, r=16/α=32,
 language-only LoRA regex, max_seq 1024) are unchanged from v10.
+
+---
+
+## Model-bucket gap-fix items (ws-model-data)
+
+The dominant remaining ceiling is the **model bucket** (mistranslation 160,
+pronoun_gender 18). These four items target it. Items 1-3 are DATA-SHAPE +
+extraction work; item 4 is a serve-time A/B lever. **None of them retrains the
+model** — the actual fine-tune needs the gold `human_en` and a GPU run
+(out of scope here; see "Downstream" below).
+
+### Item 1 — fix6 SHAPE FIX (page-context corrective rows)
+
+`build_v11_dataset.corrective_rows()` previously emitted corrective rows
+**plain-only** (`build_plain_prompt`). The gender/speaker-inversion failures
+**only manifest in PAGE-CONTEXT shape**, so plain corrective rows cannot move
+that bucket. The builder now emits a configurable fraction (`pagectx_frac`,
+default `CORRECTIVE_PAGECTX_FRAC = 0.5`) via `build_context_prompt` (the
+byte-exact trained page-context template), using each seed row's real
+surrounding JP lines:
+
+```
+row["context_jp"]: list[str]   # ordered page/window JP lines (includes target)
+row["context_k"] : int         # 0-based index of the corrective line within it
+```
+
+A corrective row **without** usable `context_jp` falls back to plain (never
+dropped). The plain/pagectx partition is deterministic in `seed`. Existing
+`v11_corrective_seed.parquet` (no context columns) is unaffected — every row
+falls back to plain until the seed gains `context_jp`/`context_k`.
+
+### Item 2 — reverse-sense corrective DATA (`build_reverse_sense_corrective.py`)
+
+The largest pure-model bucket (~55) is **reverse-sense lexical errors on clean
+OCR**: 締まる(tightens)→'closing', 吸い出せ(suck OUT)→'spit out', 果てた
+(climaxed)→'passed away', 風俗(brothel)→'rumor', 騎乗位(cowgirl)→'coworking',
+割る(dilute)→'break', 尻(butt)→'balls', マンコ(pussy)→'butthole'. For each
+lexeme the builder emits **2-3 VARIED JP carriers** (distinct surface forms, so
+the model learns the SENSE not a memorized line) in **both plain and
+page-context** shape. Each row carries `our_wrong` (the wrong sense — a curation
+trigger + held-out contrastive probe, **not** a DPO rejected signal) and a
+`contrastive_margin` field (`chrF++(human_en) - chrF++(our_wrong)`, computed
+downstream). **`human_en` is left empty (`needs_gold: true`)** — the gold target
+needs the eval-workstream gold set; it is never fabricated. **NSFW fraction is
+FLAT** (one plain + one pagectx per carrier, no per-NSFW multiplier) — the
+documented v12 NSFW-oversampling regression backfired into euphemism.
+
+Output: `reverse_sense_corrective.jsonl` (8 lexemes · 18 carriers · 36 rows).
+
+### Item 3 — voice/addressee probe (`build_voice_addressee_probe.py`)
+
+Neither fix6 nor fix8 covers **grammatical voice**. Two recurring failures:
+1. **causative-passive させられる** ('be MADE to do' wrongly rendered 'I did'),
+2. **2nd↔1st-person command inversion** ('keep them on' → 'I kept it on').
+
+A small structured probe with **gold targets** (`gold_en`) and the
+characteristic inversion (`wrong_en`) per pattern, in both plain and
+page-context shape, so a future SFT can target voice and the eval can MEASURE
+voice-correctness (correct vs inverted) independent of surface chrF++.
+
+Output: `voice_addressee_probe.jsonl` (9 entries: 5 causative-passive +
+4 command-addressee · 18 rows).
+
+### Item 4 — CAST/ROLE-ANCHOR A/B (serve-time, `translation_cast_anchor`)
+
+An **optional in-body** `Cast:` context line inserted BEFORE the `Page:` block of
+the page-context prompt, behind `settings.translation_cast_anchor` (**default
+False**). It anchors pronoun/gender + named-entity resolution cheaply with **no
+retrain**:
+
+```
+Translate the marked line of this manga page from Japanese to English. ...
+
+Cast: Yurie (the mother, she/her); the son (he/him); the tormentor (he/him)
+
+Page:
+1. {jp1}
+...
+```
+
+**CRITICAL:** the anchor is an **in-body context line, never a `system`
+message** — a system message on this format-sensitive page-context path is the
+~95% chrF++-collapse risk class (see `MEMORY.md` chat-template-mismatch). With
+the flag **off**, `build_v11_context_prompt` is **byte-identical** to the trained
+template (proven by `tests/unit/test_cast_anchor_prompt.py`). The known cast is
+small (Yurie = mother is documented; son/tormentor roles inferred
+conservatively); `DEFAULT_CAST_ANCHOR` + `CAST_ANCHOR_EXTENSION_NOTE` in
+`app/services/vllm_openai_translation_service.py` are the extension point for the
+full per-work cast. **A/B plan:** flag-off vs flag-on chrF++ on
+`eval_pagecontext_heldout.jsonl` (pronoun_gender / mistranslation buckets).
+
+### Downstream (needs the gold `human_en` + a training run — OUT OF SCOPE here)
+
+1. **Recover gold `human_en`** for the reverse-sense carriers + clean-OCR
+   mistranslation seed (typeset in page images; manual/reviewed-vision pass —
+   never auto-gold). See `extract_mistranslation_pairs.py`.
+2. **Promote** kept reverse-sense / corrective rows into the corrective seed
+   parquet with `context_jp`/`context_k` so item-1's page-context fraction fires.
+3. **Compute** `contrastive_margin` once `human_en` exists.
+4. **SFT run** on the augmented mix (voice probe `gold_en` as SFT targets).
+5. **A/B** `translation_cast_anchor` on `eval_pagecontext_heldout.jsonl`.
 ```
