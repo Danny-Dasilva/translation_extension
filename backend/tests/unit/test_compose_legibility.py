@@ -28,8 +28,11 @@ from refit_final_composites import sample_bg_luminance  # noqa: E402
 
 
 # --- mirrors of the in-renderer decision logic (kept in lockstep) ----------
-HARD_FLOOR = 9
-MIN_FLOOR = 14
+# The font floor is now resolution-aware + config-driven (see
+# test_compose_font_consistency.py). The clamped (no-bubble) hard floor used by
+# find_best_fit is the module-level CLAMPED_HARD_FLOOR.
+HARD_FLOOR = R.CLAMPED_HARD_FLOOR
+MIN_FLOOR = R.ABS_FONT_FLOOR
 
 
 def _pick_color(bg_median: float, dark_fraction: float):
@@ -106,10 +109,18 @@ def test_clamped_caption_never_below_hard_floor():
 
 
 def test_floor_constants_match_renderer():
-    """Guard the floor values used in compose_final against regression."""
+    """Guard the (now resolution-aware, config-driven) floor contract.
+
+    The old fixed ``min_floor = 14`` / ``hard_floor = 9`` literals were replaced
+    by ``resolution_font_floor(img_h) = max(ABS_FONT_FLOOR, img_h*FONT_FLOOR_FRAC)``
+    plus a clamped hard floor. Pin that the renderer derives its floor from the
+    resolution helper and the clamped hard floor, not stale literals."""
     src = (_SCRIPTS / "refit_final_composites.py").read_text()
-    assert "min_floor = 14" in src, "soft floor must be 14px"
-    assert "hard_floor = 9" in src, "hard floor must be 9px"
+    assert "resolution_font_floor(img_h)" in src, "must derive floor from resolution"
+    assert "clamped_hard_floor" in src, "clamped blocks must use a hard floor"
+    # the config-driven minimums must be present and sane
+    assert R.ABS_FONT_FLOOR >= 14, "absolute floor too low to be legible"
+    assert R.CLAMPED_HARD_FLOOR >= 9, "clamped hard floor too low"
 
 
 # ---------------------------------------------------------------------------
