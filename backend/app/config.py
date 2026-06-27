@@ -235,6 +235,19 @@ class Settings(BaseSettings):
     # blank continuation bubbles). Pure re-segmentation; validated main-side on
     # GPU. See app.utils.sentence_merge.
     translation_sentence_merge: bool = True
+    # A/B FLAG (item 4): CAST / ROLE ANCHOR for the v11 page-context prompt.
+    # When True, build_v11_context_prompt inserts ONE in-body "Cast: Name (role,
+    # pronoun); ..." context line BETWEEN the instruction and the "Page:" block,
+    # to anchor pronoun/gender + named-entity resolution (the dominant remaining
+    # model bucket). Default FALSE => the served prompt is BYTE-IDENTICAL to the
+    # trained v11 template (proven by tests/unit/test_cast_anchor_prompt.py).
+    #
+    # CRITICAL: the anchor is an IN-BODY context line, NEVER a `system` message —
+    # a system message on this format-sensitive page-context path is the
+    # ~95% chrF++-collapse risk class (see MEMORY.md chat-template-mismatch).
+    # To be A/B'd on backend/scripts/data/v11/eval_pagecontext_heldout.jsonl.
+    # Override via env TRANSLATION_CAST_ANCHOR=true|false.
+    translation_cast_anchor: bool = False
 
     # Normalize short Japanese utterances (interpunct/dot/space-separated kana,
     # runaway repeated kana) before translation so the model isn't destabilized.

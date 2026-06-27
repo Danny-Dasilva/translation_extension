@@ -44,6 +44,56 @@ V11_PAGE_INSTR = (
 V11_PLAIN_INSTR = "Translate the following Japanese to English. Output only the translation."
 
 
+# --------------------------------------------------------------------------- #
+# CAST / ROLE ANCHOR (item 4) — OPTIONAL serve-time, no-retrain A/B lever
+# --------------------------------------------------------------------------- #
+# A single IN-BODY context line of the form
+#     "Cast: Yurie (the mother, she/her); the son (he/him); ..."
+# inserted BETWEEN the instruction and the "Page:" block of the page-context
+# prompt, ONLY when settings.translation_cast_anchor is True (default False).
+#
+# WHY in-body and NEVER a `system` message: this page-context path is the
+# train/serve format-sensitive surface. A `system` message here is the
+# ~95% chrF++-collapse risk class (see MEMORY.md chat-template-mismatch). The
+# cast hint is therefore one extra context LINE in the SAME user message — the
+# model already reads the numbered page as context, so a leading "Cast:" line is
+# in-distribution-shaped (it just adds named-entity pronoun anchors).
+#
+# A/B PLAN: this flag is to be A/B'd on
+#   backend/scripts/data/v11/eval_pagecontext_heldout.jsonl
+# (flag-off vs flag-on chrF++ on the pronoun_gender / mistranslation buckets).
+# It does NOT change the trained template when off — proven byte-identical by
+# tests/unit/test_cast_anchor_prompt.py.
+#
+# KNOWN CAST (conservative): Yurie is the documented mother of "Ikenie no Haha".
+# Son/tormentor roles are inferred conservatively from the title (the "haha" =
+# mother sacrificed for/by her son). Pronoun tags drive the pronoun_gender fix.
+DEFAULT_CAST_ANCHOR = (
+    "Yurie (the mother, she/her); the son (he/him); the tormentor (he/him)"
+)
+
+# EXTENSION POINT: the full per-work cast belongs here. To extend, append more
+# "Name (role, pronoun)" clauses separated by "; " — KEEP it a single line (no
+# newlines) so it cannot inject extra numbered/Page structure into the prompt.
+# A future pass should populate the complete verified cast (with conservative,
+# human-verified roles) per work/chapter, ideally keyed off a cast manifest.
+CAST_ANCHOR_EXTENSION_NOTE = (
+    "Extend DEFAULT_CAST_ANCHOR with verified 'Name (role, pronoun)' clauses "
+    "separated by '; '; keep it a single line."
+)
+
+
+def build_cast_anchor_line(cast: str | None = None) -> str:
+    """Return the single in-body ``Cast:`` context line.
+
+    `cast` defaults to DEFAULT_CAST_ANCHOR. Any embedded newlines are flattened
+    to spaces so the result is guaranteed to be ONE line (it must not introduce
+    extra structure into the numbered "Page:" block).
+    """
+    body = (cast if cast is not None else DEFAULT_CAST_ANCHOR).replace("\n", " ").strip()
+    return f"Cast: {body}"
+
+
 import re as _nre  # noqa: E402  (local alias for short-utterance normalize)
 
 # Hiragana, katakana, the long-vowel mark, and the katakana middle dot.
@@ -158,8 +208,15 @@ def build_v11_context_prompt(lines: List[str], k_idx: int) -> str:
     target = lines[k_idx]
     if getattr(settings, "short_utterance_normalize_enabled", True):
         target = normalize_short_utterance(target)
+    # OPTIONAL cast/role anchor (item 4): a single in-body context line BEFORE
+    # the Page: block. Default OFF => byte-identical to the trained template.
+    # NEVER a system message (collapse-risk class on this format-sensitive path).
+    cast_block = ""
+    if getattr(settings, "translation_cast_anchor", False):
+        cast_block = f"{build_cast_anchor_line()}\n\n"
     return (
         f"{V11_PAGE_INSTR}\n\n"
+        f"{cast_block}"
         f"Page:\n{numbered}\n\n"
         f"Translate line {k}: {target}"
     )
