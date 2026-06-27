@@ -23,13 +23,14 @@ from app.utils.image_processing import (
     detect_font_colors,
 )
 from app.utils.ctd_utils import build_text_regions, build_inpaint_mask, match_blocks_to_bubbles
-from app.utils.japanese_text_filter import is_japanese_text, filter_japanese_texts
+from app.utils.japanese_text_filter import is_japanese_text
 from app.utils.english_region import should_skip_as_english
-from app.utils.ocr_confidence_gate import (
-    is_garbled_low_conf,
-    should_erase_dropped,
-    is_dialogue_context_candidate,
+from app.utils.page_units import (
+    apply_resplit,
+    build_merged_translation_request,
+    build_page_translation_units,
 )
+from app.services.lama_inpaint_service import is_leave_intact_label
 from app.services.translation_postedit import postedit_one
 from app.utils.orphan_lines import (
     find_orphan_lines,
@@ -485,28 +486,28 @@ async def process_single_image(
             # dropped DIALOGUE lines so the served page has no holes.
             page_context_lines: List[str] = []
             target_positions: List[int] = []
+            # Cross-bubble sentence-merge request (#2). None unless the shared
+            # helper found dangling continuations to fuse; set by each branch.
+            page_merge_req = None
             if settings.use_pipeline_overlap and len(crops) > 1:
-                # PIPELINE OVERLAP with mini-batching: OCR crops in batches of 3,
-                # filtering non-Japanese as we go. OCR stays on the GPU inside the
-                # semaphore; translation is run after release (see below).
+                # PIPELINE OVERLAP with mini-batching: OCR crops in batches of 3.
+                # OCR stays on the GPU inside the semaphore; the SHARED filter /
+                # gate / page-context assembly runs AFTER all OCR (pure data
+                # shaping, no GPU). Translation is deferred to after release.
                 MINI_BATCH_SIZE = 3
 
-                # Block-ordered indices of gate-dropped DIALOGUE lines (not
-                # rendered, but kept as v11 page context for speaker/pronoun
-                # continuity). Filled inside ocr_pipelined alongside `results`.
-                ctx_dropped: List[Tuple[int, str]] = []
-
                 async def ocr_pipelined():
-                    results = []
+                    # Collect raw OCR (text, conf) for ALL crops in block order;
+                    # filtering/gating is delegated to build_page_translation_units
+                    # so every pipeline copy makes identical decisions.
+                    raw_texts: List[str] = []
+                    raw_confs: List[float] = []
                     for batch_start in range(0, len(crops), MINI_BATCH_SIZE):
                         batch_crops = crops[batch_start:batch_start + MINI_BATCH_SIZE]
-                        batch_indices = list(range(batch_start, batch_start + len(batch_crops)))
-
-                        # OCR mini-batch (or slice of prefetched per-block OCR)
                         if prefetched_texts is not None:
-                            texts = prefetched_texts[batch_start:batch_start + len(batch_crops)]
+                            texts = list(prefetched_texts[batch_start:batch_start + len(batch_crops)])
                             confs = (
-                                prefetched_confs[batch_start:batch_start + len(batch_crops)]
+                                list(prefetched_confs[batch_start:batch_start + len(batch_crops)])
                                 if prefetched_confs is not None
                                 else [1.0] * len(texts)
                             )
@@ -514,93 +515,60 @@ async def process_single_image(
                             tc = await ocr_service.recognize_text_batch_with_conf(batch_crops)
                             texts = [t for t, _c in tc]
                             confs = [c for _t, c in tc]
+                        raw_texts.extend(texts)
+                        raw_confs.extend(confs)
+                    return raw_texts, raw_confs
 
-                        for i, text, conf in zip(batch_indices, texts, confs):
-                            # English early-exit: a horizontal/Latin (non-Japanese)
-                            # region is left as ORIGINAL pixels — not translated,
-                            # not inpainted, no TextBox. Mirror is_leave_intact_label:
-                            # just `continue` (do NOT add to kept lists OR to
-                            # erase_only_blocks).
-                            if settings.english_early_exit_enabled and should_skip_as_english(
-                                orig_blocks[i], text_lines, text, is_japanese_text
-                            ):
-                                logger.info(
-                                    "English early-exit skipped idx %d: %r", i, text[:30]
-                                )
-                                continue
-                            # Filter non-Japanese before keeping
-                            if settings.japanese_filter_enabled:
-                                if not is_japanese_text(
-                                    text,
-                                    settings.japanese_filter_min_ratio,
-                                    settings.japanese_filter_katakana_max_length
-                                ):
-                                    logger.debug(f"Filtered non-Japanese text at index {i}: '{text[:30]}...'")
-                                    continue
-                            # OCR-confidence garble gate: drop low-conf garbled
-                            # OCR before translation (stops hallucinated captions).
-                            if (
-                                settings.ocr_confidence_gate_enabled
-                                and settings.ocr_confidence_gate_threshold > 0
-                                and is_garbled_low_conf(
-                                    text, conf,
-                                    conf_threshold=settings.ocr_confidence_gate_threshold,
-                                )
-                            ):
-                                logger.info(
-                                    "OCR-gate dropped index %d (conf=%.2f): %r — garbled",
-                                    i, conf, text[:24],
-                                )
-                                # Real-JP ink we drop (not translate) must still
-                                # be erased so raw Japanese doesn't survive into
-                                # the render. Collect for inpaint-only — NOT into
-                                # the parallel kept lists.
-                                if should_erase_dropped(text):
-                                    erase_only_blocks.append(orig_blocks[i])
-                                # A dropped DIALOGUE line still belongs in the
-                                # v11 page context (no holes for the model); a
-                                # pure-SFX / garble drop does not.
-                                if (
-                                    settings.translation_pagecontext_whole_page
-                                    and is_dialogue_context_candidate(text, ocr_confidence=conf)
-                                ):
-                                    ctx_dropped.append((i, text))
-                                continue
-                            # Carry the REAL recognition confidence alongside the
-                            # kept (i, text) so the post-edit name-invention
-                            # suppressor can fire on the WS/pipelined path too
-                            # (batch path already threads it via kept_ocr_confs).
-                            results.append((i, text, conf))
-                    return results
+                raw_texts, raw_confs = await ocr_pipelined()
 
-                paired = await ocr_pipelined()
+                # SHARED data-shaping: identical filter/gate/context decisions as
+                # the batch branch and the eval script. erase_only_blocks +
+                # page_context_lines + target_positions all come out aligned.
+                def _on_drop_log(i, t, conf, reason):
+                    if reason == "english_early_exit":
+                        logger.info("English early-exit skipped idx %d: %r", i, t[:30])
+                    elif reason == "ocr_gate_garbled":
+                        logger.info(
+                            "OCR-gate dropped index %d (conf=%.2f): %r — garbled",
+                            i, conf, t[:24],
+                        )
 
-                if not paired:
+                units = build_page_translation_units(
+                    orig_blocks,
+                    raw_texts,
+                    raw_confs,
+                    text_lines,
+                    settings,
+                    is_japanese_fn=lambda t: is_japanese_text(
+                        t,
+                        settings.japanese_filter_min_ratio,
+                        settings.japanese_filter_katakana_max_length,
+                    ),
+                    is_leave_intact_fn=is_leave_intact_label,
+                    should_skip_as_english_fn=should_skip_as_english,
+                    on_drop=_on_drop_log,
+                )
+                erase_only_blocks = list(units.erase_only_blocks)
+                kept_indices = list(units.kept_indices)
+
+                if not kept_indices:
                     logger.warning(f"Image {idx + 1}: All text regions filtered as non-Japanese")
                     await emit("done", 5, 5, note="all_filtered")
                     return (idx, [], None)
 
-                # Extract OCR results and filter parallel lists to kept indices.
-                # `paired` is (block_index, ocr_text, ocr_conf) per kept bubble.
-                kept_indices = [i for i, _t, _c in paired]
-                ocr_texts = [text for _i, text, _c in paired]
-                # WHOLE-PAGE v11 context: numbered page = kept dialogue + dropped
-                # dialogue lines, in reading (block) order; targets = kept lines.
-                ctx_map = {i: t for i, t, _c in paired}
-                ctx_map.update({i: t for i, t in ctx_dropped})
-                context_order = sorted(ctx_map)
-                page_context_lines = [ctx_map[i] for i in context_order]
-                ctx_pos = {orig: p for p, orig in enumerate(context_order)}
-                target_positions = [ctx_pos[i] for i in kept_indices]
-                blocks = [blocks[i] for i in kept_indices]
+                ocr_texts = list(units.kept_texts)
+                page_context_lines = list(units.page_context_lines)
+                target_positions = list(units.target_positions)
+                page_merge_req = build_merged_translation_request(units)
+                blocks = list(units.kept_blocks)
                 crops = [crops[i] for i in kept_indices]
                 all_text_regions = [all_text_regions[i] for i in kept_indices]
-                # Thread the REAL per-bubble OCR recognition confidence (kept in
-                # `paired`, aligned 1:1 with ocr_texts) so the post-edit
-                # low-confidence name-invention suppressor activates on the
-                # WS/pipelined live path — matching the batch branch's contract.
-                # Defaults to None only when a confidence genuinely isn't present.
-                kept_ocr_confs = [c for _i, _t, c in paired]
+                # Thread the REAL per-bubble OCR recognition confidence so the
+                # post-edit low-confidence name-invention suppressor activates on
+                # the WS/pipelined live path (matches the batch branch contract).
+                kept_ocr_confs = [
+                    c if c is not None else None for c in units.kept_confs
+                ]
 
                 ocr_time = time.time() - ocr_start
 
@@ -642,94 +610,54 @@ async def process_single_image(
                 ocr_time = time.time() - ocr_start
                 logger.info(f"Image {idx + 1}: Batched OCR completed in {ocr_time*1000:.1f}ms ({len(crops)} crops)")
 
-                # Filter non-Japanese OCR results + OCR-confidence garble gate
-                if settings.japanese_filter_enabled:
-                    valid_indices = filter_japanese_texts(
-                        ocr_texts,
+                # SHARED data-shaping: Japanese filter + leave-intact label +
+                # English early-exit + OCR-confidence garble gate + whole-page v11
+                # context — identical decisions to the pipelined branch and the
+                # eval script (build_page_translation_units). orig_blocks/ocr_confs
+                # are aligned 1:1 with ocr_texts here (no orphan-index drift).
+                def _on_drop_log_b(i, t, conf, reason):
+                    if reason == "english_early_exit":
+                        logger.info("English early-exit skipped idx %d: %r", i, t[:30])
+                    elif reason == "ocr_gate_garbled":
+                        logger.info(
+                            "Image %d: OCR-gate dropped index %d (conf=%.2f): %r",
+                            idx + 1, i, conf, t[:24],
+                        )
+
+                units = build_page_translation_units(
+                    orig_blocks,
+                    ocr_texts,
+                    ocr_confs,
+                    text_lines,
+                    settings,
+                    is_japanese_fn=lambda t: is_japanese_text(
+                        t,
                         settings.japanese_filter_min_ratio,
-                        settings.japanese_filter_katakana_max_length
-                    )
-                    # English early-exit: drop horizontal/Latin (non-Japanese)
-                    # regions from valid_indices so they are left as ORIGINAL
-                    # pixels — never added to the kept lists, never inpainted
-                    # (NOT added to erase_only_blocks), no TextBox. Mirrors
-                    # is_leave_intact_label's clean skip.
-                    if settings.english_early_exit_enabled:
-                        kept_after_english = []
-                        for i in valid_indices:
-                            if should_skip_as_english(
-                                orig_blocks[i], text_lines, ocr_texts[i], is_japanese_text
-                            ):
-                                logger.info(
-                                    "English early-exit skipped idx %d: %r",
-                                    i, ocr_texts[i][:30],
-                                )
-                                continue
-                            kept_after_english.append(i)
-                        valid_indices = kept_after_english
-                    # Block-ordered indices of gate-dropped DIALOGUE lines kept
-                    # as v11 page context (not rendered). Pure-SFX drops excluded.
-                    ctx_dropped_idx: List[int] = []
-                    if settings.ocr_confidence_gate_enabled and settings.ocr_confidence_gate_threshold > 0:
-                        gated = []
-                        for i in valid_indices:
-                            conf = ocr_confs[i] if i < len(ocr_confs) else 1.0
-                            if is_garbled_low_conf(
-                                ocr_texts[i], conf,
-                                conf_threshold=settings.ocr_confidence_gate_threshold,
-                            ):
-                                logger.info(
-                                    "Image %d: OCR-gate dropped index %d (conf=%.2f): %r",
-                                    idx + 1, i, conf, ocr_texts[i][:24],
-                                )
-                                # Real-JP ink we drop (not translate) must still
-                                # be erased — collect for inpaint-only, NOT into
-                                # the parallel kept lists below.
-                                if should_erase_dropped(ocr_texts[i]):
-                                    erase_only_blocks.append(orig_blocks[i])
-                                if (
-                                    settings.translation_pagecontext_whole_page
-                                    and is_dialogue_context_candidate(ocr_texts[i], ocr_confidence=conf)
-                                ):
-                                    ctx_dropped_idx.append(i)
-                                continue
-                            gated.append(i)
-                        valid_indices = gated
+                        settings.japanese_filter_katakana_max_length,
+                    ),
+                    is_leave_intact_fn=is_leave_intact_label,
+                    should_skip_as_english_fn=should_skip_as_english,
+                    on_drop=_on_drop_log_b,
+                )
+                erase_only_blocks = list(units.erase_only_blocks)
 
-                    filtered_count = len(ocr_texts) - len(valid_indices)
-                    if filtered_count > 0:
-                        logger.info(f"Image {idx + 1}: Filtered {filtered_count} non-Japanese/garbled regions")
+                filtered_count = len(ocr_texts) - len(units.kept_indices)
+                if filtered_count > 0:
+                    logger.info(f"Image {idx + 1}: Filtered {filtered_count} non-Japanese/garbled regions")
 
-                    if not valid_indices:
-                        logger.warning(f"Image {idx + 1}: All text regions filtered as non-Japanese")
-                        await emit("done", 5, 5, note="all_filtered")
-                        return (idx, [], None)
+                if not units.kept_indices:
+                    logger.warning(f"Image {idx + 1}: All text regions filtered as non-Japanese")
+                    await emit("done", 5, 5, note="all_filtered")
+                    return (idx, [], None)
 
-                    # WHOLE-PAGE v11 context: numbered page = kept + dropped
-                    # dialogue lines in reading (block) order; targets = kept.
-                    context_order = sorted(set(valid_indices) | set(ctx_dropped_idx))
-                    page_context_lines = [ocr_texts[i] for i in context_order]
-                    ctx_pos = {orig: p for p, orig in enumerate(context_order)}
-                    target_positions = [ctx_pos[i] for i in valid_indices]
-
-                    # Filter all parallel lists to maintain alignment
-                    ocr_texts = [ocr_texts[i] for i in valid_indices]
-                    blocks = [blocks[i] for i in valid_indices]
-                    crops = [crops[i] for i in valid_indices]
-                    all_text_regions = [all_text_regions[i] for i in valid_indices]
-                    # Keep OCR confidence aligned 1:1 so the post-edit can
-                    # suppress name invention on low-confidence bubbles.
-                    kept_ocr_confs = [
-                        ocr_confs[i] if i < len(ocr_confs) else None
-                        for i in valid_indices
-                    ]
-                else:
-                    # japanese_filter disabled: no per-index filtering happened,
-                    # so confidences (if any) stay aligned with ocr_texts as-is.
-                    kept_ocr_confs = list(ocr_confs)
-                    # All lines kept -> page context == kept lines, in order.
-                    page_context_lines = list(ocr_texts)
-                    target_positions = list(range(len(ocr_texts)))
+                page_context_lines = list(units.page_context_lines)
+                target_positions = list(units.target_positions)
+                page_merge_req = build_merged_translation_request(units)
+                ocr_texts = list(units.kept_texts)
+                blocks = list(units.kept_blocks)
+                crops = [crops[i] for i in units.kept_indices]
+                all_text_regions = [all_text_regions[i] for i in units.kept_indices]
+                kept_ocr_confs = list(units.kept_confs)
 
                 # Match kept blocks to bubbles ONCE (reused for both the inpaint
                 # interior-fill tier and the response build below).
@@ -768,6 +696,7 @@ async def process_single_image(
             target_language,
             page_context_lines=page_context_lines,
             target_positions=target_positions,
+            merge_req=page_merge_req,
         )
         translate_time = time.time() - translate_start
         logger.info(f"Image {idx + 1}: Translation completed in {translate_time*1000:.1f}ms ({len(ocr_texts)} texts)")
@@ -887,6 +816,7 @@ async def _run_translation(
     target_language: str,
     page_context_lines: Optional[List[str]] = None,
     target_positions: Optional[List[int]] = None,
+    merge_req=None,
 ) -> List[str]:
     """Dispatch to batched page-level translation when enabled + worthwhile,
     falling back to the legacy per-bubble parallel/sequential paths.
@@ -897,6 +827,11 @@ async def _run_translation(
     and the v11 page-context path is on, the model is given the full page as
     context while only the kept lines are translated/returned (no holes where
     dropped dialogue used to be). Output stays aligned 1:1 with ``texts``.
+
+    ``merge_req`` (#2 cross-bubble sentence merge) — when present, a JP sentence
+    typeset across adjacent same-column bubbles is translated as ONE marked line
+    and the English is re-split back to member bubbles (full EN on the lead
+    bubble, blank continuations). Output is still 1:1 with ``texts``.
     """
     if not texts:
         return []
@@ -912,10 +847,20 @@ async def _run_translation(
         and len(page_context_lines) > 1
         and hasattr(translation_service, "translate_page_context_marked")
     ):
+        # #2 CROSS-BUBBLE MERGE: translate the MERGED page (one unit per fused
+        # sentence) and re-split the English back to member bubbles.
+        if merge_req is not None and len(merge_req.merged_page_lines) > 1:
+            ctx_lines = merge_req.merged_page_lines
+            ctx_targets = merge_req.merged_target_positions
+        else:
+            ctx_lines = page_context_lines
+            ctx_targets = target_positions
         try:
             marked = await translation_service.translate_page_context_marked(
-                page_context_lines, target_positions, target_language
+                ctx_lines, ctx_targets, target_language
             )
+            if merge_req is not None and len(merge_req.merged_page_lines) > 1:
+                marked = apply_resplit(marked, merge_req.bubble_resplit)
             if len(marked) == len(texts) and any(b.strip() for b in marked):
                 return marked
             logger.warning("Whole-page context translate produced empty/mismatched output; falling back")

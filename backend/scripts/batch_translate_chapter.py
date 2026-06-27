@@ -48,7 +48,6 @@ from app.services.parseq_ocr_service import ParseqOCRService  # noqa: E402
 from app.services.translation_text_utils import format_sources  # noqa: E402
 from app.utils.japanese_text_filter import is_japanese_text  # noqa: E402
 from app.utils.english_region import should_skip_as_english  # noqa: E402
-from app.utils.ocr_confidence_gate import is_garbled_low_conf  # noqa: E402
 from app.utils.ctd_utils import (  # noqa: E402
     build_inpaint_mask,
     match_blocks_to_bubbles,
@@ -61,8 +60,10 @@ from app.utils.orphan_lines import (  # noqa: E402
     merge_orphans_into_blocks,
     reading_order_sort,
 )
-from app.utils.ocr_confidence_gate import (  # noqa: E402
-    is_dialogue_context_candidate,
+from app.utils.page_units import (  # noqa: E402
+    apply_resplit,
+    build_merged_translation_request,
+    build_page_translation_units,
 )
 
 from PIL import ImageDraw, ImageFont  # noqa: E402
@@ -499,78 +500,64 @@ class ChapterPipeline:
             if len(ocr_confs) == len(perm):
                 ocr_confs = [ocr_confs[i] for i in perm]
 
-        # --- Japanese filter + OCR-confidence garble gate ---
-        # Keep a bubble only if it is Japanese AND not (low-OCR-confidence AND
-        # garbled). The gate stops hallucinated captions on stylized SFX/scrawl
-        # before they reach the LLM, while leaving high-confidence text alone.
-        gate_on = (
-            getattr(settings, "ocr_confidence_gate_enabled", False)
-            and getattr(settings, "ocr_confidence_gate_threshold", 0.0) > 0
-        )
-        gate_thresh = getattr(settings, "ocr_confidence_gate_threshold", 0.65)
+        # --- Japanese filter + leave-intact + English exit + OCR garble gate ---
+        # SHARED data-shaping: identical decisions on the live router and this
+        # eval path (build_page_translation_units). The gate stops hallucinated
+        # captions on stylized SFX/scrawl before the LLM; leave-intact labels and
+        # horizontal-Latin regions are left as original art; dropped DIALOGUE
+        # lines re-enter the page CONTEXT (speaker/pronoun continuity) without
+        # being rendered. See app.utils.page_units for the contract.
         from app.services.lama_inpaint_service import is_leave_intact_label
-        valid_idx: list[int] = []
-        gate_dropped: list[int] = []
-        # Block-ordered indices of lines that should appear in the page CONTEXT:
-        # all kept dialogue PLUS gate-dropped DIALOGUE lines (not rendered, but
-        # they inform speaker/pronoun continuity). Pure-SFX / non-dialogue drops
-        # are excluded. Used to build the whole-page v11 context below.
-        context_idx: list[int] = []
-        for i, t in enumerate(ocr_texts):
-            if not is_japanese_text(
+
+        def _is_jp(t: str) -> bool:
+            return is_japanese_text(
                 t,
                 settings.japanese_filter_min_ratio,
                 settings.japanese_filter_katakana_max_length,
-            ):
-                continue
-            if is_leave_intact_label(t):
-                # Editorial/margin label (e.g. 表紙用イラスト, 奥付) — leave as
-                # original art: do not erase, translate, or typeset over it
-                # (matches human handling; avoids erase-without-replace smear).
-                print(
-                    f"  [{image_path.name}] leave-intact label idx {i}: {t[:18]!r}"
-                )
-                continue
-            if getattr(settings, "english_early_exit_enabled", True) and should_skip_as_english(
-                blocks[i], text_lines, t, is_japanese_text
-            ):
-                # Horizontal/Latin (non-Japanese) region — leave as ORIGINAL
-                # pixels: not translated, not erased (NOT added to kept_blocks,
-                # so build_inpaint_mask never sees it), no TextBox. Same clean
-                # skip as the leave-intact label above.
-                print(
-                    f"  [{image_path.name}] English early-exit skipped idx {i}: {t[:30]!r}"
-                )
-                continue
-            conf = ocr_confs[i] if i < len(ocr_confs) else 1.0
-            if gate_on and is_garbled_low_conf(t, conf, conf_threshold=gate_thresh):
-                gate_dropped.append(i)
-                # A dropped DIALOGUE line still belongs in the page context (no
-                # holes for the v11 model); a pure-SFX / garble drop does not.
-                if (
-                    getattr(settings, "translation_pagecontext_whole_page", True)
-                    and is_dialogue_context_candidate(t, ocr_confidence=conf)
-                ):
-                    context_idx.append(i)
+            )
+
+        def _on_drop(i: int, t: str, conf: float, reason: str) -> None:
+            if reason == "leave_intact_label":
+                print(f"  [{image_path.name}] leave-intact label idx {i}: {t[:18]!r}")
+            elif reason == "english_early_exit":
+                print(f"  [{image_path.name}] English early-exit skipped idx {i}: {t[:30]!r}")
+            elif reason == "ocr_gate_garbled":
                 print(
                     f"  [{image_path.name}] OCR-gate dropped idx {i} "
                     f"(conf={conf:.2f}) {t[:24]!r} — garbled, not sent to LLM"
                 )
-                continue
-            valid_idx.append(i)
-            context_idx.append(i)
-        kept_blocks = [blocks[i] for i in valid_idx]
-        kept_texts = [ocr_texts[i] for i in valid_idx]
-        kept_confs = [ocr_confs[i] if i < len(ocr_confs) else 1.0 for i in valid_idx]
-        # Whole-page v11 context: numbered page = all context_idx lines in
-        # reading order; targets = the kept lines' positions within that page.
-        context_idx.sort()
-        page_context_lines = [ocr_texts[i] for i in context_idx]
-        ctx_pos = {orig: p for p, orig in enumerate(context_idx)}
-        target_positions = [ctx_pos[i] for i in valid_idx]
+
+        units = build_page_translation_units(
+            blocks,
+            ocr_texts,
+            ocr_confs,
+            text_lines,
+            settings,
+            is_japanese_fn=_is_jp,
+            is_leave_intact_fn=is_leave_intact_label,
+            should_skip_as_english_fn=should_skip_as_english,
+            on_drop=_on_drop,
+        )
+        kept_blocks = list(units.kept_blocks)
+        kept_texts = list(units.kept_texts)
+        kept_confs = [c if c is not None else 1.0 for c in units.kept_confs]
+        page_context_lines = list(units.page_context_lines)
+        target_positions = list(units.target_positions)
+        # Indices kept (vs gate-dropped) for the inspection artifact below.
+        valid_idx = list(units.kept_indices)
+        gate_dropped = [
+            i for i in range(len(ocr_texts)) if i not in set(units.kept_indices)
+        ]
+        # Cross-bubble sentence-merge (#2): collapse dangling continuations into
+        # single translation units; re-split the EN back to member bubbles after
+        # translation (full EN on lead bubble, blank continuations).
+        merge_req = build_merged_translation_request(units)
         stats["num_kept"] = len(kept_texts)
         stats["num_context"] = len(page_context_lines)
         stats["ocr_gate_dropped"] = len(gate_dropped)
+        stats["sentence_merges"] = (
+            units.merge_plan.num_merges if units.merge_plan is not None else 0
+        )
 
         # --- inpaint mask from KEPT blocks only ---
         inpaint_mask = build_inpaint_mask(image_np.shape, kept_blocks, text_lines, mask)
@@ -609,10 +596,22 @@ class ChapterPipeline:
                 and hasattr(self.translator, "translate_page_context_marked")
             )
             if use_whole_page:
+                # CROSS-BUBBLE MERGE (#2): when a sentence is typeset across
+                # adjacent same-column bubbles, translate the MERGED JP as ONE
+                # marked line and re-split the EN back to member bubbles (full EN
+                # on the lead bubble, blank continuations). No prompt change.
+                if merge_req is not None and len(merge_req.merged_page_lines) > 1:
+                    ctx_lines = merge_req.merged_page_lines
+                    ctx_targets = merge_req.merged_target_positions
+                else:
+                    ctx_lines = page_context_lines
+                    ctx_targets = target_positions
                 try:
                     marked = await self.translator.translate_page_context_marked(
-                        page_context_lines, target_positions, "English"
+                        ctx_lines, ctx_targets, "English"
                     )
+                    if merge_req is not None and len(merge_req.merged_page_lines) > 1:
+                        marked = apply_resplit(marked, merge_req.bubble_resplit)
                     if len(marked) == len(kept_texts) and any(
                         b.strip() for b in marked
                     ):

@@ -76,7 +76,9 @@ def _patch_pipeline(monkeypatch, ocr_results, translations):
     monkeypatch.setattr(tr, "ocr_service", _FakeOCR(list(ocr_results)))
     monkeypatch.setattr(tr, "bubble_detector", None, raising=False)
 
-    async def _fake_translation(texts, target_language, page_context_lines=None, target_positions=None):
+    async def _fake_translation(
+        texts, target_language, page_context_lines=None, target_positions=None, merge_req=None
+    ):
         # Map each kept source line to its scripted translation (by source text).
         return [translations[t] for t in texts]
 
@@ -135,6 +137,26 @@ def test_ws_pipelined_high_conf_keeps_name(monkeypatch):
     idx, boxes, _plate = _run()
     by_src = {b.ocrText: b.translatedText for b in boxes}
     assert by_src["おばさん"] == "Sue", "high-conf name must NOT be suppressed"
+
+
+def test_ws_pipelined_leave_intact_label_skipped(monkeypatch):
+    """CONVERGENCE #1 gap fix: the LIVE pipelined branch must now honour
+    ``is_leave_intact_label`` (an editorial / margin label like 表紙用イラスト is
+    left as original art — never translated / rendered). This was MISSING from
+    the pipelined copy before the shared helper, a real gap proven here by
+    driving the real pipelined branch through the shared
+    ``build_page_translation_units``.
+    """
+    _patch_pipeline(
+        monkeypatch,
+        ocr_results=[("こんにちは", 0.95), ("表紙用イラスト", 0.95)],
+        translations={"こんにちは": "Hello", "表紙用イラスト": "Cover illustration"},
+    )
+
+    _idx, boxes, _plate = _run()
+    srcs = {b.ocrText for b in boxes}
+    assert "こんにちは" in srcs, "real dialogue rendered"
+    assert "表紙用イラスト" not in srcs, "editorial label must be left intact (no TextBox)"
 
 
 def test_ws_pipelined_kept_ocr_confs_not_all_none(monkeypatch):
