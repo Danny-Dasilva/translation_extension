@@ -83,7 +83,22 @@ def bootstrap_paired(
     }
 
 
-def _key_of(r: dict[str, Any]) -> tuple:
+def _key_of(r: dict[str, Any], align_key: str = "auto") -> tuple:
+    """Row alignment key.
+
+    align_key:
+      * ``"slug"`` -> (slug,) only.  Use this when slug is a STABLE spatial key
+        (e.g. the Ikenie4 gold ``src``) and ``jp`` may differ between runs
+        because OCR changed.  Aligning on (slug, jp) would silently drop rows
+        whose OCR text moved -> apples-to-oranges.
+      * ``"jp"``   -> (jp,) only.
+      * ``"auto"`` (legacy default) -> (slug, jp) when both exist, else (jp,).
+    """
+    if align_key == "slug":
+        return (r.get("slug", r.get("src", "")),)
+    if align_key == "jp":
+        return (r.get("jp", ""),)
+    # auto / legacy
     if "slug" in r and "jp" in r:
         return (r["slug"], r["jp"])
     return (r.get("jp", ""),)
@@ -101,14 +116,22 @@ def main() -> int:
                     help="Comma-separated metric keys where lower is better.")
     ap.add_argument("--n-bootstrap", type=int, default=1000)
     ap.add_argument("--seed", type=int, default=12345)
+    ap.add_argument(
+        "--align-key",
+        default="auto",
+        choices=["auto", "slug", "jp"],
+        help="Row alignment key. 'slug' = stable spatial key (use for Ikenie4 "
+        "where OCR jp changes between runs); 'jp' = legacy jp-join; 'auto' = "
+        "(slug,jp) when both exist (DEFAULT, but UNSTABLE if jp moved).",
+    )
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
 
     rows_a: list[dict] = json.loads(Path(args.sys_a_per_bubble).read_text())
     rows_b: list[dict] = json.loads(Path(args.sys_b_per_bubble).read_text())
 
-    keyed_a = {_key_of(r): r for r in rows_a}
-    keyed_b = {_key_of(r): r for r in rows_b}
+    keyed_a = {_key_of(r, args.align_key): r for r in rows_a}
+    keyed_b = {_key_of(r, args.align_key): r for r in rows_b}
     keys = sorted(set(keyed_a.keys()) & set(keyed_b.keys()))
     if not keys:
         sys.stderr.write("ERROR: no aligned rows between A and B\n")

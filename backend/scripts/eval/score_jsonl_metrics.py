@@ -36,6 +36,15 @@ def main() -> int:
                     help="JSONL of predictions (from inference_v10it_quality.py); must have 'jp' + pred key")
     ap.add_argument("--gold-ref-key", default="en")
     ap.add_argument("--pred-key", default="en")
+    ap.add_argument(
+        "--align-key",
+        default="jp",
+        choices=["jp", "src"],
+        help="Field to join pred<->gold on. 'jp' (legacy, UNSTABLE across OCR "
+        "changes) or 'src' (STABLE spatial key from build_predictions_for_gold). "
+        "With 'src', only rows present+matched in both are scored, and the "
+        "match-rate (n_matched/n_gold) is reported as a first-class output.",
+    )
     ap.add_argument("--label", required=True)
     ap.add_argument("--metrics", default="chrf,bleu,kiwi,metricx",
                     help="Comma-separated. Supported: chrf, bleu, kiwi, metricx, xcomet.")
@@ -45,33 +54,99 @@ def main() -> int:
     ap.add_argument("--out-dir", required=True)
     args = ap.parse_args()
 
-    # Load gold
-    gold: dict[str, str] = {}
-    with open(args.gold_jsonl) as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            r = json.loads(line)
-            jp = (r.get("jp") or "").strip()
-            ref = (r.get(args.gold_ref_key) or "").strip()
-            if jp and ref:
-                gold[jp] = ref
-
-    # Load pred and align by jp
     aligned: list[dict[str, str]] = []
-    with open(args.pred_jsonl) as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            r = json.loads(line)
-            jp = (r.get("jp") or "").strip()
+    n_gold = 0
+    n_matched_pred = 0  # pred rows flagged matched=true (src mode only)
+
+    if args.align_key == "src":
+        # STABLE join: gold.src <-> pred.src.  build_predictions_for_gold.py
+        # already aligned each gold row to a bubble by bbox IoU and keyed the
+        # row by gold src, carrying matched/iou.  We score our_en vs gold_en on
+        # the rows that matched a bubble, and report the match-rate.
+        gold_rows: dict[str, dict] = {}
+        with open(args.gold_jsonl) as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                r = json.loads(line)
+                src = (r.get("src") or "").strip()
+                if src:
+                    gold_rows[src] = r
+        n_gold = len(gold_rows)
+
+        # Gold may contain genuine duplicate srcs (same bbox, two annotations);
+        # dedup pred rows by src (last-wins) so the join is strictly 1:1 with
+        # the unique gold-src set and match_rate stays in [0, 1].
+        pred_by_src: dict[str, dict] = {}
+        with open(args.pred_jsonl) as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                r = json.loads(line)
+                src = (r.get("src") or "").strip()
+                if src in gold_rows:
+                    pred_by_src[src] = r
+
+        for src, r in pred_by_src.items():
+            g = gold_rows[src]
+            ref = (g.get(args.gold_ref_key) or "").strip()
+            # A row counts as matched when build_predictions_for_gold found an
+            # overlapping bubble.  Default True for back-compat with pred files
+            # that don't carry the flag.
+            is_matched = bool(r.get("matched", True))
+            if is_matched:
+                n_matched_pred += 1
             pred = (r.get(args.pred_key) or "").strip()
-            ref = gold.get(jp)
-            if not ref or not jp:
+            # Only score rows that matched a bubble AND have a gold ref.
+            # Unmatched -> en="" -> would unfairly tank chrF; exclude them from
+            # the metric but still count them in the match-rate.
+            if not is_matched or not ref:
                 continue
-            aligned.append({"slug": r.get("src", "?"), "jp": jp, "pred": pred, "ref": ref})
+            aligned.append(
+                {
+                    "slug": src,
+                    "jp": (r.get("jp") or "").strip(),
+                    "pred": pred,
+                    "ref": ref,
+                }
+            )
+        match_rate = (n_matched_pred / n_gold) if n_gold else 0.0
+        print(
+            f"[{args.label}] src-align: {n_matched_pred}/{n_gold} gold rows "
+            f"matched a bubble (match_rate={match_rate:.3f}); "
+            f"scoring {len(aligned)} with a gold ref"
+        )
+    else:
+        # Legacy jp-join (UNSTABLE across OCR text changes).
+        gold: dict[str, str] = {}
+        with open(args.gold_jsonl) as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                r = json.loads(line)
+                jp = (r.get("jp") or "").strip()
+                ref = (r.get(args.gold_ref_key) or "").strip()
+                if jp and ref:
+                    gold[jp] = ref
+        n_gold = len(gold)
+
+        with open(args.pred_jsonl) as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                r = json.loads(line)
+                jp = (r.get("jp") or "").strip()
+                pred = (r.get(args.pred_key) or "").strip()
+                ref = gold.get(jp)
+                if not ref or not jp:
+                    continue
+                aligned.append(
+                    {"slug": r.get("src", "?"), "jp": jp, "pred": pred, "ref": ref}
+                )
 
     if not aligned:
         print("ERROR: no aligned rows", file=sys.stderr)
@@ -82,10 +157,15 @@ def main() -> int:
 
     summary: dict = {
         "label": args.label,
+        "align_key": args.align_key,
         "n_aligned": len(aligned),
         "gold_jsonl": args.gold_jsonl,
         "pred_jsonl": args.pred_jsonl,
     }
+    if args.align_key == "src":
+        summary["n_gold"] = n_gold
+        summary["n_matched"] = n_matched_pred
+        summary["match_rate"] = (n_matched_pred / n_gold) if n_gold else 0.0
     per_bubble = [dict(r) for r in aligned]
 
     if "chrf" in metrics or "bleu" in metrics:
