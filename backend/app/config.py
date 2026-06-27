@@ -222,6 +222,20 @@ class Settings(BaseSettings):
     # This flag exists so the trade-off is empirically tunable; validated ON.
     translation_pagecontext_whole_page: bool = True
 
+    # CROSS-BUBBLE SENTENCE MERGE (pre-translation re-segmentation). One JP
+    # sentence typeset across 2-3 stacked bubbles in the SAME column is otherwise
+    # translated as independent fragments whose halves contradict (p8
+    # "今朝はあの子達が" negating the paired "didn't come"; "からな" -> "It's from
+    # you"). When True, strictly-adjacent same-column lines are fused into ONE
+    # translation unit when the LEADING line dangles on a connective (て/で/が/の/
+    # けど, no terminal 。!?…) or the TRAILING line is a bare sentence-final
+    # particle (からな/のに/なさい/だろう). The merged JP is translated as one
+    # marked line (NO prompt-template change -> NO train/serve risk) and the
+    # English is re-split back to member bubbles (full EN in the first bubble,
+    # blank continuation bubbles). Pure re-segmentation; validated main-side on
+    # GPU. See app.utils.sentence_merge.
+    translation_sentence_merge: bool = True
+
     # Normalize short Japanese utterances (interpunct/dot/space-separated kana,
     # runaway repeated kana) before translation so the model isn't destabilized.
     short_utterance_normalize_enabled: bool = True
