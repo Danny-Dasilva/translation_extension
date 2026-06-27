@@ -120,6 +120,9 @@ PYEOF
 
 echo
 echo "=== 1. chrF++/BLEU on ocr_clean gold subset ($LABEL) [align=$ALIGN_KEY] ==="
+# Manga typeset human gold is ALL-CAPS; case-sensitive chrF would measure
+# typesetting case, not translation quality (crushes the score ~4x). Score
+# case-insensitively.
 "$PY" "$SCRIPT_DIR/score_jsonl_metrics.py" \
   --gold-jsonl "$GOLD_CLEAN" \
   --pred-jsonl "$PREDICTIONS" \
@@ -127,6 +130,7 @@ echo "=== 1. chrF++/BLEU on ocr_clean gold subset ($LABEL) [align=$ALIGN_KEY] ==
   --pred-key "$PRED_KEY" \
   --align-key "$ALIGN_KEY" \
   --label "$LABEL" \
+  --lowercase \
   --metrics "$METRICS" \
   --out-dir "$OUT_DIR"
 

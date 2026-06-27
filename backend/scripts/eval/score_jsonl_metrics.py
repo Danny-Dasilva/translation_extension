@@ -46,6 +46,14 @@ def main() -> int:
         "match-rate (n_matched/n_gold) is reported as a first-class output.",
     )
     ap.add_argument("--label", required=True)
+    ap.add_argument(
+        "--lowercase",
+        action="store_true",
+        help="Lowercase pred+ref before chrF/BLEU. Manga typeset human gold is "
+        "ALL-CAPS, so case-sensitive chrF measures TYPESETTING case not "
+        "translation quality (crushes the score ~4x). Use for the Ikenie4 "
+        "vision-gold eval.",
+    )
     ap.add_argument("--metrics", default="chrf,bleu,kiwi,metricx",
                     help="Comma-separated. Supported: chrf, bleu, kiwi, metricx, xcomet.")
     ap.add_argument("--xcomet-model", default="Unbabel/XCOMET-XL",
@@ -170,17 +178,22 @@ def main() -> int:
 
     if "chrf" in metrics or "bleu" in metrics:
         import sacrebleu
-        preds = [r["pred"] for r in aligned]
-        refs = [r["ref"] for r in aligned]
+
+        def _norm(s: str) -> str:
+            return s.lower() if args.lowercase else s
+
+        preds = [_norm(r["pred"]) for r in aligned]
+        refs = [_norm(r["ref"]) for r in aligned]
         chrf = float(sacrebleu.corpus_chrf(preds, [refs], word_order=2).score)
         bleu = float(sacrebleu.corpus_bleu(preds, [refs]).score)
         summary["chrf_pp"] = chrf
         summary["bleu"] = bleu
-        # Per-bubble chrF
+        summary["lowercased"] = bool(args.lowercase)
+        # Per-bubble chrF (same case-normalisation as the corpus score)
         for r, p in zip(per_bubble, aligned):
-            s = sacrebleu.sentence_chrf(p["pred"], [p["ref"]], word_order=2)
+            s = sacrebleu.sentence_chrf(_norm(p["pred"]), [_norm(p["ref"])], word_order=2)
             r["chrf_pp"] = float(s.score)
-        print(f"  chrF++={chrf:.2f}  BLEU={bleu:.2f}")
+        print(f"  chrF++={chrf:.2f}  BLEU={bleu:.2f}" + ("  (lowercased)" if args.lowercase else ""))
 
     if "kiwi" in metrics:
         from comet import download_model, load_from_checkpoint
