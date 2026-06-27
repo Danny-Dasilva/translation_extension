@@ -30,6 +30,7 @@ import onnxruntime as ort
 
 from app.services._ort_init import cuda_provider_options
 
+from app.utils.ocr_confidence_gate import collapse_immediate_dup
 from app.utils.ocr_postprocess import apply_all as postprocess_ocr
 
 ort.set_default_logger_severity(3)  # ERROR only
@@ -85,10 +86,18 @@ def _finalize_ocr(raw: str) -> str:
       1. ``postprocess_ocr`` (NFC, zero-width strip, fullwidth<->halfwidth,
          punct map, middle-dot collapse, trailing-repeat cap).
       2. ``normalize_japanese_text`` (collapse whitespace between CJK chars).
-      3. Repetition guard (logs only; does not mutate).
+      3. FIX P3-1: collapse an exact whole-phrase ``P + P`` OCR repeat back to
+         one copy (お母さんお母さん -> お母さん) when the collapsed half is plausible
+         Japanese. Recovers clean high-confidence lines that the dup-gate would
+         otherwise drop (and orphan their partner). Only fires on EXACT-half
+         equality, so a genuine doubled garble is left for the gate to drop.
+      4. Repetition guard (logs only; does not mutate).
     """
     cleaned = postprocess_ocr(raw)
     cleaned = normalize_japanese_text(cleaned)
+    collapsed = collapse_immediate_dup(cleaned)
+    if collapsed is not None:
+        cleaned = collapsed
     return _repetition_guard(cleaned)
 
 

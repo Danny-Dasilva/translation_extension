@@ -155,6 +155,22 @@ SFX_MAP: dict[str, str] = {
     "ずぶ": "Thrust", "ズブ": "Thrust",
     "ぬぷ": "Thrust", "ヌプ": "Thrust",
     "ぐぽ": "Thrust", "グポ": "Thrust",
+    # --- FIX P3-4: residual romaji-leak onomatopoeia (uncovered markers that
+    # round-tripped to raw romaji on the page). Keys are POST-normalisation
+    # (sokuon/decoration stripped — see _normalise_sfx_key). Conservative comic
+    # SFX mappings by phonetic family. (あゆむ->Ayumu and *Haa* are CORRECT and
+    # are intentionally NOT added here.)
+    "ばぽ": "Plop",      # ばっぽ — a wet plop/pop
+    "ばっぽ": "Plop",
+    "たらん": "Plink",   # たらん — a light tinkling/dangling sound
+    "たぱん": "Plap",    # たパん (katakana パ normalises via collapse below)
+    "たパん": "Plap",
+    "おご": "Gulp",      # おごッ — a strangled gulp/choke
+    "おごっ": "Gulp",
+    "ぼろおろ": "Bworp", "ボロオロ": "Bworp",  # ボロオロ — a gurgling/sloshing
+    "めぷ": "Squish",    # めぷッ — a small wet squish
+    "めぷっ": "Squish",
+    "ぽん": "Pop",       # ぽん — a light pop / tap
 }
 
 # Adjectival NSFW onomatopoeia: NOT a transliteration. ガバガバに -> "so loose"
@@ -413,12 +429,44 @@ def _en_is_sfx_shaped(en: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
+def _is_romaji_leak(en: str, jp: Optional[str]) -> bool:
+    """True when a pure-kana SFX box round-tripped to RAW ROMAJI on the page.
+
+    The model occasionally emits a bare romaji transliteration of a kana SFX
+    instead of an English comic SFX (たパん -> "Tapan", ばっぽ -> "Bappo"). The
+    tell: ``jp`` is a pure-kana SFX-shaped source AND ``en`` is a single ASCII
+    "word" that is NOT a real English word — i.e. it matches the romaji of the
+    JP source. Conservative: requires the kana-SFX gate AND a 1-word ASCII-only
+    English, so genuine one-word translations ("Splash", "Boom") are spared via
+    the romaji-equality check (they don't equal the JP romaji).
+    """
+    if not jp:
+        return False
+    core = en.strip().strip("*").strip()
+    words = re.findall(r"[A-Za-z']+", core)
+    if len(words) != 1:
+        return False
+    # Must be ASCII-only (no CJK, no digits) and look like a transliteration.
+    if re.search(r"[^A-Za-z'*\s]", core):
+        return False
+    if not _jp_is_kana_sfx_source(jp):
+        return False
+    rom = _to_romaji(jp.strip())
+    if not rom:
+        return False
+    # The English IS the JP romaji (case-insensitive) -> a raw leak.
+    return words[0].lower() == rom.lower()
+
+
 def clean_sfx_output(en: Optional[str], jp: Optional[str] = None) -> Optional[str]:
     """Clean a single bubble's translation output.
 
     Order of operations:
       1. Pass through empty / None unchanged.
       2. If the English is a META-DESCRIPTION leak -> suppress + transliterate.
+      2c. FIX P3-4: if a pure-kana SFX box round-tripped to RAW ROMAJI
+          (たパん -> "Tapan"), replace with the nearest glossary entry, else
+          ``*...*`` (so a romaji leak never renders on the page).
       3. Else, if JP is a short katakana SFX and English is a short
          (SFX-shaped) clearly-wrong common noun -> apply :data:`SFX_MAP`.
       4. Else leave the text untouched (real dialogue is preserved).
@@ -431,6 +479,20 @@ def clean_sfx_output(en: Optional[str], jp: Optional[str] = None) -> Optional[st
     # (2) Meta-description leak — the highest-priority, page-breaking case.
     if is_sfx_meta_description(en):
         return suppress_or_transliterate(jp)
+
+    # (2c) Raw-romaji leak of a kana SFX (たパん -> "Tapan"). Replace with the
+    # nearest glossary SFX; fall back to *...* rather than render raw romaji.
+    if _is_romaji_leak(en, jp):
+        glossary = sfx_pre_translate(jp)
+        if glossary is not None:
+            return glossary
+        key = _normalise_sfx_key(jp.strip())  # type: ignore[union-attr]
+        if key in SFX_MAP:
+            return SFX_MAP[key]
+        for k, v in SFX_MAP.items():
+            if key.startswith(k):
+                return v
+        return "*...*"
 
     # (2b) Word-list / descriptive leak that doesn't match the "SFX for ..."
     # patterns (e.g. "angerous, grumble, rumble rumbling" for ぶぶっ). Gated on
