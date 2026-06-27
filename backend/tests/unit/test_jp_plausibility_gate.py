@@ -105,10 +105,23 @@ def test_implausible_corrupt_with_dup():
     assert is_implausible_japanese("妄..妄ま定れいい妄.想止止らな") is True
 
 
-def test_dup_garble_dropped_at_high_conf():
-    # The headline P1-2 case: high OCR confidence (0.88) but dup garble -> drop.
-    assert is_garbled_low_conf("身身わわ", 0.88) is True
-    assert is_garbled_low_conf("また昨日みたいなまた昨日みたいな", 0.9) is True
+def test_dup_garble_dropped_below_conf_ceiling():
+    # P1-2 case below the FIX P3-2 dup-confidence ceiling (0.88): a dup garble
+    # at moderate confidence is still dropped (the dup signals run).
+    assert is_garbled_low_conf("身身わわ", 0.80) is True
+
+
+def test_dup_garble_kept_at_or_above_conf_ceiling():
+    # FIX P3-2: at/above the 0.88 ceiling the dup-ONLY signals are skipped — a
+    # high-confidence recognition is trusted (避けるのは false-drop of clean
+    # dialogue, which the task says is worse). 身身わわ at exactly 0.88 is kept.
+    assert is_garbled_low_conf("身身わわ", 0.88) is False
+
+
+def test_clean_pp_repeat_collapses_not_dropped():
+    # FIX P3-1: a clean whole-phrase P+P repeat is COLLAPSED+KEPT, not dropped
+    # (it became a silent omission before). The orphaned-partner bug is fixed.
+    assert is_garbled_low_conf("また昨日みたいなまた昨日みたいな", 0.9) is False
 
 
 # --- duplication garble: legitimate reduplication MUST NOT be flagged ------

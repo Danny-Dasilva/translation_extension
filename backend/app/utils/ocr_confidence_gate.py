@@ -11,7 +11,11 @@ decoded tokens), NOT the detector/block confidence.
 """
 from __future__ import annotations
 
+import json
+import math
 import unicodedata
+from functools import lru_cache
+from pathlib import Path
 
 from app.utils.japanese_text_filter import analyze_characters, is_japanese_text
 
@@ -220,28 +224,214 @@ def _immediate_substring_dup(norm: str) -> bool:
     return stripped[:half] == stripped[half:]
 
 
-def is_implausible_japanese(text: str) -> bool:
+# --- P+P collapse (FIX P3-1) ----------------------------------------------
+# ``_immediate_substring_dup`` LOCATES whole-phrase ``P + P`` OCR repeats. The
+# old behaviour DROPPED them, but ~20% of those drops are *clean* high-confidence
+# Japanese whose two halves are an exact repeat (お母さんお母さん@0.93,
+# また昨日みたいな…@0.92). Dropping turns them into silent omissions. Instead we
+# COLLAPSE the repeat back to one copy and KEEP the line — but only when the
+# collapsed half is itself plausible Japanese (so we never "rescue" a garble).
+# Mirrors ``sfx_glossary._collapse_sfx_repeat`` but for arbitrary dialogue text,
+# firing ONLY on exact whole-string OR exact JP-glyph-only half equality
+# (near-zero regression risk).
+
+
+# Minimum repeated-unit length (in chars) for the whole-string collapse. Mirrors
+# the >= 4 JP-glyph floor of ``_immediate_substring_dup`` so short legit
+# reduplications (ますます, どきどき, はは) are NEVER collapsed.
+_MIN_COLLAPSE_HALF = 4
+
+
+def _exact_half_repeat(s: str) -> str | None:
+    """Return the collapsed half if ``s`` is exactly ``P + P``, else None.
+
+    Even length, two identical halves, and a non-trivial unit (half length >=
+    ``_MIN_COLLAPSE_HALF``) so short legit doubled words (ますます, はは) are not
+    collapsed. Operates on the raw string (used for the whole-string check).
+    """
+    n = len(s)
+    if n < 2 * _MIN_COLLAPSE_HALF or n % 2 != 0:
+        return None
+    half = n // 2
+    if s[:half] == s[half:]:
+        return s[:half]
+    return None
+
+
+def collapse_immediate_dup(text: str) -> str | None:
+    """Collapse an exact whole-phrase ``P + P`` repeat to a single ``P``.
+
+    Returns the collapsed string when ``text`` is a clean immediate repeat AND
+    the collapsed half is NOT implausible Japanese; returns None when no
+    collapse applies (caller keeps the original text). Two repeat shapes fire:
+
+      * exact WHOLE-STRING repeat (お母さんお母さん -> お母さん, including any
+        shared trailing punctuation: ``ABC…ABC…`` only collapses if the whole
+        string halves equal),
+      * exact JP-GLYPH-ONLY repeat (また昨日みたいな…また昨日みたいな… where the
+        punctuation differs between halves) — reconstructed from the first half
+        of the ORIGINAL string by length, preserving that half's punctuation.
+
+    Conservative: the collapsed half must pass ``is_implausible_japanese`` ==
+    False, so a doubled GARBLE (身身わわ-style) is never silently rescued — it
+    still falls through to the drop path.
+    """
+    norm = unicodedata.normalize("NFC", text).strip()
+    if not norm:
+        return None
+
+    # (a) exact whole-string repeat (halves identical incl. punctuation).
+    whole = _exact_half_repeat(norm)
+    if whole is not None and not is_implausible_japanese(whole):
+        return whole
+
+    # (b) exact JP-glyph-only repeat: the JP glyphs form P+P even though the
+    # surrounding punctuation differs. Rebuild one copy from the original by
+    # taking the prefix up to (and including) the glyphs of the first half.
+    glyphs = [c for c in norm if _is_japanese_glyph(c)]
+    n = len(glyphs)
+    if n >= 8 and n % 2 == 0:
+        half = n // 2
+        if half >= 4 and glyphs[:half] == glyphs[half:]:
+            # Walk the original string until we've consumed ``half`` JP glyphs;
+            # that prefix is one clean copy (keeps its trailing punctuation).
+            seen = 0
+            cut = len(norm)
+            for i, ch in enumerate(norm):
+                if _is_japanese_glyph(ch):
+                    seen += 1
+                    if seen == half:
+                        cut = i + 1
+                        break
+            candidate = norm[:cut].strip()
+            if candidate and not is_implausible_japanese(candidate):
+                return candidate
+
+    return None
+
+
+# --- substitution / perplexity garble guard (FIX P3-3) --------------------
+# The dup-predicates are BLIND to substitution garbles where a plausible char is
+# swapped for another plausible char (もっ張って<-引っ張って) or short noise
+# (ヤヌー界): every individual bigram is locally valid, so neither the dup
+# heuristics nor a min-bigram-probability test separates them from real text.
+#
+# CALIBRATION FINDING (see scripts/build_jp_bigram_table.py + report): a char-
+# bigram model CANNOT safely catch SHORT substitution garbles — they sit inside
+# the legit distribution (もっ張って ppl 26 ~= 引っ張って ppl 18), and short legit
+# names/SFX/NSFW (あゆむ ppl 12847, ピろッ ppl 5344) outscore even the noise
+# garbles. So this guard is deliberately scoped to ONLY what a bigram model can
+# catch WITHOUT false-dropping clean text: LONG, HIGH-ENTROPY noise scrambles
+# (also Chinese-leak pages). Validated to flag 0 clean dialogue / 0 NSFW lines
+# across 14.5k real bubbles while catching long noise like ゴム昔化湖ゴム首次角.
+# Flagged lines route to ERASE-ONLY (never translated), so a false flag can only
+# erase real ink, never fabricate a caption.
+
+_BIGRAM_TABLE_PATH = Path(__file__).resolve().parents[1] / "data" / "jp_char_bigram.json"
+
+# add-k smoothing constant for the conditional bigram model.
+_SMOOTH_K = 0.1
+# Guard fires only when ALL of these hold (conservative — long noise only):
+_SUBST_MIN_GLYPHS = 8        # short lines are out of reach; never inspect them
+_SUBST_PPL_THRESHOLD = 1500.0
+_SUBST_UNSEEN_FRACTION = 0.55  # >= 55% of bigrams never seen in the GT corpus
+
+
+@lru_cache(maxsize=1)
+def _load_bigram_table() -> tuple[dict, dict, int]:
+    """Load (unigram, bigram, n_unigram_types). Empty on missing file."""
+    try:
+        data = json.loads(_BIGRAM_TABLE_PATH.read_text(encoding="utf-8"))
+        return (
+            data.get("unigram", {}),
+            data.get("bigram", {}),
+            int(data.get("n_unigram_types", 0)) or len(data.get("unigram", {})),
+        )
+    except Exception:
+        return ({}, {}, 0)
+
+
+def _is_substitution_garble(norm: str) -> bool:
+    """True for LONG high-entropy noise the dup-predicates miss (FIX P3-3).
+
+    Confidence-INDEPENDENT. Uses a corpus-grounded char-bigram model (built
+    offline from 260k+ real manga GT lines). Conservative by design: requires a
+    long line (>= 8 JP glyphs), a high unseen-bigram fraction, AND high
+    perplexity together, so short legit names / SFX / NSFW dialogue (which can
+    have high perplexity on their own) are never flagged. Returns False when the
+    table is unavailable (fail-open).
+    """
+    uni, bi, vocab = _load_bigram_table()
+    if not bi or vocab == 0:
+        return False
+    glyphs = [c for c in norm if _is_japanese_glyph(c)]
+    n = len(glyphs)
+    if n < _SUBST_MIN_GLYPHS:
+        return False
+    n_bigrams = n - 1
+    unseen = 0
+    logp = 0.0
+    for i in range(n_bigrams):
+        a, b = glyphs[i], glyphs[i + 1]
+        c_ab = bi.get(a + b, 0)
+        c_a = uni.get(a, 0)
+        if c_ab == 0:
+            unseen += 1
+        p = (c_ab + _SMOOTH_K) / (c_a + _SMOOTH_K * vocab)
+        logp += math.log(p)
+    perplexity = math.exp(-logp / n_bigrams)
+    unseen_frac = unseen / n_bigrams
+    return perplexity >= _SUBST_PPL_THRESHOLD and unseen_frac >= _SUBST_UNSEEN_FRACTION
+
+
+# --- DUP-signal confidence ceiling (FIX P3-2) -----------------------------
+# The dup-only signals (_adjacent_dup_*, _immediate_substring_dup,
+# _repeated_bigram_garble) are heuristics for a PARSeq failure mode, but they
+# also trip on a few CLEAN high-confidence bubbles (お母さん@0.93 -> dropped,
+# orphaning its partner which then renders "InNo"). When OCR confidence is high
+# the recognizer is very likely correct, so we SKIP the dup-only signals at/above
+# this ceiling. The UNCONDITIONAL signals (latin-intrusion, garbled-leading-tsu,
+# substitution-perplexity) still run — they catch confidently-wrong OCR that the
+# recognizer is sure about but is still garbage.
+DUP_CONF_CEILING = 0.88
+
+
+def is_implausible_japanese(text: str, ocr_conf: float | None = None) -> bool:
     """True if ``text`` reads as garbled OCR despite being mostly Japanese.
 
-    A *linguistic*-plausibility heuristic (NOT confidence-based) so that
-    confidently-garbled OCR is caught even at high OCR confidence. Deliberately
-    narrow: it only returns True on patterns that cannot occur in genuine
-    Japanese dialogue, so it does not drop real lines.
+    A *linguistic*-plausibility heuristic (NOT confidence-based by default) so
+    that confidently-garbled OCR is caught even at high OCR confidence.
+    Deliberately narrow: it only returns True on patterns that cannot occur in
+    genuine Japanese dialogue, so it does not drop real lines.
 
-    Signals (any one is sufficient):
-      * Garbled leading small-tsu prefix (page 070 "..?っく混みますよ").
-      * Heavy ASCII-letter intrusion in Japanese text (logo/URL/handle garble).
-      * Duplication garble (FIX P1-2): adjacent doubled kanji/kana, whole-phrase
-        immediate repetition, or a high repeated-bigram ratio — the dominant
-        PARSeq dense-kana failure mode, carrying falsely-high confidence.
+    Signal groups:
+      UNCONDITIONAL (always run, any confidence):
+        * Garbled leading small-tsu prefix (page 070 "..?っく混みますよ").
+        * Heavy ASCII-letter intrusion in Japanese text (logo/URL garble).
+        * Substitution/perplexity garble (FIX P3-3): a char-bigram plausibility
+          guard for long high-entropy noise the dup-predicates are blind to.
+      DUP-ONLY (skipped when ``ocr_conf >= DUP_CONF_CEILING`` — FIX P3-2):
+        * adjacent doubled kanji/kana, whole-phrase immediate repetition, high
+          repeated-bigram ratio — the PARSeq dense-kana failure mode. These also
+          trip a few clean conf-0.9 bubbles, so a high-confidence line is spared.
     """
     norm = unicodedata.normalize("NFC", text).strip()
     if not norm:
         return False
+
+    # Unconditional signals — run irrespective of confidence.
     if _has_garbled_leading_tsu(norm):
         return True
     if _has_latin_intrusion(norm):
         return True
+    if _is_substitution_garble(norm):
+        return True
+
+    # Dup-only signals — a high-confidence recognition is very likely correct,
+    # so skip these to avoid false-dropping clean dialogue (FIX P3-2).
+    if ocr_conf is not None and ocr_conf >= DUP_CONF_CEILING:
+        return False
+
     if _adjacent_dup_kanji(norm):
         return True
     if _adjacent_dup_kana(norm):
@@ -290,11 +480,20 @@ def is_garbled_low_conf(
     """
     norm = unicodedata.normalize("NFC", text).strip()
 
+    # FIX P3-1: a clean whole-phrase ``P + P`` repeat (お母さんお母さん@0.93) is
+    # NOT a drop — it COLLAPSES to one copy and is KEPT (the caller applies
+    # ``collapse_immediate_dup`` to the text). Recognising it here means its
+    # ``_immediate_substring_dup`` signal below must not orphan the bubble.
+    is_collapsible_dup = norm and collapse_immediate_dup(norm) is not None
+    if is_collapsible_dup:
+        return False
+
     # Plausibility check runs irrespective of confidence — this is the whole
     # point of P1-1 (catch confidently-wrong OCR). Only real Japanese text is
     # inspected; obvious garble-char / non-JP cases fall through to the
-    # confidence logic below as before.
-    if check_plausibility and norm and is_implausible_japanese(norm):
+    # confidence logic below as before. FIX P3-2: pass the confidence so the
+    # dup-only signals are skipped above the high-confidence ceiling.
+    if check_plausibility and norm and is_implausible_japanese(norm, ocr_confidence):
         return True
 
     if ocr_confidence >= conf_threshold:
