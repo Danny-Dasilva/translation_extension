@@ -131,7 +131,7 @@ if [[ -n "$BASELINE_PROBES" && -f "$BASELINE_PROBES" ]]; then
 fi
 # probes.py exits non-zero when overall_pass is False; don't abort the run.
 set +e
-"$PY" -m backend.scripts.eval.probes "${PROBE_ARGS[@]}"
+"$PY" "$SCRIPT_DIR/probes.py" "${PROBE_ARGS[@]}"
 PROBE_EXIT=$?
 set -e
 
