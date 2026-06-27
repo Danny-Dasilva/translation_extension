@@ -1,0 +1,20 @@
+{"probe_type": "reverse_sense", "src": "ikenie4:p22:idx_suck", "jp": "吸い出せよ", "banned_en_substrings": ["spit"], "required_en_substrings": ["suck"], "note": "吸い出せ = suck OUT; 'spit it out' is the reversed sense"}
+{"probe_type": "reverse_sense", "src": "ikenie4:p84:idx_came", "jp": "ユリエは果てた", "banned_en_substrings": ["passed away", "died", "death"], "required_en_substrings": ["came", "climax"], "note": "果てた = climaxed, not 'passed away'"}
+{"probe_type": "reverse_sense", "src": "ikenie4:p73:idx_brothel", "jp": "風俗って", "banned_en_substrings": ["rumor", "rumour"], "required_en_substrings": ["brothel", "sex", "prostit"], "note": "風俗 = brothel, not 噂/rumor"}
+{"probe_type": "reverse_sense", "src": "ikenie4:p77:idx_cowgirl", "jp": "騎乗位ね", "banned_en_substrings": ["coworking", "co-working"], "required_en_substrings": ["cowgirl", "on top", "riding"], "note": "騎乗位 = cowgirl position, not 'coworking'"}
+{"probe_type": "reverse_sense", "src": "ikenie4:p8:idx_negation", "jp": "今朝はあの子達が", "banned_en_substrings": [], "required_en_substrings": ["didn't", "did not", "glad"], "note": "split sentence; the affirmative half inverts the negation"}
+{"probe_type": "reverse_sense", "src": "ikenie4:p7:idx_coercion", "jp": "させられるんだろう", "banned_en_substrings": [], "required_en_substrings": ["make me", "made to", "they'll", "forced"], "note": "させられる = causative-passive 'be MADE to do', not 'I just have to'"}
+{"probe_type": "reverse_sense", "src": "ikenie4:p16:idx_hame", "jp": "ハメまくってる", "banned_en_substrings": ["soaking wet"], "required_en_substrings": ["fucking", "fuck"], "note": "ハメまくってる = fucking like crazy, not 'I'm soaking wet'"}
+{"probe_type": "pronoun_gender", "src": "ikenie4:p5:idx0", "jp": "昨日あんな事をしていた", "referent": "she", "note": "referent is the mother (she); ours chose 'He'"}
+{"probe_type": "pronoun_gender", "src": "ikenie4:p15:idx_clothes", "jp": "朝の服のままだ", "referent": "she", "note": "subject is the mother (she); ours says 'He's'"}
+{"probe_type": "pronoun_gender", "src": "ikenie4:p19:idx_made", "jp": "挿れながら作った", "referent": "she", "note": "she made it while inserting; ours uses first-person 'I made it'"}
+{"probe_type": "pronoun_gender", "src": "ikenie4:p33:idx_boobs", "jp": "おっぱい揺れる", "referent": "she", "note": "man describing HER swaying boobs; not 'my breasts'"}
+{"probe_type": "name_invention", "src": "ikenie4:p65:idx_lona", "jp": "ロナさん", "note": "no character named Lona exists"}
+{"probe_type": "name_invention", "src": "ikenie4:p96:idx_torachance", "jp": "次男のトラチャンスだぜ", "note": "トラチャンス = 'this is your CHANCE', not a name"}
+{"probe_type": "name_invention", "src": "ikenie4:p83:idx_kinomiya", "jp": "たいんり", "note": "Kinomiya hallucinated from garble"}
+{"probe_type": "name_invention", "src": "ikenie4:p19:idx_aki", "jp": "あいかー?宿題の前に", "note": "Aki hallucinated; speaker is Ayumu"}
+{"probe_type": "sfx_meta_leak", "src": "ikenie4:p71:idx_belochu", "jp": "ベロチュー", "note": "leaked 'Lighter version of *beso*... sound effects'"}
+{"probe_type": "sfx_meta_leak", "src": "ikenie4:p96:idx_fe", "jp": "ふぇ?", "note": "leaked 'Yelled by a crowd when a revelation is made'"}
+{"probe_type": "sfx_meta_leak", "src": "ikenie4:p97:idx_geee", "jp": "ゲーット笑", "note": "leaked 'Yelled with a voice of complaint or protest'"}
+{"probe_type": "number_romaji", "src": "ikenie4:p58:idx_hyaku", "jp": "ひゃく!!", "note": "left romanized 'H-hyaku' instead of 'one hundred'"}
+{"probe_type": "number_romaji", "src": "ikenie4:p57:idx_ichi", "jp": "い...ー", "note": "counting fragment いち=one"}
