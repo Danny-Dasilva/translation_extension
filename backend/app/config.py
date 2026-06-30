@@ -264,6 +264,42 @@ class Settings(BaseSettings):
     # blank continuation bubbles). Pure re-segmentation; validated main-side on
     # GPU. See app.utils.sentence_merge.
     translation_sentence_merge: bool = True
+
+    # COLUMN -> PARENT-BUBBLE GROUPING (pre-translation re-segmentation; P1). A
+    # multi-column vertical speech balloon is detected/OCR'd as ONE box PER
+    # COLUMN, so it arrives downstream as N independent translation units. The
+    # v11 page-context model then either folds the whole sentence onto ONE
+    # fragment and BLANKS the rest (silent omissions) or reconstructs it on EACH
+    # fragment (identical EN duplicated across adjacent bubbles); every fragment
+    # also gets its own render box (clutter). When True, the column-fragments of
+    # ONE balloon are grouped into a SINGLE translation unit BEFORE the marked
+    # translate call (one balloon = one marked JP line + one render box, EN
+    # rendered once). Grouping prefers the CTD parent-bubble membership (the YOLO
+    # bubble detector, present on both pipelines) and falls back to geometric
+    # column adjacency; conservative guards (same parent only, Y-overlap
+    # required, capped X gap + span) keep genuinely-separate balloons apart. Pure
+    # re-segmentation reusing the sentence-merge plan -> NO prompt/template change
+    # -> NO train/serve risk. See app.utils.bubble_grouping.
+    translation_bubble_grouping: bool = False  # DISABLED. Rework #2 (membership column-adjacency+RTL+glyph-width+panel guards) FAILED validation 2026-06-29: Ikenie4 regen corrected-omissions 14(off)->50(on), naive 86->277. Root cause is now DEEPER than membership over-merge: even a CORRECTLY-grouped long multi-column balloon loses text in the merge->translate->resplit roundtrip (the model consolidates the fused JP onto the lead, resplit blanks the continuations without redistributing — e.g. p113 6-column plea truncated). Needs a resplit/redistribution fix or a span cap before re-enable. P2 backfill+dedup stay on.
+
+    # SAFETY NET 1 (P2.1): EMPTY-BUBBLE BACKFILL. After the marked page-context
+    # output is parsed, any KEPT high-OCR-confidence non-empty JP bubble that
+    # ended up with an EMPTY translation (the model folded its sentence onto a
+    # neighbour) is re-translated via the deterministic single-line PLAIN path.
+    # Intentionally-blanked merge continuations are skipped (their EN is on the
+    # lead bubble). Recovers ~45-55 omitted bubbles/chapter. See
+    # app.utils.bubble_grouping.select_backfill_targets.
+    translation_empty_bubble_backfill: bool = True
+
+    # SAFETY NET 2 (P2.2): ADJACENT IDENTICAL-EN DE-DUP. After finalization,
+    # adjacent same-balloon bubbles whose normalized EN is identical / one a
+    # substring of the other (the model independently reconstructed the whole
+    # sentence on each column P1 missed) are collapsed — full EN kept on the lead
+    # bubble, continuation blanked (mirrors the merge contract). Conservative:
+    # only column-adjacent bubbles with >=8-char EN. See
+    # app.utils.bubble_grouping.dedup_adjacent_identical.
+    translation_adjacent_dedup: bool = True
+
     # A/B FLAG (item 4): CAST / ROLE ANCHOR for the v11 page-context prompt.
     # When True, build_v11_context_prompt inserts ONE in-body "Cast: Name (role,
     # pronoun); ..." context line BETWEEN the instruction and the "Page:" block,
