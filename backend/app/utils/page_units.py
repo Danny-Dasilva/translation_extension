@@ -35,6 +35,7 @@ from app.utils.ocr_confidence_gate import (
     is_garbled_low_conf,
     should_erase_dropped,
 )
+from app.utils.bubble_grouping import group_columns_into_bubbles
 from app.utils.sentence_merge import (
     SentenceMergePlan,
     detect_sentence_continuations,
@@ -74,6 +75,11 @@ class PageTranslationUnits:
     target_positions: List[int] = field(default_factory=list)
     erase_only_blocks: List[Dict] = field(default_factory=list)
     kept_indices: List[int] = field(default_factory=list)
+    # Editorial / margin labels (表紙用イラスト, 奥付, ...) the human reference
+    # leaves as ORIGINAL art: never translated, never rendered, never erased.
+    # Surfaced so callers can pass them to ``build_inpaint_mask`` and punch them
+    # OUT of the erase mask now that ALL detected text ink is otherwise erased.
+    leave_intact_blocks: List[Dict] = field(default_factory=list)
     merge_plan: Optional[SentenceMergePlan] = None
 
     def as_tuple(self):
@@ -199,6 +205,7 @@ def build_page_translation_units(
         Callable[[Dict, Optional[Sequence[Dict]], str, Callable[[str], bool]], bool]
     ] = None,
     on_drop: Optional[Callable[[int, str, float, str], None]] = None,
+    bubbles: Optional[Sequence[Dict]] = None,
 ) -> PageTranslationUnits:
     """Shape an OCR'd page into the kept subset + whole-page v11 context.
 
@@ -253,6 +260,7 @@ def build_page_translation_units(
     kept_indices: List[int] = []
     context_indices: List[int] = []
     erase_only_blocks: List[Dict] = []
+    leave_intact_blocks: List[Dict] = []
 
     def _emit(idx: int, text: str, conf: float, reason: str) -> None:
         if on_drop is not None:
@@ -274,6 +282,9 @@ def build_page_translation_units(
         # 2. Leave-intact editorial / margin label (表紙用イラスト, 奥付, ...):
         #    keep as original art — never translate / erase / typeset over.
         if is_leave_intact_fn is not None and is_leave_intact_fn(text):
+            # Kept as original art (not translated / not erased), but surfaced so
+            # the inpaint mask builder can punch this region OUT of the erase mask.
+            leave_intact_blocks.append(block)
             _emit(i, text, conf, "leave_intact_label")
             continue
 
@@ -324,15 +335,39 @@ def build_page_translation_units(
         target_positions=target_positions,
         erase_only_blocks=erase_only_blocks,
         kept_indices=kept_indices,
+        leave_intact_blocks=leave_intact_blocks,
     )
 
-    # Cross-bubble sentence-continuation merge (#2): re-segment dangling
-    # continuations into single translation units. Operates on the page in
-    # reading order; the context blocks are the page-context lines' source
-    # blocks, in the same order as page_context_lines.
-    if getattr(settings, "translation_sentence_merge", False) and len(page_context_lines) > 1:
+    # Pre-translation re-segmentation. Operates on the page in reading order; the
+    # context blocks are the page-context lines' source blocks, in the same order
+    # as page_context_lines.
+    #
+    #   P1 (translation_bubble_grouping): group the column-fragments of ONE
+    #   speech balloon into a single translation unit (root-cause fix for
+    #   over-segmented multi-column bubbles -> omissions / duplicated EN /
+    #   render clutter). Prefers CTD parent-bubble membership (``bubbles``),
+    #   falls back to geometric column adjacency. When sentence-merge is ALSO on,
+    #   a bounded second pass fuses adjacent balloon GROUPS that form one
+    #   cross-bubble sentence (preserving the #2 behaviour).
+    #
+    #   #2 (translation_sentence_merge ONLY, P1 off): the original cross-bubble
+    #   dangling-continuation merge, unchanged.
+    #
+    # Both emit a SentenceMergePlan consumed identically by
+    # build_merged_translation_request / apply_resplit.
+    bubble_group_on = getattr(settings, "translation_bubble_grouping", False)
+    sentence_merge_on = getattr(settings, "translation_sentence_merge", False)
+    if (bubble_group_on or sentence_merge_on) and len(page_context_lines) > 1:
         context_blocks = [blocks[i] for i in context_order]
-        plan = detect_sentence_continuations(page_context_lines, context_blocks)
+        if bubble_group_on:
+            plan = group_columns_into_bubbles(
+                page_context_lines,
+                context_blocks,
+                bubbles=bubbles,
+                fuse_dangling=sentence_merge_on,
+            )
+        else:
+            plan = detect_sentence_continuations(page_context_lines, context_blocks)
         if plan.num_merges > 0:
             units.merge_plan = plan
 

@@ -30,6 +30,11 @@ from app.utils.page_units import (
     build_merged_translation_request,
     build_page_translation_units,
 )
+from app.utils.bubble_grouping import (
+    dedup_adjacent_identical,
+    dedup_by_bubble,
+    select_backfill_targets,
+)
 from app.services.lama_inpaint_service import is_leave_intact_label
 from app.services.translation_postedit import postedit_one
 from app.utils.orphan_lines import (
@@ -547,6 +552,7 @@ async def process_single_image(
                     is_leave_intact_fn=is_leave_intact_label,
                     should_skip_as_english_fn=should_skip_as_english,
                     on_drop=_on_drop_log,
+                    bubbles=bubbles,
                 )
                 erase_only_blocks = list(units.erase_only_blocks)
                 kept_indices = list(units.kept_indices)
@@ -638,6 +644,7 @@ async def process_single_image(
                     is_leave_intact_fn=is_leave_intact_label,
                     should_skip_as_english_fn=should_skip_as_english,
                     on_drop=_on_drop_log_b,
+                    bubbles=bubbles,
                 )
                 erase_only_blocks = list(units.erase_only_blocks)
 
@@ -700,6 +707,32 @@ async def process_single_image(
         )
         translate_time = time.time() - translate_start
         logger.info(f"Image {idx + 1}: Translation completed in {translate_time*1000:.1f}ms ({len(ocr_texts)} texts)")
+
+        # P2.1 EMPTY-BUBBLE BACKFILL: recover KEPT high-conf JP bubbles the marked
+        # page-context call blanked (folded onto a neighbour) via the plain path.
+        if getattr(settings, "translation_empty_bubble_backfill", False) and len(translations) == len(ocr_texts):
+            translations = await _backfill_empty_bubbles(
+                list(translations),
+                ocr_texts,
+                kept_ocr_confs,
+                page_merge_req.bubble_resplit if page_merge_req is not None else None,
+                target_language,
+            )
+
+        # IN-BALLOON DE-DUP ("1 balloon = 1 string"). When a speech-bubble detector
+        # ran, the bubble-keyed dedup (P2.3) collapses all-but-one EN per DETECTED
+        # balloon — independent of adjacency/orientation/length/string-equality —
+        # which SUPERSEDES the narrow adjacent-identical dedup (P2.2) for the
+        # in-balloon case. dedup_adjacent_identical stays the no-bubble-detector
+        # fallback.
+        if (
+            getattr(settings, "translation_bubble_dedup", True)
+            and bubbles
+            and len(translations) == len(blocks)
+        ):
+            translations = dedup_by_bubble(translations, blocks, bubbles)
+        elif getattr(settings, "translation_adjacent_dedup", False) and len(translations) == len(blocks):
+            translations = dedup_adjacent_identical(translations, blocks)
 
         # Await the overlapped inpaint (if still running) after translation.
         if inpaint_task is not None:
@@ -892,6 +925,54 @@ async def _run_translation(
     if settings.translation_use_parallel:
         return await _translate_parallel(texts, target_language)
     return await _translate_sequential(texts, target_language)
+
+
+async def _backfill_empty_bubbles(
+    translations: List[str],
+    kept_texts: List[str],
+    kept_confs: List[Optional[float]],
+    bubble_resplit: Optional[List[tuple]],
+    target_language: str,
+) -> List[str]:
+    """P2.1 safety net: recover KEPT high-conf JP bubbles blanked by the marked
+    page-context call via the deterministic single-line PLAIN translate path.
+
+    Intentionally-blanked merge continuations are skipped (their EN is on the
+    lead bubble). Returns the translations list with recovered slots filled.
+    """
+    targets = select_backfill_targets(
+        kept_texts,
+        translations,
+        kept_confs,
+        bubble_resplit,
+        is_japanese_fn=lambda t: is_japanese_text(
+            t,
+            settings.japanese_filter_min_ratio,
+            settings.japanese_filter_katakana_max_length,
+        ),
+        conf_threshold=getattr(settings, "ocr_confidence_gate_threshold", 0.65),
+        lead_truncation_ratio=getattr(
+            settings, "translation_backfill_lead_truncation_ratio", 0.5
+        ),
+    )
+    if not targets:
+        return translations
+
+    async def _one(i: int) -> Tuple[int, str]:
+        try:
+            return i, await translation_service.translate_single(
+                kept_texts[i], target_language
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning(f"Empty-bubble backfill failed for idx {i}: {exc!r}")
+            return i, ""
+
+    results = await asyncio.gather(*(_one(i) for i in targets))
+    for i, en in results:
+        if en and en.strip():
+            translations[i] = en
+    logger.info(f"Empty-bubble backfill recovered {sum(1 for _i, e in results if e and e.strip())}/{len(targets)} bubble(s)")
+    return translations
 
 
 async def _translate_sequential(texts: List[str], target_language: str) -> List[str]:

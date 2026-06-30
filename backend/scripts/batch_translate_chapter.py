@@ -65,6 +65,10 @@ from app.utils.page_units import (  # noqa: E402
     build_merged_translation_request,
     build_page_translation_units,
 )
+from app.utils.bubble_grouping import (  # noqa: E402
+    dedup_adjacent_identical,
+    select_backfill_targets,
+)
 
 from PIL import ImageDraw, ImageFont  # noqa: E402
 
@@ -537,6 +541,7 @@ class ChapterPipeline:
             is_leave_intact_fn=is_leave_intact_label,
             should_skip_as_english_fn=should_skip_as_english,
             on_drop=_on_drop,
+            bubbles=bubbles,
         )
         kept_blocks = list(units.kept_blocks)
         kept_texts = list(units.kept_texts)
@@ -559,8 +564,25 @@ class ChapterPipeline:
             units.merge_plan.num_merges if units.merge_plan is not None else 0
         )
 
-        # --- inpaint mask from KEPT blocks only ---
-        inpaint_mask = build_inpaint_mask(image_np.shape, kept_blocks, text_lines, mask)
+        # --- inpaint mask ---
+        # BENCHMARK PARITY (2026-06-30): match the production router
+        # (app.routers.translate.process_single_image ~L596-598) which threads
+        # erase_only_blocks + fit_rects (and leave_intact_blocks). Omitting them
+        # made the eval render strictly worse than prod: gate-dropped real-JP SFX
+        # was not erased, kept blocks were not bubble-fit, and editorial labels
+        # were not protected once ALL detected text ink is erased.
+        inpaint_fit_rects = (
+            match_blocks_to_bubbles(kept_blocks, bubbles) if bubbles else None
+        )
+        inpaint_mask = build_inpaint_mask(
+            image_np.shape,
+            kept_blocks,
+            text_lines,
+            mask,
+            erase_blocks=list(units.erase_only_blocks),
+            fit_rects=list(inpaint_fit_rects) if inpaint_fit_rects is not None else None,
+            leave_intact_blocks=list(units.leave_intact_blocks),
+        )
 
         # --- LaMa inpaint ---
         inpainted: Optional[np.ndarray] = None
@@ -667,6 +689,43 @@ class ChapterPipeline:
                         except Exception:
                             tr = ""
                         translations.append(tr)
+            # P2.1 EMPTY-BUBBLE BACKFILL: recover KEPT high-conf JP bubbles the
+            # marked page-context call blanked (folded onto a neighbour) via the
+            # deterministic single-line PLAIN path. Intentionally-blanked merge
+            # continuations are skipped (their EN is on the lead bubble).
+            if (
+                getattr(settings, "translation_empty_bubble_backfill", False)
+                and translations
+                and len(translations) == len(kept_texts)
+            ):
+                backfill_idx = select_backfill_targets(
+                    kept_texts,
+                    translations,
+                    kept_confs,
+                    merge_req.bubble_resplit if merge_req is not None else None,
+                    is_japanese_fn=_is_jp,
+                    conf_threshold=getattr(
+                        settings, "ocr_confidence_gate_threshold", 0.65
+                    ),
+                )
+                n_recovered = 0
+                for bi in backfill_idx:
+                    try:
+                        bf = await self.translator.translate_single(
+                            kept_texts[bi], "English"
+                        )
+                    except Exception:
+                        bf = ""
+                    if bf and bf.strip():
+                        translations[bi] = bf
+                        n_recovered += 1
+                if backfill_idx:
+                    stats["backfilled"] = n_recovered
+                    print(
+                        f"  [{image_path.name}] empty-bubble backfill recovered "
+                        f"{n_recovered}/{len(backfill_idx)} bubble(s)"
+                    )
+
             # Post-translation glossaries (register/names/SFX) — shared with the
             # API router so both paths render identical corrected text.
             if translations:
@@ -679,6 +738,19 @@ class ChapterPipeline:
                 translations = apply_postedit_glossaries(
                     translations, kept_texts, ocr_confs=kept_confs
                 )
+            # P2.2 ADJACENT IDENTICAL-EN DE-DUP: collapse adjacent same-balloon
+            # bubbles that render the SAME English (a duplication P1 missed) —
+            # full EN on the lead bubble, continuation blanked.
+            if (
+                getattr(settings, "translation_adjacent_dedup", False)
+                and translations
+                and len(translations) == len(kept_blocks)
+            ):
+                before = sum(1 for t in translations if t and str(t).strip())
+                translations = dedup_adjacent_identical(translations, kept_blocks)
+                after = sum(1 for t in translations if t and str(t).strip())
+                if before != after:
+                    stats["adjacent_deduped"] = before - after
             stats["translate_ms"] = (time.time() - t0) * 1000
         else:
             stats["translate_ms"] = 0.0

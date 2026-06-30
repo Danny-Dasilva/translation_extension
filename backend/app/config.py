@@ -168,9 +168,11 @@ class Settings(BaseSettings):
     # variable). Set False to A/B against the prior per-bubble-independent fit.
     render_consistent_font: bool = True
     # Percentile (0-100) of per-bubble max-fit sizes used as the shared dialogue
-    # target. A LOW percentile (not the min) keeps most bubbles readable while
-    # ensuring the chosen size fits the majority; the rest overflow/wrap.
-    render_consistent_font_percentile: int = 35
+    # target. A MODERATE percentile (not the min) keeps most bubbles readable and
+    # biases the page LARGER; the existing overflow_frac slack absorbs the few
+    # bubbles that then spill. Was 35 (biased the whole page small); 60 reads
+    # closer to human scanlation sizing.
+    render_consistent_font_percentile: int = 60
     # bubbleRect-gated interior solid-fill inpaint tier (R1 hybrid). When on, the
     # LaMa service fills flat speech-bubble interiors with their robust median
     # background and skips the neural forward for those components. Purely
@@ -299,6 +301,16 @@ class Settings(BaseSettings):
     # only column-adjacent bubbles with >=8-char EN. See
     # app.utils.bubble_grouping.dedup_adjacent_identical.
     translation_adjacent_dedup: bool = True
+
+    # P0 coverage (2026-06-30): bubble-keyed final dedup ("1 balloon = 1 string").
+    # When a detector ran, collapse same-balloon bubbles to ONE EN (winner =
+    # largest-area block) — supersedes the narrow adjacent dedup for the in-balloon
+    # case. See app.utils.bubble_grouping.dedup_by_bubble.
+    translation_bubble_dedup: bool = True
+    # Backfill safeguard: a merge-continuation is recovered standalone when its
+    # lead's EN is shorter than this fraction of the fused-group JP length (i.e.
+    # the lead was truncated and did NOT carry the whole sentence).
+    translation_backfill_lead_truncation_ratio: float = 0.5
 
     # A/B FLAG (item 4): CAST / ROLE ANCHOR for the v11 page-context prompt.
     # When True, build_v11_context_prompt inserts ONE in-body "Cast: Name (role,

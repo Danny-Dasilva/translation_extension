@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import os
 import time
 from typing import List
@@ -20,6 +21,7 @@ import httpx
 
 from app.config import settings
 from app.services.sfx_glossary import sfx_pre_translate
+from app.services.translation_postedit import is_over_expanded
 from app.services.translation_text_utils import (
     LIGHT_SYSTEM_PROMPT,
     clean_translation_output,
@@ -27,6 +29,89 @@ from app.services.translation_text_utils import (
 )
 
 logger = logging.getLogger(__name__)
+
+# --------------------------------------------------------------------------- #
+# Source-length-aware output token cap (anti-hallucination, fix #1)
+# --------------------------------------------------------------------------- #
+# Decoding is already greedy (temperature 0), so the runaway-invention problem on
+# short, context-light bubbles is NOT a sampling artifact — it is the FLAT
+# max_tokens=64 budget. A 4-char Japanese bubble has a 64-token rope to hang
+# itself with and the page-context prompt's "continue the scene" pressure pulls
+# it into ~40 words of plausible-but-wrong dialogue. We instead size max_tokens
+# from the source length: a normal 2-3x JP->EN expansion still fits, but a 4-char
+# source structurally CANNOT reach 64 tokens.
+#
+# Budget = clamp(ceil(jp_chars * K) + C, FLOOR, ceiling), ceiling = the existing
+# flat settings.translate_max_tokens (kept as the hard cap, never exceeded).
+#   * MAX_TOKENS_PER_JP_CHAR (K): ~4 EN tokens of headroom per JP source char.
+#     Generous (real dialogue averages well under this) so legit lines never
+#     truncate; the slope only bites tiny sources.
+#   * MAX_TOKENS_CONST (C): a flat +4 so a 1-2 char bubble still gets a usable
+#     handful of tokens.
+#   * MAX_TOKENS_FLOOR: never below 8 tokens (a short interjection still needs a
+#     few tokens to render).
+# Worked: 4 chars -> ceil(16)+4 = 20 (cannot reach 64); ~15+ chars -> clamps to
+# the 64 ceiling; empty/1-char -> the 8-token floor.
+MAX_TOKENS_PER_JP_CHAR = 4.0
+MAX_TOKENS_CONST = 4
+MAX_TOKENS_FLOOR = 8
+
+
+def source_aware_max_tokens(jp: str, ceiling: int) -> int:
+    """Per-call output token budget scaled to the Japanese source length.
+
+    ``ceiling`` is the existing flat cap (settings.translate_max_tokens), kept as
+    the hard upper bound. Returns a value in [MAX_TOKENS_FLOOR, ceiling].
+    """
+    jp_len = len((jp or "").strip())
+    budget = math.ceil(jp_len * MAX_TOKENS_PER_JP_CHAR) + MAX_TOKENS_CONST
+    return max(MAX_TOKENS_FLOOR, min(budget, ceiling))
+
+
+# --------------------------------------------------------------------------- #
+# Non-lexical stuttered-katakana grunt bypass (fix #3, NARROW + low-risk)
+# --------------------------------------------------------------------------- #
+# A stuttered single katakana glyph (ヴヴ, ヴヴヴ, ググ) is never a lexical word —
+# it is pure onomatopoeia. The small model "answers" it by inventing dialogue
+# (and even the source-length token cap leaves room for a few invented words on a
+# 2-char source), so we short-circuit it to "..." with NO model call.
+#
+# DELIBERATELY NARROW: this corpus is adult manga where single moans/gasps
+# (あっ, んっ, うっ) and vowel/ン stutters (ンン, アア) ARE meaningful, so we touch
+# ONLY repeated NON-vowel, non-ン katakana. Ambiguous hiragana grunts (うくっ) and
+# moans are left to the over-expansion gate (fix #2) and, ultimately, to a
+# curated entry in app/services/sfx_glossary.py (SFX_MAP) — that glossary, NOT
+# this serve-time heuristic, is the correct home for the broader grunt bypass.
+GRUNT_ELLIPSIS = "..."
+# Sokuon / chōonpu / combining marks that merely decorate a stutter.
+_GRUNT_DECORATION = set("っッゃゅょャュョーｰ゛゜・゙゚")
+# Katakana vowels + ン: moan-shaped, explicitly NOT treated as non-lexical grunts.
+_KATAKANA_VOWEL_OR_N = set("アイウエオン")
+
+
+def looks_like_nonlexical_grunt(jp: str | None) -> bool:
+    """True for a stuttered single non-vowel katakana grunt (ヴヴ, ググ).
+
+    Pure kana only (anything with kanji/latin/digits is real text); after
+    stripping sokuon/chōonpu decoration the residue must be ONE distinct
+    katakana glyph repeated >=2 times, and that glyph must not be a vowel/ン
+    (those are moan-shaped and kept for the model). Everything else -> False.
+    """
+    s = (jp or "").strip()
+    if not s:
+        return False
+    if _re.search(r"[一-鿿A-Za-z0-9]", s):
+        return False
+    core = "".join(ch for ch in s if ch not in _GRUNT_DECORATION and not ch.isspace())
+    if len(core) < 2:
+        return False
+    base = set(core)
+    if len(base) != 1:
+        return False
+    ch = next(iter(base))
+    if not ("゠" <= ch <= "ヿ"):  # katakana block only
+        return False
+    return ch not in _KATAKANA_VOWEL_OR_N
 
 # --------------------------------------------------------------------------- #
 # v11 page-context prompt format
@@ -347,6 +432,36 @@ class VLLMOpenAITranslationService:
         data = r.json()
         return data["choices"][0]["message"]["content"] or ""
 
+    async def _faithfulness_floor(
+        self, cleaned: str, src: str, retry_prompt: str
+    ) -> str:
+        """Guard against a confidently over-expanded hallucination (fix #2).
+
+        If ``cleaned`` is over-expanded relative to ``src`` (:func:`is_over_expanded`),
+        retry ONCE with ``retry_prompt`` (the PLAIN, no-scene-pressure template)
+        under a source-aware token cap. Accept the retry only if it is itself not
+        over-expanded; otherwise fall back to an ellipsis rather than render an
+        invented sentence. A non-over-expanded input is returned unchanged.
+        """
+        if not is_over_expanded(cleaned, src):
+            return cleaned
+        max_tokens = source_aware_max_tokens(src, settings.translate_max_tokens)
+        try:
+            raw = await self._chat(
+                [{"role": "user", "content": retry_prompt}],
+                max_tokens=max_tokens,
+                temperature=0.0,
+            )
+            retried = clean_translation_output(raw)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"vLLM faithfulness retry failed: {e!r}")
+            retried = ""
+        if retried.strip() and not is_over_expanded(retried, src):
+            logger.info("Faithfulness retry replaced an over-expanded output")
+            return retried
+        logger.info("Faithfulness floor blanked an over-expanded output to '...'")
+        return "..."
+
     async def translate_single(
         self, text: str, target_language: str = "English"
     ) -> str:
@@ -357,6 +472,10 @@ class VLLMOpenAITranslationService:
         sfx = sfx_pre_translate(text)
         if sfx is not None:
             return sfx
+        # PRE-LLM GATE 1b (fix #3): stuttered non-lexical katakana grunt (ヴヴ)
+        # -> "..." with no model call (the small model would invent dialogue).
+        if looks_like_nonlexical_grunt(text):
+            return GRUNT_ELLIPSIS
         # PRE-LLM GATE 2: net-slang 笑 marker. Strip a trailing standalone 笑,
         # translate the remainder with a BYTE-IDENTICAL prompt, append ", haha".
         body, had_warai = strip_warai_marker(text)
@@ -376,14 +495,17 @@ class VLLMOpenAITranslationService:
                 f"without additional explanation.\n\n{text}"
             )
         msg = [{"role": "user", "content": content}]
+        # FIX #1: source-length-aware cap (flat translate_max_tokens is the ceiling).
+        max_tokens = source_aware_max_tokens(text, settings.translate_max_tokens)
         try:
-            raw = await self._chat(
-                msg, max_tokens=settings.translate_max_tokens, temperature=0.0
-            )
+            raw = await self._chat(msg, max_tokens=max_tokens, temperature=0.0)
         except Exception as e:
             logger.warning(f"vLLM translate_single failed: {e!r}")
             return ""
-        return clean_translation_output(raw)
+        cleaned = clean_translation_output(raw)
+        # FIX #2: over-expansion floor — retry once via the PLAIN prompt (no
+        # scene-continuation pressure), else fall back to an ellipsis.
+        return await self._faithfulness_floor(cleaned, text, build_v11_plain_prompt(text))
 
     async def translate_batched(
         self, texts: List[str], target_language: str = "English"
@@ -464,6 +586,10 @@ class VLLMOpenAITranslationService:
         sfx = sfx_pre_translate(src)
         if sfx is not None:
             return sfx
+        # PRE-LLM GATE 1b (fix #3): stuttered non-lexical katakana grunt (ヴヴ)
+        # -> "..." with no model call.
+        if looks_like_nonlexical_grunt(src):
+            return GRUNT_ELLIPSIS
         # PRE-LLM GATE 2: net-slang 笑 marker on the MARKED line. Strip the
         # trailing 笑 from the target only (context lines stay verbatim), so the
         # v11 template/context is byte-identical for non-笑 targets.
@@ -478,12 +604,17 @@ class VLLMOpenAITranslationService:
             lines_for_prompt[k_idx] = body
         else:
             lines_for_prompt = page_lines
+        # The effective JP for the marked line (笑-stripped body when applicable);
+        # used for both the source-aware cap and the over-expansion check.
+        call_src = body if had_warai else src
         prompt = build_v11_context_prompt(lines_for_prompt, k_idx)
         msg = [{"role": "user", "content": prompt}]
+        # FIX #1: source-length-aware cap (flat translate_max_tokens is the ceiling).
+        max_tokens = source_aware_max_tokens(call_src, settings.translate_max_tokens)
         try:
             raw = await self._chat(
                 msg,
-                max_tokens=settings.translate_max_tokens,
+                max_tokens=max_tokens,
                 temperature=0.0,
             )
         except Exception as e:  # noqa: BLE001
@@ -491,6 +622,12 @@ class VLLMOpenAITranslationService:
             return ""
         # One line out; clean exactly as the single-line path does.
         cleaned = clean_translation_output(raw)
+        # FIX #2: over-expansion floor. The page-context prompt carries the
+        # "continue the scene" pressure, so the retry drops to the PLAIN prompt
+        # (no page context) before falling back to an ellipsis.
+        cleaned = await self._faithfulness_floor(
+            cleaned, call_src, build_v11_plain_prompt(call_src)
+        )
         return append_haha(cleaned) if append_warai else cleaned
 
     async def translate_page_context_marked(

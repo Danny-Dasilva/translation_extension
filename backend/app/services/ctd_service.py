@@ -12,6 +12,7 @@ import numpy as np
 import onnxruntime as ort
 
 from app.config import settings
+from app.utils.ctd_utils import ERASE_SEG_THRESHOLD
 
 logger = logging.getLogger(__name__)
 
@@ -160,7 +161,18 @@ class ComicTextDetectorService:
         # Expand line bboxes using koharu's font-aware padding (item #6)
         text_lines = self._expand_text_lines(text_lines, (w, h))
 
-        text_mask = self._process_mask(mask, padded_size, (w, h), blocks) if mask is not None else None
+        # Erase mask uses a LOWER seg threshold than detection (ERASE_SEG_THRESHOLD
+        # ~0.45 vs ctd_text_threshold ~0.8) so faint glyph tails are erased too,
+        # otherwise LaMa reseeds text-shaped ghosts. Detection geometry is
+        # unaffected (blocks/lines were parsed at the detection threshold above).
+        text_mask = (
+            self._process_mask(
+                mask, padded_size, (w, h), blocks,
+                erase_threshold=ERASE_SEG_THRESHOLD,
+            )
+            if mask is not None
+            else None
+        )
 
         logger.debug(f"CTD detected {len(blocks)} blocks, {len(text_lines)} text lines")
 
@@ -472,6 +484,7 @@ class ComicTextDetectorService:
         orig_size: Tuple[int, int],
         blocks: List[Dict] | None = None,
         legacy: bool = False,
+        erase_threshold: float | None = None,
     ) -> np.ndarray:
         """Process segmentation mask to original image size.
 
@@ -502,7 +515,15 @@ class ComicTextDetectorService:
         w, h = orig_size
         mask = cv2.resize(mask, (w, h), interpolation=cv2.INTER_LINEAR)
 
-        binary = (mask > self.text_threshold).astype(np.uint8) * 255
+        # ERASE mask threshold is decoupled from (and never higher than) the
+        # detection threshold, so faint stroke tails are captured for inpainting
+        # while detection stays at ``self.text_threshold``.
+        seg_thr = (
+            self.text_threshold
+            if erase_threshold is None
+            else min(erase_threshold, self.text_threshold)
+        )
+        binary = (mask > seg_thr).astype(np.uint8) * 255
 
         if legacy or not blocks:
             # Legacy path (or no blocks available to constrain): plain threshold.

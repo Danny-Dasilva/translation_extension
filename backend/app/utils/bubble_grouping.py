@@ -405,22 +405,35 @@ def select_backfill_targets(
     *,
     is_japanese_fn: Callable[[str], bool],
     conf_threshold: float = 0.65,
+    lead_truncation_ratio: float = 0.5,
 ) -> List[int]:
     """Indices into the kept list that should be re-translated via the plain path.
 
-    SAFETY NET for the consolidation-omission symptom: the marked page-context
-    call sometimes blanks a KEPT high-confidence dialogue bubble (it folded the
-    sentence onto a neighbour). Such a bubble is recovered with a deterministic
-    single-line plain translate. A kept bubble qualifies when ALL hold:
+    UNCONDITIONAL BACKFILL FLOOR for the consolidation-omission symptom: the
+    marked page-context call sometimes blanks a KEPT high-confidence dialogue
+    bubble (it folded the sentence onto a neighbour). Such a bubble is recovered
+    with a deterministic single-line plain translate. A kept bubble qualifies
+    when ALL hold:
 
       * its current translation is empty / whitespace,
       * its JP source is non-empty and passes the Japanese filter,
       * its OCR confidence is >= ``conf_threshold`` (``None`` treated as high —
         no confidence info means we do not suppress), and
-      * it is NOT an INTENTIONALLY-blanked merge continuation. ``bubble_resplit``
-        (from :func:`build_merged_translation_request`) marks each kept bubble
-        ``(req_idx, is_lead)``; a continuation (``is_lead`` False) is supposed to
-        be blank (its EN is on the lead bubble), so it is never backfilled.
+      * it is NOT a legitimate merge continuation WHOSE LEAD CARRIES THE FULL
+        SENTENCE. ``bubble_resplit`` (from
+        :func:`build_merged_translation_request`) marks each kept bubble
+        ``(req_idx, is_lead)``; a continuation (``is_lead`` False) is normally
+        blank (its EN is on the lead bubble), so it is left alone.
+
+    THE FLOOR. In production EVERY blanked dialogue line is marked an (is_lead
+    False) continuation, so a blanket continuation-skip suppresses the safety net
+    entirely (it fired zero times). So the skip is qualified: a continuation is
+    only left blank when its lead actually carries the sentence. When the lead EN
+    is suspiciously SHORT relative to the fused JP (see
+    :func:`_lead_appears_truncated`) the lead was truncated and dropped this tail,
+    so the continuation is recovered with a standalone translate instead of being
+    silently omitted. A bare (<2-char) sentence-final particle continuation is
+    never revived (too trivial to translate out of context).
 
     Pure: returns indices; the caller issues the (async) plain translate so this
     stays model-free and unit-testable.
@@ -434,14 +447,59 @@ def select_backfill_targets(
         jp = kept_texts[i] if i < len(kept_texts) else ""
         if not _norm(jp) or not is_japanese_fn(jp):
             continue
-        # Intentionally-blank merge continuation -> leave blank.
+        # Merge continuation: normally blank (its EN is on the lead bubble). Only
+        # recover it when the lead was TRUNCATED (lead EN too short vs fused JP)
+        # AND this continuation carries >=2 JP chars worth recovering standalone.
         if bubble_resplit is not None and i < nrs and not bubble_resplit[i][1]:
-            continue
+            if not (
+                len(_norm(jp)) >= 2
+                and _lead_appears_truncated(
+                    i, translations, kept_texts, bubble_resplit,
+                    ratio=lead_truncation_ratio,
+                )
+            ):
+                continue
         conf = kept_confs[i] if (kept_confs is not None and i < nconf) else None
         if conf is not None and conf < conf_threshold:
             continue
         targets.append(i)
     return targets
+
+
+def _lead_appears_truncated(
+    i: int,
+    translations: Sequence[Optional[str]],
+    kept_texts: Sequence[str],
+    bubble_resplit: Sequence[tuple],
+    *,
+    ratio: float,
+) -> bool:
+    """True when the lead of ``i``'s merge group carries far less EN than its
+    fused JP implies — a TRUNCATION signal (the tail, this continuation, was
+    dropped rather than legitimately folded into the lead).
+
+    Compares the lead bubble's EN char count to the GROUP's total JP char count.
+    English of a Japanese sentence is normally AT LEAST the JP char count (kanji
+    pack dense content), so a lead under ``ratio`` x the fused-JP length has
+    almost certainly lost content. A blank lead (whole group dropped) counts as
+    truncated. Conservative on purpose: ``ratio`` defaults low (0.5) so a terse
+    but COMPLETE lead is not mistaken for a truncated one (which would create a
+    duplicate render across a cross-bubble merge).
+    """
+    req_idx = bubble_resplit[i][0]
+    fused_jp_len = 0
+    lead_en: Optional[str] = None
+    for k, rs in enumerate(bubble_resplit):
+        if rs[0] != req_idx:
+            continue
+        if k < len(kept_texts):
+            fused_jp_len += len(_norm(kept_texts[k]))
+        if rs[1]:  # lead member of this group
+            lead_en = translations[k] if k < len(translations) else None
+    if fused_jp_len <= 0:
+        return False
+    lead_len = len(_norm_en(lead_en)) if lead_en else 0
+    return lead_len < ratio * fused_jp_len
 
 
 # --- P2.2: adjacent identical-EN de-dup --------------------------------------
@@ -498,4 +556,69 @@ def dedup_adjacent_identical(
         full = a_en if len(na) >= len(nb) else b_en
         out[i] = full
         out[i + 1] = ""
+    return out
+
+
+# --- P2.3: bubble-keyed final dedup ("1 balloon = 1 string") ------------------
+
+def _block_area(block: Dict) -> float:
+    w = max(0.0, float(block["maxX"]) - float(block["minX"]))
+    h = max(0.0, float(block["maxY"]) - float(block["minY"]))
+    return w * h
+
+
+def dedup_by_bubble(
+    translations: Sequence[Optional[str]],
+    blocks: Sequence[Dict],
+    bubbles: Optional[Sequence[Dict]],
+) -> List[Optional[str]]:
+    """Final "1 balloon = 1 string" dedup keyed on CTD speech-bubble membership.
+
+    Buckets every kept block by the speech balloon it sits in (:func:`bubble_id_of`
+    — the smallest enclosing detected bubble). Within each balloon keep exactly
+    ONE non-empty EN — the bubble-matched / longest winner (largest-area block,
+    then longest EN, then earliest reading order) — and blank the rest. The
+    largest-area tie-break MIRRORS :func:`match_blocks_to_bubbles`, which typesets
+    the bubble interior to the largest block, so the surviving EN lands on the box
+    that actually renders the balloon.
+
+    Unlike :func:`dedup_adjacent_identical` this is INDEPENDENT of adjacency,
+    orientation, length and string equality: a speech balloon holds exactly one
+    utterance, so any extra EN the v11 model reconstructed on a sibling
+    column-fragment is a duplication and is removed even when the surface strings
+    DIVERGE (the "ghosted"/duplicated-EN symptom the narrow adjacency dedup
+    misses). It therefore SUPERSEDES the adjacency dedup for the in-balloon case;
+    :func:`dedup_adjacent_identical` remains the fallback when no bubble detector
+    ran.
+
+    Blocks whose center falls in NO detected bubble (SFX over art) keep
+    ``bubble_id`` ``None`` and are left untouched. Returns a NEW list 1:1 with
+    ``translations``; a no-op copy when no bubbles were detected.
+    """
+    out: List[Optional[str]] = list(translations)
+    if not bubbles:
+        return out
+    n = min(len(out), len(blocks))
+    buckets: Dict[int, List[int]] = {}
+    for i in range(n):
+        bid = bubble_id_of(blocks[i], bubbles)
+        if bid is None:
+            continue
+        buckets.setdefault(bid, []).append(i)
+    for positions in buckets.values():
+        nonempty = [
+            p for p in positions if out[p] is not None and str(out[p]).strip()
+        ]
+        if len(nonempty) <= 1:
+            continue
+        # Winner: largest-area block (the bubble renderer), then longest EN, then
+        # earliest reading-order position. ``-p`` makes ``max`` prefer the
+        # smaller index on a full tie.
+        winner = max(
+            nonempty,
+            key=lambda p: (_block_area(blocks[p]), len(_norm_en(out[p])), -p),
+        )
+        for p in nonempty:
+            if p != winner:
+                out[p] = ""
     return out

@@ -29,6 +29,7 @@ from types import SimpleNamespace
 from app.utils.bubble_grouping import (
     bubble_id_of,
     dedup_adjacent_identical,
+    dedup_by_bubble,
     group_columns_into_bubbles,
     select_backfill_targets,
 )
@@ -323,6 +324,72 @@ def test_backfill_skips_low_confidence():
     assert targets == []
 
 
+# --- P2.1 (FIX 1): unconditional backfill floor --------------------------------
+#
+# The marked page-context translate folds a sentence onto a neighbour and BLANKS
+# this line. Every such blank is marked an (is_lead False) merge continuation, so
+# the old continuation-skip suppressed ALL of them — the safety net fired zero
+# times in practice. The floor below recovers the residual omissions:
+#   * a blanked LEAD (whole group dropped) is recovered,
+#   * a continuation whose lead EN is suspiciously short vs the fused JP (the lead
+#     was truncated and dropped this tail) is recovered standalone,
+#   * a continuation whose lead carries the full sentence is still left blank.
+
+def test_backfill_recovers_blanked_lead_bubble():
+    # The group's LEAD bubble (is_lead True) came back blank — the model dropped
+    # the whole utterance. A blanked lead is not a continuation, so it must be
+    # recovered (clean high-conf JP).
+    targets = select_backfill_targets(
+        ["これは大事な話だ"],
+        [""],
+        [0.9],
+        [(0, True)],
+        is_japanese_fn=_is_jp,
+    )
+    assert targets == [0]
+
+
+def test_backfill_recovers_continuation_when_lead_truncated():
+    # Two-bubble merge group: the lead got only "Um" while the fused JP is a long
+    # sentence — the tail (this continuation) was dropped, not folded in. The
+    # safeguard recovers the continuation standalone instead of leaving it blank.
+    targets = select_backfill_targets(
+        ["あのねずっと前から", "君のことが好きだった"],  # fused JP ~19 chars
+        ["Um", ""],                                       # lead EN truncated
+        [0.9, 0.9],
+        [(0, True), (0, False)],
+        is_japanese_fn=_is_jp,
+    )
+    assert targets == [1]
+
+
+def test_backfill_keeps_continuation_blank_when_lead_complete():
+    # The lead EN (33 chars) comfortably covers the fused JP (7 chars) — a genuine
+    # merge continuation whose lead carries the full sentence. Must stay blank
+    # (no spurious backfill -> no duplicate render).
+    targets = select_backfill_targets(
+        ["親の顔が", "見たい"],
+        ["I want to see your parents' faces", ""],
+        [0.9, 0.9],
+        [(0, True), (0, False)],
+        is_japanese_fn=_is_jp,
+    )
+    assert targets == []
+
+
+def test_backfill_does_not_revive_bare_particle_continuation():
+    # Even with a truncated lead, a 1-char sentence-final particle continuation is
+    # too trivial to translate standalone -> left blank (conservative guard).
+    targets = select_backfill_targets(
+        ["ずっと前からあなたのことが", "ね"],
+        ["Um", ""],
+        [0.9, 0.9],
+        [(0, True), (0, False)],
+        is_japanese_fn=_is_jp,
+    )
+    assert targets == []
+
+
 # --- P2.2 adjacent identical-EN de-dup -----------------------------------------
 
 def test_dedup_collapses_adjacent_identical_en():
@@ -357,6 +424,76 @@ def test_dedup_leaves_short_identical_interjections():
     b = _b(989, 650, 1024, 794)
     out = dedup_adjacent_identical(["Huh?", "Huh?"], [a, b])
     assert out == ["Huh?", "Huh?"]  # below min_chars -> not collapsed
+
+
+# --- P2.3 (FIX 2): bubble-keyed final dedup ("1 balloon = 1 string") -----------
+#
+# A speech balloon holds exactly one utterance. When P1 missed grouping the
+# column-fragments of one balloon, the model reconstructs DIVERGENT strings on the
+# siblings ("ghosted"/duplicated EN). dedup_adjacent_identical misses these (needs
+# exact/substring + adjacency + >=8 chars + vertical geometry). The bubble-keyed
+# dedup collapses by SHARED detected bubble id alone — independent of adjacency,
+# orientation, length and string equality — keeping one winner per balloon.
+
+# Two distinct detected bubbles (different bubble_id).
+BUB_A = {"minX": 980, "minY": 560, "maxX": 1110, "maxY": 800}   # holds COL2/COL3
+BUB_B = {"minX": 940, "minY": 640, "maxX": 1000, "maxY": 835}   # holds COL7
+
+
+def test_dedup_by_bubble_collapses_divergent_duplicates_in_one_balloon():
+    # COL2 (area 30*134=4020) and COL3 (area 34*216=7344) both sit inside BUB_A.
+    # Their EN diverges (NOT equal / substring) so dedup_adjacent_identical would
+    # leave both — but one balloon = one string, so all-but-the-winner is blanked.
+    # Winner = largest-area block (COL3) -> its EN survives.
+    out = dedup_by_bubble(
+        ["buy more", "I just ran out, I'll buy more tomorrow"],
+        [COL2, COL3],
+        [BUB_A, BUB_B],
+    )
+    assert out == ["", "I just ran out, I'll buy more tomorrow"]
+
+
+def test_dedup_by_bubble_keeps_distinct_balloons():
+    # COL2 -> BUB_A, COL7 -> BUB_B (different bubble_id). Genuinely distinct
+    # balloons are NEVER collapsed, even though they are adjacent on the page.
+    out = dedup_by_bubble(
+        ["First balloon line here", "Second balloon line here"],
+        [COL2, COL7],
+        [BUB_A, BUB_B],
+    )
+    assert out == ["First balloon line here", "Second balloon line here"]
+
+
+def test_dedup_by_bubble_collapses_even_identical_across_three_fragments():
+    # Three column-fragments of ONE balloon, the model put the SAME full EN on all
+    # three. Only the winner survives; the other two are blanked.
+    c0 = _b(1068, 573, 1098, 707)   # area 30*134 = 4020
+    c1 = _b(1032, 578, 1066, 794)   # area 34*216 = 7344 (largest -> winner)
+    c2 = _b(989, 650, 1024, 794)    # area 35*144 = 5040
+    full = "I just ran out, I'll buy more tomorrow"
+    out = dedup_by_bubble([full, full, full], [c0, c1, c2], [BUB_A])
+    assert out == ["", full, ""]
+
+
+def test_dedup_by_bubble_noop_without_bubbles():
+    # No bubble detector ran -> bubble-keyed dedup is a no-op (the adjacency dedup
+    # remains the fallback). Returns an unchanged copy.
+    en = ["alpha text one", "beta text two"]
+    out = dedup_by_bubble(en, [COL2, COL3], None)
+    assert out == en
+    assert out is not en  # new list
+
+
+def test_dedup_by_bubble_ignores_blocks_outside_any_bubble():
+    # A block whose center is in no detected bubble (SFX over art) keeps its EN —
+    # only in-balloon duplicates are touched.
+    sfx = _b(5, 5, 40, 200)   # center (22, 102) -> inside no bubble
+    out = dedup_by_bubble(
+        ["dialogue line here", "dramatic sfx boom"],
+        [COL2, sfx],
+        [BUB_A, BUB_B],
+    )
+    assert out == ["dialogue line here", "dramatic sfx boom"]
 
 
 # --- membership helper ---------------------------------------------------------
