@@ -157,6 +157,84 @@ _MASK_BOX_PAGE_FRACTION_CAP = 0.18
 _MASK_BOX_INK_RATIO_CAP = 0.04
 
 
+# ---------------------------------------------------------------------------
+# Contrast/ink mask refinement (precision fix for the Phase-0 over-erase).
+#
+# The Phase-0 recall change (ctd_utils.build_inpaint_mask + ERASE_SEG_THRESHOLD
+# = 0.45) builds the erase mask from ALL detected text ink — every detected line
+# bbox (padded + glyph-proportional dilation) plus the low-threshold seg — and
+# decouples it from the keep/translate decision. On DARK / TEXTURED pages the
+# detector + low seg fire on false-positive "text" in screentone, sweat-lines,
+# panel gutters and shadows, and the padded/dilated boxes sweep in the dark
+# ARTWORK around (and between) the strokes. The AREA-only _mask_box_too_broad
+# clamp cannot catch this: the bad pixels live INSIDE otherwise-plausible boxes,
+# and the mask components are large merged blobs whose bbox also covers genuine
+# bright text, so a per-component test passes the whole blob. The result is LaMa
+# smearing artwork (Furube p020 dark screentone panel, p035 torso/hair/gutters).
+#
+# The fix is a LOCAL (per-pixel) refinement of the erase mask against the image:
+# keep a masked pixel only where its small neighbourhood actually looks like
+# text ink — a BRIGHT background or glyph fill is present locally AND there is
+# enough local dynamic range (ink strokes vs background). Real manga glyphs —
+# black-on-white dialogue, white-on-dark SFX/laughter, white-haloed text over
+# art — all satisfy both near every stroke, so the genuinely-dropped JP the
+# recall fix targets (laughter, narration columns, 強く思った) stays fully
+# erased. The over-erase pixels — flat/dark screentone, gutters, shadows with no
+# local bright reference — are dropped from the mask and PRESERVED as art.
+#
+# Implementation: a single morphological dilate (= windowed local max ≈ bright
+# reference) + erode (= windowed local min) over the grayscale page; a pixel is
+# "text-like" iff local_max ≥ bright-min AND local_max − local_min ≥ contrast.
+# Cheap (two separable morphology passes), and naturally fine-grained so it
+# trims the dark portion of a blob while keeping the bright-text portion.
+#
+# Window must span the thickest real strokes so their CENTRES still see a bright
+# neighbour (else a thick stroke is hollowed and JP ink survives); 21 px covers
+# bold manga lettering (measured ≤ ~20 px) while keeping the kept rim around
+# isolated dark art tight enough that deep shadows/gutters (≫ 21 px) are dropped.
+_INK_REFINE_WIN = 21
+# Local bright reference (windowed max) a kept text pixel must have. Above the
+# dark screentone / shadow ceiling (~100) and below grey dialogue backgrounds
+# (~130) so black-on-grey text is kept while deep-dark art is dropped.
+_INK_BRIGHT_MIN = 115
+# Local dynamic range (windowed max − min) a kept text pixel must have. Strokes
+# vs their background clear it; a flat region (uniform dark OR uniform bright,
+# e.g. a smooth shadow or a blank bubble interior) falls below and is dropped.
+_INK_CONTRAST_MIN = 70
+
+
+def _refine_mask_to_text_ink(image_rgb: np.ndarray, mask: np.ndarray) -> np.ndarray:
+    """Drop erase-mask pixels whose LOCAL image neighbourhood does not look like
+    text ink, returning the refined 0/255 mask.
+
+    A pixel is kept iff, within a ``_INK_REFINE_WIN`` window, the image has a
+    bright reference (local max ≥ ``_INK_BRIGHT_MIN``) AND enough dynamic range
+    (local max − local min ≥ ``_INK_CONTRAST_MIN``). This keeps every glyph
+    stroke (which always sits next to a bright background or bright halo/fill)
+    while dropping the flat/dark screentone, gutter and shadow pixels that the
+    broad Phase-0 mask sweeps in — the source of the LaMa art smears.
+
+    A no-op when ``mask`` is empty.
+    """
+    if mask is None or not mask.any():
+        return mask
+    gray = (
+        cv2.cvtColor(image_rgb, cv2.COLOR_RGB2GRAY)
+        if image_rgb.ndim == 3 else image_rgb
+    )
+    k = cv2.getStructuringElement(
+        cv2.MORPH_ELLIPSE, (_INK_REFINE_WIN, _INK_REFINE_WIN)
+    )
+    local_max = cv2.dilate(gray, k)
+    local_min = cv2.erode(gray, k)
+    text_like = (local_max >= _INK_BRIGHT_MIN) & (
+        (local_max.astype(np.int16) - local_min.astype(np.int16)) >= _INK_CONTRAST_MIN
+    )
+    refined = mask.copy()
+    refined[~text_like] = 0
+    return refined
+
+
 def is_leave_intact_label(jp: str | None) -> bool:
     """True if `jp` is an editorial / production margin label to keep intact.
 
@@ -468,6 +546,16 @@ class LamaInpaintService:
 
         # Binarise the mask once (koharu: `binarize_mask`).
         binary_mask = (mask_gray > 127).astype(np.uint8) * 255
+
+        # Contrast/ink refinement (precision fix — Phase-0 over-erase). The broad
+        # Phase-0 mask sweeps in dark ARTWORK around/between strokes on dark /
+        # textured pages; drop any masked pixel whose local neighbourhood lacks
+        # text-ink structure (no bright reference + low contrast) so LaMa never
+        # smears it. Genuine glyphs sit next to a bright bg/halo and are kept, so
+        # the dropped-JP recall is retained. (Done before findContours so the
+        # over-broad clamp + all fill tiers see only the cleaned mask.)
+        binary_mask = _refine_mask_to_text_ink(image_rgb, binary_mask)
+
         if not binary_mask.any():
             # Nothing masked — return a copy so callers can freely mutate.
             self.last_stats = {
