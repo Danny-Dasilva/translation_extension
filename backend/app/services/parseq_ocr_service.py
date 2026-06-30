@@ -476,9 +476,15 @@ class ParseqOCRService:
                     continue
                 logger.warning(
                     "VERTICAL-AR OCR: AR decode failed for %d crop(s) (%s); "
-                    "keeping NAR",
+                    "falling back to NAR",
                     len(sub), e,
                 )
+                # Vertical crops are AR-ONLY (pre-initialised to ("", 0.0) by the
+                # caller); without this NAR fallback a raised AR inference call
+                # (e.g. VRAM-contention OOM at bs==1) would leave every vertical
+                # crop permanently empty (text="" conf=0.0). Decode them with the
+                # working NAR session instead.
+                await self._nar_decode_indices(crops, sub, results, len(sub))
                 j += len(sub)
                 continue
             ar_tc = self._decode_with_conf(ar_logits)
