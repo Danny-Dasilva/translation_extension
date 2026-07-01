@@ -1,0 +1,104 @@
+{
+  "total_rows": 196,
+  "rows_per_source_final": {
+    "v11_backbone": 167,
+    "ikenie_gold": 24,
+    "nsfw_corpus": 5
+  },
+  "rows_per_source_before_filters": {
+    "v11_backbone": 240,
+    "ikenie_gold": 312,
+    "nsfw_corpus": 60,
+    "nsfw_corpus_info": {
+      "source": "/home/danny/Documents/personal/extension/backend/scripts/data/corpus_bitext/validation_out/sample_ikenie_bitext.parquet",
+      "placeholder": true,
+      "rows": 60,
+      "note": "ikenie-derived validation sample; NOT independent mined data"
+    }
+  },
+  "register_distribution_final": {
+    "manga_dialog": 89,
+    "manga_nsfw": 30,
+    "novel": 22,
+    "sfx": 17,
+    "vn": 14,
+    "manga": 9,
+    "synthetic": 7,
+    "vn_eroge": 5,
+    "garbage": 3
+  },
+  "nsfw_rows_final": 35,
+  "nsfw_frac_final": 0.1786,
+  "nsfw_cap": 0.18,
+  "nsfw_cap_info": {
+    "nsfw_before": 420,
+    "nsfw_after": 42,
+    "max_nsfw": 42,
+    "cap": 0.18,
+    "dropped": 378
+  },
+  "refusal_dropped_count": 0,
+  "refusal_dropped_examples": [],
+  "refusal_classifier_selftest": {
+    "refusals_correctly_dropped": [
+      "I'm sorry, but I can't assist with that request.",
+      "I cannot translate this content.",
+      "As an AI language model, I won't help with that.",
+      "I'm unable to provide a translation of this material.",
+      "I apologize, but I can't continue with this request."
+    ],
+    "refusals_missed": [],
+    "benign_false_positives": [],
+    "passes": true
+  },
+  "length_distribution": {
+    "en_chars": {
+      "p50": 29,
+      "p90": 129,
+      "p99": 361,
+      "max": 842,
+      "mean": 54.3
+    },
+    "en_words": {
+      "p50": 6,
+      "p90": 22,
+      "p99": 62,
+      "max": 129,
+      "mean": 9.8
+    },
+    "prompt_chars": {
+      "p50": 244,
+      "p90": 454,
+      "p99": 549,
+      "max": 632,
+      "mean": 241.9
+    },
+    "prompt_tokens_approx_chars_div4": {
+      "p50": 61,
+      "p90": 113,
+      "p99": 137,
+      "max": 158,
+      "mean": 60.1
+    }
+  },
+  "prompt_format_serve_parity": {
+    "serve_available": true,
+    "instr_page_match": true,
+    "instr_plain_match": true,
+    "compared": 300,
+    "mismatches": 0,
+    "examples": []
+  },
+  "sample_serve_format_check": {
+    "pagectx_prompts": 93,
+    "convctx_prompts": 5,
+    "plain_prompts": 98,
+    "unrecognized_prompts": 0,
+    "all_match": true
+  },
+  "mode": "dry-run",
+  "sample_rows": 196,
+  "full_mix_rows_after_filters": 234,
+  "full_mix_nsfw_frac_capped": 0.1795,
+  "seed": 42
+}

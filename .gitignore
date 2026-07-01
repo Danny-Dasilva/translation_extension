@@ -50,6 +50,9 @@ backend/scripts/data/**/*.parquet
 backend/scripts/data/**/*.log
 backend/scripts/data/**/*.stdout
 backend/scripts/data/**/*.stdout.*
+# v13ship: the full v1 messages-jsonl SFT set is large (~30-50MB) -> not committed.
+# The tracked 3-row *_v1_messages.sample.jsonl and stats json stay in-tree.
+backend/scripts/data/v13ship/*_v1_messages.jsonl
 
 # ===== Eval run outputs / scorecards / indexes (regenerable) =====
 backend/scripts/eval/bench_out/

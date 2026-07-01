@@ -1,0 +1,130 @@
+{
+  "total_rows": 72098,
+  "rows_per_source_final": {
+    "v11_backbone": 63503,
+    "ikenie_gold": 7098,
+    "nsfw_corpus": 1497
+  },
+  "rows_per_source_before_filters": {
+    "v11_backbone": 65000,
+    "ikenie_gold": 7098,
+    "nsfw_corpus": 0,
+    "nsfw_corpus_info": {
+      "source": null,
+      "placeholder": false,
+      "rows": 0,
+      "note": "mined NSFW corpus parquet MISSING (needs GPU corpus_bitext mine)"
+    }
+  },
+  "register_distribution_final": {
+    "manga_dialog": 28679,
+    "vn_eroge": 9808,
+    "manga_nsfw": 9313,
+    "novel": 6529,
+    "vn": 6349,
+    "sfx": 4863,
+    "manga": 3221,
+    "synthetic": 1740,
+    "garbage": 1596
+  },
+  "nsfw_rows_final": 19121,
+  "nsfw_frac_final": 0.2652,
+  "nsfw_cap": 0.18,
+  "nsfw_cap_info": {
+    "nsfw_before": 19121,
+    "nsfw_after": 19121,
+    "max_nsfw": 19121,
+    "cap": 1.0,
+    "dropped": 0
+  },
+  "refusal_dropped_count": 0,
+  "refusal_dropped_examples": [],
+  "refusal_classifier_selftest": {
+    "refusals_correctly_dropped": [
+      "I'm sorry, but I can't assist with that request.",
+      "I cannot translate this content.",
+      "As an AI language model, I won't help with that.",
+      "I'm unable to provide a translation of this material.",
+      "I apologize, but I can't continue with this request."
+    ],
+    "refusals_missed": [],
+    "benign_false_positives": [],
+    "passes": true
+  },
+  "length_distribution": {
+    "en_chars": {
+      "p50": 34,
+      "p90": 103,
+      "p99": 425,
+      "max": 1243,
+      "mean": 53.0
+    },
+    "en_words": {
+      "p50": 6,
+      "p90": 19,
+      "p99": 70,
+      "max": 193,
+      "mean": 9.4
+    },
+    "prompt_chars": {
+      "p50": 225,
+      "p90": 437,
+      "p99": 548,
+      "max": 975,
+      "mean": 238.1
+    },
+    "prompt_tokens_approx_chars_div4": {
+      "p50": 56,
+      "p90": 109,
+      "p99": 137,
+      "max": 243,
+      "mean": 59.2
+    }
+  },
+  "prompt_format_serve_parity": {
+    "serve_available": true,
+    "instr_page_match": true,
+    "instr_plain_match": true,
+    "compared": 300,
+    "mismatches": 0,
+    "examples": []
+  },
+  "sample_serve_format_check": {
+    "pagectx_prompts": 29467,
+    "convctx_prompts": 5736,
+    "plain_prompts": 36895,
+    "unrecognized_prompts": 0,
+    "all_match": true
+  },
+  "seed": 42,
+  "v11_parquet": "/home/danny/Documents/personal/extension/backend/scripts/data/v11fix8/data_v11fix8_pagecontext.parquet",
+  "ikenie_paths": [
+    "/home/danny/Documents/personal/extension/backend/scripts/eval/data/ikenie4/gold_q3.jsonl",
+    "/home/danny/Documents/personal/extension/backend/scripts/eval/data/ikenie5/gold_q3.jsonl"
+  ],
+  "nsfw_parquet": "/home/danny/Documents/personal/extension/backend/scripts/data/corpus_bitext/data_corpus_bitext_pagecontext.parquet",
+  "mode": "build-v1-messages",
+  "format": "native trainer messages-jsonl (build_conversations schema)",
+  "mix": {
+    "backbone_rows": 65000,
+    "ikenie_gold_x3_rows": 7098,
+    "backbone_embedded_corpus_bitext_rows": 1497
+  },
+  "added_mined_nsfw_slice_rows": 0,
+  "mined_nsfw_free": true,
+  "nsfw_register_rows": 19121,
+  "nsfw_register_frac": 0.2652,
+  "nsfw_cap_applied": false,
+  "gold_rows": 56392,
+  "gold_frac": 0.7822,
+  "backbone_subsample": 65000,
+  "messages_format_check": {
+    "checked": 2000,
+    "valid": true,
+    "roundtrip_ok": true,
+    "has_image_all_false": true
+  },
+  "out_messages_jsonl": "/home/danny/Documents/personal/extension/backend/scripts/data/v13ship/data_v13ship_v1_messages.jsonl",
+  "out_messages_bytes": 54775741,
+  "out_messages_mb": 54.78
+}
