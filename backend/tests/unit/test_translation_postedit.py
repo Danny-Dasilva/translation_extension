@@ -36,6 +36,25 @@ class TestPosteditOne:
         out = postedit_one("Hello there.", "やあ")
         assert out == "Hello there."
 
+    def test_ayumu_lock_through_chain(self):
+        out = postedit_one("Ayu, wait!", "あゆむ、待って")
+        assert out == "Ayumu, wait!"
+
+    def test_vocative_lady_through_chain(self):
+        # おばさん vocative "lady" -> "auntie" must reach output via the chain.
+        out = postedit_one("What do you want, lady?", "おばさん")
+        assert out == "What do you want, auntie?"
+
+    def test_romaji_honorific_stripped_through_chain(self):
+        out = postedit_one("Yui-chan, look!", "みて")
+        assert out == "Yui, look!"
+
+    def test_onii_chan_mapped_through_chain(self):
+        # Source has no お姉ちゃん trigger, so the Sis fix is irrelevant here;
+        # the romaji-honorific sanitizer handles the leaked kinship vocative.
+        out = postedit_one("Onii-chan!", "にいに")
+        assert out == "Big brother!"
+
 
 class TestApplyPosteditGlossaries:
     def test_list_alignment(self):
