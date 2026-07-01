@@ -40,6 +40,15 @@ export interface TextBox {
   confidence?: number; // Detection confidence
   ocrTimeMs?: number; // OCR timing
   translateTimeMs?: number; // Translation timing
+  /**
+   * Forward-compat: the backend may flag a region it deliberately SKIPPED
+   * (e.g. already-English text). A skipped region was neither inpainted nor
+   * given a translated TextBox, so the renderer must leave the original pixels
+   * untouched — never white-box or overlay text on it. The backend currently
+   * omits skipped boxes entirely, so this is defensive but correct. Optional;
+   * absent/false on all current responses.
+   */
+  skipped?: boolean;
 }
 
 export interface DebugTiming {
@@ -72,4 +81,37 @@ export interface TranslateResponse {
 
 export interface APIError {
   detail: string;
+}
+
+/**
+ * One flagged text box for the POST /flag endpoint. Coordinates are in the
+ * original-image pixel space (same space as TextBox.minX..maxY).
+ */
+export interface FlagBox {
+  ocr_text: string;
+  translated_text: string;
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+}
+
+/**
+ * Request body for POST /flag — sends the ORIGINAL source image plus its
+ * OCR/translations to the backend for local storage / fine-tuning.
+ * Built to the backend contract (another agent implements the endpoint).
+ */
+export interface FlagRequest {
+  image_base64: string;
+  page_url: string;
+  target_language: string;
+  boxes: FlagBox[];
+  reason?: string;
+}
+
+/** Response from POST /flag. */
+export interface FlagResponse {
+  ok: boolean;
+  id?: string;
+  image_path?: string;
 }

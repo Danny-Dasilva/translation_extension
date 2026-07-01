@@ -14,6 +14,11 @@ export default defineConfig({
       manifest: browser === 'firefox' ? 'manifest.firefox.json' : 'manifest.chrome.json',
       watchFilePaths: ['**/*'],
       browser: browser as 'chrome' | 'firefox',
+      // Emit assets referenced by the manifest/content-script but not picked up
+      // as JS entry points. Paths are relative to Vite's `root` (= src/), so this
+      // emits src/content/overlay.css -> dist/content/overlay.css, matching the
+      // web_accessible_resource and the runtime load in content-script.ts.
+      additionalInputs: ['content/overlay.css'],
     }),
   ],
   resolve: {

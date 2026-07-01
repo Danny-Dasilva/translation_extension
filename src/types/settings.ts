@@ -11,7 +11,12 @@ export interface ExtensionSettings {
   // Translation Settings
   targetLanguage: string;
   autoTranslate: boolean;
-  
+
+  // Master ON/OFF switch. When false, the content script does not auto-translate
+  // and clears/restores any existing overlays (independent of per-hostname
+  // activation and the Alt-hold "peek original" behavior).
+  translationEnabled: boolean;
+
   // Per-hostname activation whitelist
   activeUrls: string[]; // List of hostnames where extension is enabled
   
@@ -42,6 +47,7 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
   apiEndpoint: CONFIG.DEFAULT_API_ENDPOINT,
   targetLanguage: 'English',
   autoTranslate: false,
+  translationEnabled: true,
   activeUrls: [],
   defaultFont: 'Bangers',
   useCache: true,

@@ -12,9 +12,10 @@
  *     Ref: /tmp/koharu/ui/components/panels/TextBlocksPanel.tsx:228, 263
  *   - "Show original" Alt-hotkey (wired from content-script)
  */
-import { TextBox } from '@/types/api';
+import { TextBox, FlagRequest, FlagBox } from '@/types/api';
 import { CONFIG } from '@/config/constants';
 import { settingsManager } from './settings-manager';
+import { logger } from '@/utils/logger';
 
 interface RenderedImage {
   originalElement: HTMLImageElement | HTMLCanvasElement;
@@ -22,6 +23,24 @@ interface RenderedImage {
   /** Optional DOM overlay sibling that hosts per-box retry/edit affordances. */
   domOverlay?: HTMLDivElement;
   textBoxes: TextBox[];
+  /**
+   * The ORIGINAL source bytes the backend received (base64 data URL). Captured
+   * at render time so we can (a) restore the original image when translation is
+   * toggled off and (b) send it to the /flag endpoint. For <img> this is the
+   * pre-overlay src; for canvas it is a snapshot taken before we drew over it.
+   */
+  originalImageBase64: string;
+  /**
+   * For <img> elements only: the exact `src` attribute that was on the element
+   * before we replaced it with the rendered data URL. Used to restore the
+   * original image cleanly (re-points at the live URL, not a re-encoded copy).
+   */
+  originalSrc?: string;
+  /**
+   * UI state: true once this translation has been flagged (POST /flag accepted).
+   * Used to mark the ⚑ button as done and prevent a double-send.
+   */
+  flagged?: boolean;
 }
 
 interface FitResult {
@@ -34,6 +53,21 @@ interface FitResult {
   brokeWord: boolean;
 }
 
+/**
+ * OPT 2: a single full-canvas pixel snapshot of the composited BACKGROUND
+ * (original + inpainted plate + pass-1 white rects) taken ONCE before any text
+ * is drawn. Per-box luminance sampling slices into this buffer instead of doing
+ * a separate getImageData GPU readback per text box. This also matches the
+ * backend, which samples sample_bg_luminance() from the clean text-free plate
+ * (refit_final_composites.py: text is drawn onto a separate PIL image, never
+ * back into the sampled ndarray).
+ */
+interface LumaSnapshot {
+  data: Uint8ClampedArray;
+  width: number;
+  height: number;
+}
+
 interface RegionBBox {
   x: number;
   y: number;
@@ -44,26 +78,73 @@ interface RegionBBox {
    * interior; 'bubble-widened' = a tall-narrow bubble interior grown
    * horizontally so horizontal EN words fit on fewer, wider lines (see
    * widenHighAspectRegion); 'regions'/'bbox' = tight text-pixel sources;
-   * 'expanded' = the null-bubble fallback grew a tight source outward to give
-   * long EN text room.
+   * 'bbox-widened' = a tall-narrow CLAMPED (no-bubble) caption column grown
+   * horizontally (+ bounded vertical overflow) onto the clean plate so narration
+   * stops cramming to the floor (see widenNarrowCaption); 'expanded' = the
+   * null-bubble fallback grew a tight source outward to give long EN text room.
    */
-  source?: 'bubble' | 'bubble-widened' | 'regions' | 'bbox' | 'expanded';
+  source?: 'bubble' | 'bubble-widened' | 'regions' | 'bbox' | 'bbox-widened' | 'expanded';
+}
+
+/**
+ * A rendered text ink-rect recorded for inter-block overlap avoidance, mirroring
+ * the backend compose_final `placed_rects` entries (x0,y0,x1,y1,is_dialogue).
+ */
+interface PlacedRect {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+  /** True when this block matched a speech bubble (dialogue). */
+  isDialogue: boolean;
 }
 
 // Minimum and maximum font sizes probed by the binary search.
-const FONT_SIZE_MIN = 8;
-const FONT_SIZE_MAX = 72;
+// Matches backend refit_final_composites.find_best_fit (min_floor=14, max_cap=96).
+// The backend's clamped (no-bubble) blocks drop to a hard_floor of 9 on overflow;
+// we mirror that with FONT_SIZE_HARD_FLOOR below.
+const FONT_SIZE_MIN = 14;
+const FONT_SIZE_MAX = 96;
+// Backend's hard floor for clamped/SFX blocks that still overflow at the soft floor.
+const FONT_SIZE_HARD_FLOOR = 9;
 // Extra padding inside the text region (reserved for stroke + breathing room).
 const TEXT_PADDING_PX = 8;
-// Line spacing multiplier applied on top of measured ascent+descent.
-const LINE_GAP_FACTOR = 1.1;
+// Line spacing leading factor: backend line_height = max(ascent+descent+leading,
+// font_size) with leading = 0.10 * em (refit_final_composites.line_height_px).
+const LINE_LEADING_FACTOR = 0.1;
+// Backend uppercases all display text before fitting (refit compose_final).
+// Short-word-only char-break guard: backend wrap_greedy only hard-breaks a word
+// when len(word) >= 13; shorter words overflow on one line.
+const LONG_WORD_MIN_LEN = 13;
 // Contrast ratio threshold below which we override API-supplied colors.
 const MIN_CONTRAST_RATIO = 3.0;
 
-// Comic font families we try to guarantee are loaded before the first
-// measure/paint pass. Order = preference (local bundled first, then CDN).
-const PRIMARY_FONT_FAMILY = 'Bangers';
-const SECONDARY_FONT_FAMILY = 'Fredoka';
+// FIX (reconcile): the backend compose_final deliberately does NOT widen
+// clamped/non-bubble blocks, and uses the matched bubble interior AS-IS for
+// dialogue (no high-aspect widening) — blind widening overlaps neighbouring
+// columns. Gate the extension's aggressive widening/expansion OFF to match this
+// conservative policy. Flip to true only to restore the old (divergent) widen.
+const WIDEN_REGIONS = false;
+
+// NARROW-NARRATION widen (CLAMPED / non-bubble caption columns only), mirroring
+// the backend refit_final_composites NARROW_WIDEN_* policy. Tall-narrow vertical-
+// JP caption columns otherwise cram horizontal EN one-word-per-line down to the
+// hard floor. For non-SFX captions whose aspect exceeds the trigger we grant a
+// BOUNDED horizontal widen (+ bounded vertical overflow) onto the clean inpaint
+// plate, bounded by image edges and sibling boxes (the extension analogue of the
+// backend's already-placed rects). Dialogue bubbles are still NOT widened
+// (WIDEN_REGIONS stays false) to keep parity with the backend.
+const NARROW_WIDEN_TRIGGER = 2.5; // widen only columns with aspect h/w above this
+const NARROW_WIDEN_TARGET_ASPECT = 2.0; // widen until aspect reaches this (conservative)
+const NARROW_WIDEN_MAX_GROWTH = 2.5; // hard cap: never wider than this x original width
+
+// Comic font families. Backend pick_font picks Comic Neue Bold for long/dialogue
+// text (reads like human comic lettering, vs the old tall-condensed Anton) and
+// Bangers for short SFX-like outbursts; we mirror that. Bangers is bundled
+// locally (public/fonts); Comic Neue is served from the Google Fonts CDN because
+// its TTF is not (yet) bundled — see ensureFontsInjected / tryRegisterLocalFonts.
+const PRIMARY_FONT_FAMILY = 'Comic Neue';
+const SFX_FONT_FAMILY = 'Bangers';
 // Font sizes (px) we eagerly prime via document.fonts.load so the binary
 // search measures with real glyph metrics instead of the Arial fallback.
 const FONT_PRIME_SIZES = [12, 24, 48, 72];
@@ -73,6 +154,17 @@ export class OverlayRenderer {
   private fontsInjected = false;
   /** Memoized promise that resolves once comic fonts are usable on canvas. */
   private fontsReadyPromise: Promise<void> | null = null;
+  /**
+   * Per-render memoization of layoutAtSize results, keyed by
+   * `fontSize|fontFamily|maxWidth|text`. The font-fit binary search is run up to
+   * twice per box (soft floor, then hard-floor retry) and identical text recurs
+   * across boxes, so the same (size, family, width, text) layout is recomputed
+   * many times. The cached FitResult is byte-identical to a fresh measure — only
+   * the ctx.font side-effect is skipped, which downstream painters re-set
+   * themselves — so this is purely a measurement-count reduction with no visual
+   * change. Reset at the start of every renderTranslationsOnCanvas.
+   */
+  private layoutCache: Map<string, FitResult> = new Map();
 
   constructor() {
     this.ensureFontsInjected();
@@ -90,13 +182,14 @@ export class OverlayRenderer {
    *      placeholder in overlay.css only resolves for manifest-referenced CSS,
    *      NOT for canvas painting). Local fonts eliminate the CDN 404/offline +
    *      latency path.
-   *   2. CDN <link> (Google Fonts) as a robust fallback. Bangers + Fredoka are
-   *      OFL-licensed and safe to link.
+   *   2. CDN <link> (Google Fonts) as a robust fallback. Comic Neue + Bangers
+   *      are OFL-licensed and safe to link.
    *
-   * NOTE: local TTFs are not yet shipped in public/fonts/ (only a README),
-   * so the local path is best-effort and silently falls back to the CDN.
-   * FOLLOW-UP: bundle Bangers-Regular.ttf (OFL) into public/fonts/ to make the
-   * local path the default and drop the CDN dependency entirely.
+   * Bangers-Regular.ttf is bundled in public/fonts/ and declared web-accessible
+   * in both manifests, so its local path is the default. Comic Neue (the backend
+   * PRIMARY, refit_final_composites FONT_STACK[0]) is NOT yet bundled there, so it
+   * resolves via the CDN until ComicNeue-Bold.ttf is added to public/fonts/ +
+   * web_accessible_resources. The CDN also remains an offline-safety fallback.
    */
   private ensureFontsInjected(): void {
     if (this.fontsInjected) return;
@@ -111,12 +204,12 @@ export class OverlayRenderer {
       link.id = id;
       link.rel = 'stylesheet';
       link.href =
-        'https://fonts.googleapis.com/css2?family=Bangers&family=Fredoka:wght@400;600&display=swap';
+        'https://fonts.googleapis.com/css2?family=Comic+Neue:wght@700&family=Bangers&display=swap';
       (document.head || document.documentElement).appendChild(link);
       this.fontsInjected = true;
     } catch (err) {
       // Non-fatal: canvas drawing will fall back to Arial/sans-serif.
-      console.warn('Manga Translator: font injection failed', err);
+      logger.warn('font injection failed', err);
     }
   }
 
@@ -147,7 +240,7 @@ export class OverlayRenderer {
 
       // 2. Explicitly prime the comic families at the sizes the layout probes.
       const loadJobs: Promise<unknown>[] = [];
-      for (const family of [PRIMARY_FONT_FAMILY, SECONDARY_FONT_FAMILY]) {
+      for (const family of [PRIMARY_FONT_FAMILY, SFX_FONT_FAMILY]) {
         for (const size of FONT_PRIME_SIZES) {
           try {
             // "AaGg" exercises ascenders/descenders so metrics are realistic.
@@ -188,18 +281,26 @@ export class OverlayRenderer {
       if (!getURL) return;
 
       // Map of family -> bundled asset path under web_accessible_resources.
-      const localFonts: Array<{ family: string; path: string }> = [
-        { family: PRIMARY_FONT_FAMILY, path: 'fonts/Bangers-Regular.ttf' },
+      // Comic Neue (Bold) is the backend PRIMARY (long/dialogue); Bangers is for
+      // short SFX. NOTE: ComicNeue-Bold.ttf is NOT yet bundled under public/fonts
+      // (only Anton/Bangers are), so the HEAD-check below fails for it and we fall
+      // back to the Google Fonts CDN registered in ensureFontsInjected. Add the
+      // TTF to public/fonts + web_accessible_resources to take the local path.
+      const localFonts: Array<{ family: string; path: string; weight: string }> = [
+        { family: PRIMARY_FONT_FAMILY, path: 'fonts/ComicNeue-Bold.ttf', weight: 'bold' },
+        { family: SFX_FONT_FAMILY, path: 'fonts/Bangers-Regular.ttf', weight: 'normal' },
       ];
 
-      for (const { family, path } of localFonts) {
+      for (const { family, path, weight } of localFonts) {
         try {
           const url = getURL(path);
           // HEAD-check so a missing asset doesn't spam FontFace errors.
           const probe = await fetch(url, { method: 'HEAD' });
           if (!probe.ok) continue;
+          // ComicNeue-Bold.ttf is already a bold-weight face, so register it as
+          // 'bold' to avoid the canvas synthesising a second (faux) bold over it.
           const face = new FontFace(family, `url(${url}) format('truetype')`, {
-            weight: 'normal',
+            weight,
           });
           const loaded = await face.load();
           fontSet.add(loaded);
@@ -220,12 +321,19 @@ export class OverlayRenderer {
    * @param textBoxes   boxes (in original-image coordinates)
    * @param showDebug   draw bbox/region overlays
    * @param inpaintedBase64 optional pre-inpainted "plate" to use as background
+   * @param sourceBase64 optional already-encoded source image (the EXACT bytes
+   *   the backend received, i.e. the compressed base64 from content-script).
+   *   Passing it avoids a redundant drawImage+toDataURL re-encode of the live
+   *   <img>, and is also the correct coordinate space for the returned text
+   *   boxes. Must be a `data:` base64 URL; URL/CORS-blocked sources fall back
+   *   to reading the element directly.
    */
   async createOverlay(
     imageElement: HTMLImageElement | HTMLCanvasElement,
     textBoxes: TextBox[],
     showDebug: boolean = false,
-    inpaintedBase64?: string | null
+    inpaintedBase64?: string | null,
+    sourceBase64?: string | null
   ): Promise<void> {
     // Remove existing overlay if any
     this.removeOverlay(imageElement);
@@ -234,8 +342,13 @@ export class OverlayRenderer {
       // Get settings
       const settings = await settingsManager.getSettings();
 
-      // Get base64 image data (original page image)
-      const base64Image = await this.getImageBase64(imageElement);
+      // Prefer the already-encoded source the backend saw (eliminates a second
+      // re-encode of the live <img>). Only usable when it's real base64 data;
+      // a URL (CORS-blocked path) still needs the element read / worker fetch.
+      const base64Image =
+        sourceBase64 && sourceBase64.startsWith('data:')
+          ? sourceBase64
+          : await this.getImageBase64(imageElement);
 
       // Feature-flag: use inpainted plate if provided (default true when present).
       const useInpaintedPlate: boolean =
@@ -251,10 +364,15 @@ export class OverlayRenderer {
         useInpaintedPlate ? inpaintedBase64! : null
       );
 
+      // Capture the ORIGINAL <img> src BEFORE we overwrite it, so we can
+      // restore the live image cleanly when translation is toggled off.
+      const originalSrc =
+        imageElement instanceof HTMLImageElement ? imageElement.src : undefined;
+
       // Replace original element with rendered canvas/image
       await this.replaceElement(imageElement, canvas);
 
-      // Build DOM overlay with retry/edit affordances.
+      // Build DOM overlay with retry/edit + flag affordances.
       const domOverlay = this.buildDomOverlay(imageElement, canvas, textBoxes);
 
       this.renderedImages.set(imageElement, {
@@ -262,9 +380,13 @@ export class OverlayRenderer {
         newElement: canvas,
         domOverlay,
         textBoxes,
+        // Source bytes the backend received (base64 data URL). Used to (a)
+        // restore the original on toggle-off and (b) POST to /flag.
+        originalImageBase64: base64Image,
+        originalSrc,
       });
     } catch (error) {
-      console.error('Failed to create overlay:', error);
+      logger.error('Failed to create overlay:', error);
       throw error;
     }
   }
@@ -296,7 +418,7 @@ export class OverlayRenderer {
       ctx.drawImage(element, 0, 0);
       return canvas.toDataURL('image/jpeg', 0.85);
     } catch (error) {
-      console.warn('CORS blocked image conversion, fetching via background worker:', element.src);
+      logger.warn('CORS blocked image conversion, fetching via background worker:', element.src);
 
       const browser = (await import('webextension-polyfill')).default;
       const response = await browser.runtime.sendMessage({
@@ -331,6 +453,10 @@ export class OverlayRenderer {
     // systematic overspill. Best-effort; degrades to Arial on failure.
     await this.ensureFontsReady();
 
+    // Reset the per-render layout memo (OPT 4). Cleared each render so a stale
+    // measure from a prior image / font-readiness state can never be reused.
+    this.layoutCache.clear();
+
     // Always load original first — we may still need it for luminance sampling
     // under boxes that lack inpainted coverage (e.g. partial plates).
     const image = await this.loadImage(base64Image);
@@ -339,7 +465,12 @@ export class OverlayRenderer {
     canvas.width = image.width;
     canvas.height = image.height;
 
-    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    // OPT 2: luminance now does a SINGLE full-canvas getImageData (see
+    // captureLumaSnapshot) instead of one readback per box, so the
+    // willReadFrequently CPU-backing hint is no longer worth the slower
+    // drawImage/draw path. Dropping it does not affect pixels — it is purely a
+    // performance hint, and the one remaining readback works on any canvas.
+    const ctx = canvas.getContext('2d');
     if (!ctx) throw new Error('Failed to get canvas context');
 
     // Draw original image first
@@ -356,16 +487,19 @@ export class OverlayRenderer {
         const plate = await this.loadImage(plateSrc);
         ctx.drawImage(plate, 0, 0, image.width, image.height);
       } catch (err) {
-        console.warn('Inpainted plate failed to load, falling back to mask:', err);
+        logger.warn('Inpainted plate failed to load, falling back to mask:', err);
       }
     }
 
-    // Sort text boxes by z-index (lower first, so they're drawn first)
-    const sortedTextBoxes = [...textBoxes].sort((a, b) => {
-      const aZ = a.zIndex || 1;
-      const bZ = b.zIndex || 1;
-      return aZ - bZ;
-    });
+    // Placement order mirrors the backend compose_final `order`:
+    //   1. DIALOGUE (bubble-matched) blocks first so they are never covered.
+    //   2. then clamped caption/SFX blocks SMALLEST-area-first, so small
+    //      specific narration columns claim their space and an over-large
+    //      MERGED caption shrinks/clips around them instead of overlapping.
+    // (The previous z-index sort had no overlap awareness.)
+    const sortedTextBoxes = this.computePlacementOrder(textBoxes).filter(
+      (tb) => !tb.skipped
+    );
 
     // When we have an inpainted plate, skip drawing white backgrounds — the
     // plate *is* the background. Otherwise fall back to the original masked
@@ -382,9 +516,10 @@ export class OverlayRenderer {
       }
     } else {
       // With an inpainted plate, the plate already covers each bubble interior.
-      // But high-aspect bubbles are WIDENED past that interior (onto un-erased
-      // art) to fit horizontal EN — so plate just the *extra* widened area to
-      // keep that text off the original art. Normal bubbles are untouched.
+      // But WIDENED regions (high-aspect bubbles, and tall-narrow caption columns
+      // grown by widenNarrowCaption) extend past the tight plate onto un-erased
+      // art to fit horizontal EN — so plate the full widened region to keep that
+      // text off the original art. Normal bubbles/boxes are untouched.
       for (const textBox of sortedTextBoxes) {
         const region = this.computeTextRegionBBox(
           textBox,
@@ -392,7 +527,7 @@ export class OverlayRenderer {
           canvas.width,
           canvas.height
         );
-        if (region.source === 'bubble-widened') {
+        if (region.source === 'bubble-widened' || region.source === 'bbox-widened') {
           this.drawRoundedRect(
             ctx,
             region.x,
@@ -406,7 +541,20 @@ export class OverlayRenderer {
       }
     }
 
-    // Pass 2: Draw ALL text on top of all backgrounds
+    // OPT 2: snapshot the composited BACKGROUND once, here — after the plate +
+    // pass-1 white rects but BEFORE any text. Auto-contrast then slices per-box
+    // luminance out of this single buffer instead of issuing one getImageData
+    // GPU readback per text box. This matches the backend, which samples
+    // luminance from the clean text-free plate (text goes onto a separate PIL
+    // image, never back into the sampled ndarray). null on a tainted canvas →
+    // per-box sampling falls back and yields the same "light bg" default.
+    const lumaSnapshot = this.captureLumaSnapshot(ctx);
+
+    // Pass 2: Draw text in placement order, threading a collision-rect list so
+    // later blocks avoid burying earlier ones (mirrors compose_final's
+    // `placed_rects`). Orphan/SFX over dialogue is suppressed; a dialogue block
+    // is skipped only when clearly (>=60%) buried (detection duplicates).
+    const placedRects: PlacedRect[] = [];
     for (const textBox of sortedTextBoxes) {
       this.drawTextBoxText(
         ctx,
@@ -414,7 +562,9 @@ export class OverlayRenderer {
         fontFamily,
         sortedTextBoxes,
         canvas.width,
-        canvas.height
+        canvas.height,
+        placedRects,
+        lumaSnapshot
       );
     }
 
@@ -530,10 +680,31 @@ export class OverlayRenderer {
         height: Math.max(1, b.maxY - b.minY),
         source: 'bubble',
       };
+      // Backend uses the matched bubble interior AS-IS (no widening). The old
+      // high-aspect widening is gated off (WIDEN_REGIONS) to match.
+      if (!WIDEN_REGIONS) return bubble;
       // Tall-narrow JP bubbles (read vertically) are far too thin for
       // horizontal EN, forcing mid-word breaks. Widen them horizontally,
       // centered on the bubble, bounded by image edges + neighbors.
       return this.widenHighAspectRegion(bubble, textBox, allBoxes, canvasW, canvasH);
+    }
+
+    // CLAMPED (no bubble). Backend compose_final fits clamped blocks to the
+    // BLOCK bbox (rect == block: minX..maxX). SFX/orphan boxes stay put, but a
+    // tall-narrow *caption* column gets a BOUNDED horizontal widen (+ vertical
+    // overflow) onto the clean plate instead of cramming to the floor — mirroring
+    // the backend narrow-narration widen.
+    if (!WIDEN_REGIONS) {
+      const bbox: RegionBBox = {
+        x: textBox.minX,
+        y: textBox.minY,
+        width: Math.max(1, textBox.maxX - textBox.minX),
+        height: Math.max(1, textBox.maxY - textBox.minY),
+        source: 'bbox',
+      };
+      // SFX-sized boxes are excluded (truncated to onomatopoeia, must stay put).
+      if (this.isSfxSized(textBox)) return bbox;
+      return this.widenNarrowCaption(bbox, textBox, allBoxes, canvasW, canvasH);
     }
 
     // Build the tight union (textRegions if present, else outer bbox).
@@ -734,17 +905,166 @@ export class OverlayRenderer {
   }
 
   /**
-   * Draw ONLY the text for a text box (Pass 2 of two-pass rendering)
+   * Bounded widen for a tall-narrow CLAMPED (no-bubble) caption column, mirroring
+   * the backend refit_final_composites narrow-narration widen.
+   *
+   *   - Only engages above NARROW_WIDEN_TRIGGER aspect (h/w); normal/wide columns
+   *     are returned unchanged.
+   *   - Widens horizontally toward NARROW_WIDEN_TARGET_ASPECT, capped at
+   *     NARROW_WIDEN_MAX_GROWTH x the original width; centered on the column.
+   *   - Grants a modest BOUNDED vertical overflow (~18%, matching the backend
+   *     overflow_frac) onto the clean plate so the readable size isn't clipped.
+   *   - Clamps to image bounds and to sibling box edges (minus a gutter) — the
+   *     extension analogue of the backend's already-placed-rect bound — so it
+   *     never grows over a neighbour's text. Never smaller than the original box.
+   */
+  private widenNarrowCaption(
+    bbox: RegionBBox,
+    self: TextBox,
+    allBoxes: TextBox[] | undefined,
+    canvasW: number | undefined,
+    canvasH: number | undefined
+  ): RegionBBox {
+    const aspect = bbox.height / bbox.width;
+    if (aspect <= NARROW_WIDEN_TRIGGER) return bbox; // normal/wide -> unchanged.
+
+    const desiredWidth = Math.min(
+      bbox.height / NARROW_WIDEN_TARGET_ASPECT,
+      bbox.width * NARROW_WIDEN_MAX_GROWTH
+    );
+    if (desiredWidth <= bbox.width) return bbox;
+
+    const NEIGHBOR_GUTTER_PX = 6;
+    const imgW = canvasW ?? Infinity;
+    const imgH = canvasH ?? Infinity;
+    const cx = bbox.x + bbox.width / 2;
+    const cy = bbox.y + bbox.height / 2;
+    const top0 = bbox.y;
+    const bottom0 = bbox.y + bbox.height;
+
+    // Horizontal widen, bounded by image edges + vertically-overlapping siblings.
+    let left = Math.max(0, cx - desiredWidth / 2);
+    let right = Math.min(imgW, cx + desiredWidth / 2);
+    if (allBoxes && allBoxes.length > 1) {
+      for (const other of allBoxes) {
+        if (other === self) continue;
+        const ob = other.bubbleRect;
+        const oL = ob ? ob.minX : other.minX;
+        const oT = ob ? ob.minY : other.minY;
+        const oR = ob ? ob.maxX : other.maxX;
+        const oB = ob ? ob.maxY : other.maxY;
+        if (!(oB > top0 && oT < bottom0)) continue; // no vertical overlap
+        if (oR <= cx) left = Math.max(left, oR + NEIGHBOR_GUTTER_PX);
+        if (oL >= cx) right = Math.min(right, oL - NEIGHBOR_GUTTER_PX);
+      }
+    }
+    left = Math.min(left, bbox.x); // never narrower than the original box
+    right = Math.max(right, bbox.x + bbox.width);
+
+    // Bounded vertical overflow onto the clean plate, bounded by image edges +
+    // horizontally-overlapping siblings of the (now widened) column.
+    const vpad = Math.round(bbox.height * 0.18);
+    let top = Math.max(0, top0 - Math.floor(vpad / 2));
+    let bottom = Math.min(imgH, bottom0 + Math.floor(vpad / 2));
+    if (allBoxes && allBoxes.length > 1) {
+      for (const other of allBoxes) {
+        if (other === self) continue;
+        const ob = other.bubbleRect;
+        const oL = ob ? ob.minX : other.minX;
+        const oT = ob ? ob.minY : other.minY;
+        const oR = ob ? ob.maxX : other.maxX;
+        const oB = ob ? ob.maxY : other.maxY;
+        if (!(oR > left && oL < right)) continue; // no horizontal overlap
+        if (oB <= cy) top = Math.max(top, oB + NEIGHBOR_GUTTER_PX);
+        if (oT >= cy) bottom = Math.min(bottom, oT - NEIGHBOR_GUTTER_PX);
+      }
+    }
+    top = Math.min(top, bbox.y);
+    bottom = Math.max(bottom, bbox.y + bbox.height);
+
+    return {
+      x: left,
+      y: top,
+      width: Math.max(1, right - left),
+      height: Math.max(1, bottom - top),
+      source: 'bbox-widened',
+    };
+  }
+
+  /**
+   * Compute the placement order for the page, mirroring the backend
+   * compose_final `order`: dialogue (bubble-matched) blocks first, then clamped
+   * caption/SFX blocks smallest-bbox-area first.
+   */
+  private computePlacementOrder(textBoxes: TextBox[]): TextBox[] {
+    return [...textBoxes].sort((a, b) => {
+      const aDialogue = this.isDialogueBlock(a) ? 0 : 1;
+      const bDialogue = this.isDialogueBlock(b) ? 0 : 1;
+      if (aDialogue !== bDialogue) return aDialogue - bDialogue;
+      const aArea = (a.maxX - a.minX) * (a.maxY - a.minY);
+      const bArea = (b.maxX - b.minX) * (b.maxY - b.minY);
+      return aArea - bArea; // smallest-area-first among same dialogue class
+    });
+  }
+
+  /**
+   * A block is DIALOGUE when it matched a (non-degenerate) speech bubble — the
+   * same test computeTextRegionBBox uses to take the 'bubble' branch. Mirrors
+   * the backend `is_dialogue = fit_rect is not None`.
+   */
+  private isDialogueBlock(textBox: TextBox): boolean {
+    const b = textBox.bubbleRect;
+    return !!(b && b.maxX > b.minX && b.maxY > b.minY);
+  }
+
+  /**
+   * Backend _is_sfx_sized: small/orphan boxes (the verbose-gloss offenders).
+   * The extension TextBox has no `orphan` flag, so we use only the size
+   * heuristic (short side <= 48 px OR area <= 9000 px).
+   */
+  private isSfxSized(textBox: TextBox): boolean {
+    const w = Math.abs(textBox.maxX - textBox.minX);
+    const h = Math.abs(textBox.maxY - textBox.minY);
+    const shortSide = Math.min(w, h);
+    const area = w * h;
+    return shortSide <= 48 || area <= 9000;
+  }
+
+  /**
+   * Draw the text for a text box (Pass 2). Replicates the per-block portion of
+   * the backend compose_final: normalize + uppercase, SFX truncation for small
+   * clamped boxes, font selection (Anton vs Bangers), clamped-floor retry,
+   * luminance auto-contrast, and inter-block collision suppression that records
+   * each rendered ink rect into `placedRects`.
    */
   private drawTextBoxText(
     ctx: CanvasRenderingContext2D,
     textBox: TextBox,
     fontFamily: string,
-    allBoxes?: TextBox[],
-    canvasW?: number,
-    canvasH?: number
+    allBoxes: TextBox[] | undefined,
+    canvasW: number | undefined,
+    canvasH: number | undefined,
+    placedRects: PlacedRect[],
+    lumaSnapshot?: LumaSnapshot | null
   ): void {
-    const text = textBox.translatedText;
+    const raw = textBox.translatedText;
+    // A skipped region (e.g. already-English) keeps its original pixels — never
+    // mask or overlay text on it. Defensive: filtered upstream too.
+    if (!raw || textBox.skipped) return;
+
+    const isDialogue = this.isDialogueBlock(textBox);
+    const isClamped = !isDialogue; // caption / orphan / SFX over art
+    const sfxSized = this.isSfxSized(textBox);
+
+    // FIX A.3: cap verbose SFX glosses in small/orphan clamped boxes to
+    // onomatopoeia length so they don't overflow onto neighbours.
+    let text = raw;
+    if (isClamped) {
+      text = truncateSfxText(text, sfxSized);
+    }
+    // FIX #2: normalize to the ASCII subset our display fonts cover, then
+    // UPPERCASE (English manga dialogue is conventionally all-caps).
+    text = normalizeForDisplay(text).trim().toUpperCase();
     if (!text) return;
 
     // Center inside the text-region bbox (union of textRegions if available).
@@ -752,16 +1072,75 @@ export class OverlayRenderer {
     // widening) is identical to the one used to paint the background.
     const region = this.computeTextRegionBBox(textBox, allBoxes, canvasW, canvasH);
 
+    // FIX #1: choose Anton (long/dialogue) vs Bangers (short SFX) per the
+    // backend pick_font, evaluated on the uppercased display text. We still
+    // honour an explicit non-default settings.defaultFont if one was supplied.
+    const usePicked = !fontFamily || fontFamily.trim().length === 0;
+    const family = usePicked ? this.pickFontFamily(text) : fontFamily;
+
     // Available area after padding.
     const availWidth = Math.max(1, region.width - TEXT_PADDING_PX * 2);
     const availHeight = Math.max(1, region.height - TEXT_PADDING_PX * 2);
 
-    // Binary-search for the largest font size that fits.
-    const fit = this.findBestFit(ctx, text, availWidth, availHeight, fontFamily);
+    // Binary-search for the largest font size that fits (soft floor).
+    let fit = this.findBestFit(ctx, text, availWidth, availHeight, family, FONT_SIZE_MIN);
 
-    // Auto-contrast. Sample the rendered background at the text region's
-    // center to determine luminance, then pick/validate colors.
-    const { fontColor, strokeColor } = this.resolveColors(ctx, textBox, region);
+    // FIX #3: clamped (no-bubble) blocks still overflowing at the soft floor
+    // retry once down to the hard floor before accepting overflow.
+    if (isClamped && (fit.maxLineWidth > availWidth || fit.totalHeight > availHeight)) {
+      fit = this.findBestFit(ctx, text, availWidth, availHeight, family, FONT_SIZE_HARD_FLOOR);
+    }
+
+    // Predict the rendered ink rect (centered, clamped to the region) for
+    // collision tests, mirroring compose_final's rendered_rect.
+    const renderedW = Math.min(fit.maxLineWidth, region.width);
+    const renderedH = Math.min(fit.totalHeight, region.height);
+    const cx = region.x + region.width / 2;
+    const cy = region.y + region.height / 2;
+    const rx0 = Math.round(cx - renderedW / 2);
+    const ry0 = Math.round(cy - renderedH / 2);
+    const renderedRect: PlacedRect = {
+      x0: rx0,
+      y0: ry0,
+      x1: rx0 + Math.round(renderedW),
+      y1: ry0 + Math.round(renderedH),
+      isDialogue,
+    };
+
+    // FIX A.2 / collision avoidance (compose_final).
+    if (isClamped) {
+      // Orphan/SFX over DIALOGUE -> always suppress; SFX-sized over ANY placed
+      // block -> suppress; a larger caption is kept (drawn shrunk/clipped).
+      for (const pr of placedRects) {
+        if (!rectsOverlap(renderedRect, pr)) continue;
+        if (pr.isDialogue) return; // never cover dialogue
+        if (sfxSized) return; // stray SFX over another caption
+      }
+    } else {
+      // Dialogue: skip only when clearly (>=60% of own area) buried under an
+      // already-placed rect (detection duplicates / heavy overlap).
+      const rrArea = Math.max(
+        1,
+        (renderedRect.x1 - renderedRect.x0) * (renderedRect.y1 - renderedRect.y0)
+      );
+      for (const pr of placedRects) {
+        const ix0 = Math.max(renderedRect.x0, pr.x0);
+        const iy0 = Math.max(renderedRect.y0, pr.y0);
+        const ix1 = Math.min(renderedRect.x1, pr.x1);
+        const iy1 = Math.min(renderedRect.y1, pr.y1);
+        if (ix1 <= ix0 || iy1 <= iy0) continue;
+        const inter = (ix1 - ix0) * (iy1 - iy0);
+        if (inter / rrArea >= 0.6) return; // clearly buried
+      }
+    }
+
+    // Auto-contrast. Sample the rendered background luminance, then pick colors.
+    const { fontColor, strokeColor } = this.resolveColors(
+      ctx,
+      textBox,
+      region,
+      lumaSnapshot
+    );
 
     this.drawWrappedText(
       ctx,
@@ -770,12 +1149,15 @@ export class OverlayRenderer {
       region.y,
       region.width,
       region.height,
-      fontFamily,
+      family,
       fit.fontSize,
       fit.lineHeight,
       fontColor,
       strokeColor
     );
+
+    // Record the rendered ink rect so later blocks avoid burying this one.
+    placedRects.push(renderedRect);
   }
 
   /**
@@ -793,16 +1175,21 @@ export class OverlayRenderer {
    *   1. Largest size that fits H + W AND does not break a word  (preferred)
    *   2. else: largest size that fits H + W (may break a word — only happens
    *      when a single word cannot fit the width even near FONT_SIZE_MIN)
-   *   3. else: FONT_SIZE_MIN, accepting overflow (koharu's tiny-box behavior)
+   *   3. else: `minSize`, accepting overflow (koharu's tiny-box behavior)
+   *
+   * `minSize` defaults to the soft floor FONT_SIZE_MIN (14, matching the backend
+   * min_floor); clamped/SFX blocks retry with FONT_SIZE_HARD_FLOOR (9) on
+   * overflow, mirroring compose_final's two-stage fit.
    */
   private findBestFit(
     ctx: CanvasRenderingContext2D,
     text: string,
     availWidth: number,
     availHeight: number,
-    fontFamily: string
+    fontFamily: string,
+    minSize: number = FONT_SIZE_MIN
   ): FitResult {
-    let low = FONT_SIZE_MIN;
+    let low = minSize;
     let high = FONT_SIZE_MAX;
     // best = largest size fitting H+W with NO mid-word break (priority 1).
     let best: FitResult | null = null;
@@ -836,16 +1223,41 @@ export class OverlayRenderer {
     if (best) return best;
     // Priority 2: largest box-fitting layout even if it broke a word.
     if (fallback) return fallback;
-    // Priority 3: nothing fit — FONT_SIZE_MIN, accept overflow.
-    return this.layoutAtSize(ctx, text, availWidth, FONT_SIZE_MIN, fontFamily);
+    // Priority 3: nothing fit — minSize floor, accept overflow.
+    return this.layoutAtSize(ctx, text, availWidth, minSize, fontFamily);
   }
 
   /**
-   * Wrap `text` at `fontSize` and measure total height via
-   * actualBoundingBoxAscent + actualBoundingBoxDescent summed across lines,
-   * with LINE_GAP_FACTOR applied between lines.
+   * Wrap `text` at `fontSize` and measure block width/height.
+   *
+   * FIX #4: line height mirrors the backend line_height_px:
+   *   line_height = max(ascent + descent + leading, font_size),  leading = 0.10*em
+   * using FONT-level metrics (fontBoundingBoxAscent/Descent, the canvas analogue
+   * of PIL's font.getmetrics()) — NOT the per-line ink bbox — so the height is
+   * constant per size and matches the backend. The max(...,font_size) guard
+   * keeps short-glyph lines from collapsing tighter than the backend.
    */
   private layoutAtSize(
+    ctx: CanvasRenderingContext2D,
+    text: string,
+    maxWidth: number,
+    fontSize: number,
+    fontFamily: string
+  ): FitResult {
+    // OPT 4 (safe variant): memoize identical layouts. The binary search probes
+    // and the soft-floor/hard-floor retry frequently re-request the same
+    // (size, family, width, text); returning the cached FitResult is identical
+    // to recomputing it (only the transient ctx.font set is skipped, which
+    // paint paths re-apply). No effect on the chosen font size or pixels.
+    const key = `${fontSize}|${fontFamily}|${maxWidth}|${text}`;
+    const cached = this.layoutCache.get(key);
+    if (cached) return cached;
+    const result = this.layoutAtSizeUncached(ctx, text, maxWidth, fontSize, fontFamily);
+    this.layoutCache.set(key, result);
+    return result;
+  }
+
+  private layoutAtSizeUncached(
     ctx: CanvasRenderingContext2D,
     text: string,
     maxWidth: number,
@@ -855,30 +1267,26 @@ export class OverlayRenderer {
     ctx.font = this.buildFontString(fontSize, fontFamily, 'bold');
     const { lines, brokeWord } = this.wrapTextAtFont(ctx, text, maxWidth);
 
-    let totalHeight = 0;
-    let maxLineWidth = 0;
-    let representativeAscent = fontSize * 0.8;
-    let representativeDescent = fontSize * 0.2;
+    // Font-level metrics: prefer fontBoundingBox* (font ascent/descent). Fall
+    // back to the 0.8/0.2 em split when a browser doesn't expose them.
+    const probe = ctx.measureText('AaGg');
+    const fontAscent =
+      (probe as any).fontBoundingBoxAscent ?? fontSize * 0.8;
+    const fontDescent =
+      (probe as any).fontBoundingBoxDescent ?? fontSize * 0.2;
+    const leading = Math.max(0, Math.round(fontSize * LINE_LEADING_FACTOR));
+    const lineHeight = Math.max(
+      fontAscent + fontDescent + leading,
+      Math.round(fontSize)
+    );
 
-    for (let i = 0; i < lines.length; i++) {
-      const metrics = ctx.measureText(lines[i]);
-      const ascent =
-        (metrics as any).actualBoundingBoxAscent ?? fontSize * 0.8;
-      const descent =
-        (metrics as any).actualBoundingBoxDescent ?? fontSize * 0.2;
-      const lineHeightThis = (ascent + descent) * LINE_GAP_FACTOR;
-      totalHeight += lineHeightThis;
-      if (metrics.width > maxLineWidth) maxLineWidth = metrics.width;
-      if (i === 0) {
-        representativeAscent = ascent;
-        representativeDescent = descent;
-      }
+    let maxLineWidth = 0;
+    for (const ln of lines) {
+      const w = ctx.measureText(ln).width;
+      if (w > maxLineWidth) maxLineWidth = w;
     }
 
-    // Represent the (approx) constant line height we'll use in draw-time
-    // using the first line's ascent+descent. This keeps baselines stable.
-    const lineHeight =
-      (representativeAscent + representativeDescent) * LINE_GAP_FACTOR;
+    const totalHeight = lineHeight * lines.length;
 
     return {
       fontSize,
@@ -891,15 +1299,17 @@ export class OverlayRenderer {
   }
 
   /**
-   * Word-wrap helper that assumes the caller already set ctx.font.
-   * Also splits absurdly long single words by char if needed.
+   * Greedy word-wrap that mirrors the backend wrap_greedy (refit_final_composites).
    *
-   * Returns `{ lines, brokeWord }` where `brokeWord` is true iff a single word
-   * had to be split mid-word (character-level) because it could not fit
-   * `maxWidth` on its own. The font-fit search uses `brokeWord` to AVOID such
-   * sizes whenever a larger-but-non-breaking size could not be found — mid-word
-   * breaks ("MOMMY" -> "MOM"/"MY") are the dominant readability bug, so we only
-   * accept them as a true last resort (see findBestFit).
+   * FIX #5: a word wider than the box is only HARD-BROKEN by character when it
+   * is the start of a fresh line AND len(word) >= LONG_WORD_MIN_LEN (13). A
+   * shorter word that overflows ("MOMMY") is left to overflow on one line — a
+   * slight overhang reads far better than "MO/MM/Y". This matches the backend's
+   * `len(w) >= 13` guard exactly (the prior code char-broke ANY over-wide word).
+   *
+   * Returns `{ lines, brokeWord }` where `brokeWord` is true iff a word had to
+   * be split mid-word; the font-fit search uses it to prefer a smaller clean
+   * size over a mid-word break (see findBestFit).
    */
   private wrapTextAtFont(
     ctx: CanvasRenderingContext2D,
@@ -908,49 +1318,37 @@ export class OverlayRenderer {
   ): { lines: string[]; brokeWord: boolean } {
     const words = text.split(/\s+/).filter(Boolean);
     const lines: string[] = [];
-    let currentLine = '';
+    let cur = '';
     let brokeWord = false;
 
-    const pushLongWord = (word: string): void => {
-      // Word alone doesn't fit; break by character (last-resort, flagged).
-      brokeWord = true;
-      let buf = '';
-      for (const ch of word) {
-        const test = buf + ch;
-        if (ctx.measureText(test).width > maxWidth && buf) {
-          lines.push(buf);
-          buf = ch;
-        } else {
-          buf = test;
-        }
-      }
-      if (buf) {
-        currentLine = buf;
-      }
-    };
+    const measure = (s: string) => ctx.measureText(s).width;
 
-    for (const word of words) {
-      const testLine = currentLine ? `${currentLine} ${word}` : word;
-      const metrics = ctx.measureText(testLine);
-
-      if (metrics.width > maxWidth && currentLine) {
-        lines.push(currentLine);
-        // Check if word itself fits.
-        if (ctx.measureText(word).width > maxWidth) {
-          currentLine = '';
-          pushLongWord(word);
+    for (const w of words) {
+      const trial = (cur ? `${cur} ${w}` : w).trim();
+      if (measure(trial) <= maxWidth || !cur) {
+        // A word wider than the box: only hard-break LONG words (>=13 chars)
+        // when starting a fresh line; shorter words overflow on one line.
+        if (measure(w) > maxWidth && !cur && w.length >= LONG_WORD_MIN_LEN) {
+          brokeWord = true;
+          let frag = '';
+          for (const ch of w) {
+            if (measure(frag + ch) > maxWidth && frag) {
+              lines.push(frag);
+              frag = ch;
+            } else {
+              frag += ch;
+            }
+          }
+          cur = frag;
         } else {
-          currentLine = word;
+          cur = trial;
         }
-      } else if (metrics.width > maxWidth && !currentLine) {
-        // Even the first word doesn't fit — char-wrap it.
-        pushLongWord(word);
       } else {
-        currentLine = testLine;
+        lines.push(cur);
+        cur = w;
       }
     }
-
-    if (currentLine) lines.push(currentLine);
+    if (cur) lines.push(cur);
     return {
       lines: lines.length > 0 ? lines : [text],
       brokeWord,
@@ -961,8 +1359,36 @@ export class OverlayRenderer {
    * Build a canvas font string with a safe fallback chain.
    */
   private buildFontString(size: number, family: string, weight = 'bold'): string {
-    const safeFamily = family && family.trim().length > 0 ? family : 'Bangers';
-    return `${weight} ${size}px "${safeFamily}", "Bangers", "Fredoka", "Noto Sans", "Arial", sans-serif`;
+    const safeFamily = family && family.trim().length > 0 ? family : PRIMARY_FONT_FAMILY;
+    // Fallback chain mirrors the backend FONT_STACK ordering: Comic Neue (primary)
+    // then Bangers/Anton comic faces, then a wide-coverage system fallback for any
+    // leaked glyph.
+    return `${weight} ${size}px "${safeFamily}", "Comic Neue", "Bangers", "Anton", "Noto Sans", "Arial", sans-serif`;
+  }
+
+  /**
+   * Choose the display font family for a block, mirroring the backend
+   * refit_final_composites.pick_font: short exclamatory or short all-caps text
+   * (SFX-like outbursts) -> Bangers (comic punch); everything else -> Comic Neue.
+   *
+   * NOTE: the backend evaluates this on the UPPERCASED display text (compose_final
+   * uppercases before pick_font is called via _pick_renderable_font(pick_font(text))),
+   * so we pass already-uppercased text here too.
+   */
+  private pickFontFamily(displayText: string): string {
+    const cleaned = displayText.trim();
+    if (!cleaned) return PRIMARY_FONT_FAMILY;
+    const exclam =
+      (cleaned.match(/!/g)?.length ?? 0) + (cleaned.match(/\?/g)?.length ?? 0);
+    const short = cleaned.length <= 8;
+    // After uppercasing, isupper() is true iff there is at least one letter and
+    // no lowercase letters. Mirror that: has a letter and equals its upper-case.
+    const hasAlpha = /[a-z]/i.test(cleaned);
+    const allcaps = hasAlpha && cleaned === cleaned.toUpperCase();
+    if ((short && exclam >= 1) || (allcaps && cleaned.length <= 16)) {
+      return SFX_FONT_FAMILY;
+    }
+    return PRIMARY_FONT_FAMILY;
   }
 
   /**
@@ -972,7 +1398,8 @@ export class OverlayRenderer {
   private resolveColors(
     ctx: CanvasRenderingContext2D,
     textBox: TextBox,
-    region: RegionBBox
+    region: RegionBBox,
+    lumaSnapshot?: LumaSnapshot | null
   ): { fontColor: string; strokeColor: string } {
     const apiFont = textBox.fontColor || '';
     const apiStroke = textBox.fontStrokeColor || '';
@@ -987,57 +1414,119 @@ export class OverlayRenderer {
       }
     }
 
-    // Auto-contrast: sample ~8 pixels around the region and average luminance.
-    const meanLum = this.sampleMeanLuminance(ctx, region);
-    if (meanLum > 128) {
-      // Bright background → dark text on light stroke.
-      return { fontColor: '#111111', strokeColor: '#FFFFFF' };
+    // FIX #6: auto-contrast over the FULL region rect using BT.601 luma,
+    // MEDIAN + dark_fraction (share of pixels with luma<96). Go WHITE text when
+    // the median is dark (<140) OR a meaningful share is dark (>0.35) — mirrors
+    // the backend sample_bg_luminance + decision in compose_final. The prior
+    // 8-point MEAN+>128 flipped to black text on mostly-dark art with a few
+    // bright specks.
+    const { median, darkFraction } = this.sampleRegionLuminance(
+      ctx,
+      region,
+      lumaSnapshot
+    );
+    if (median < 140 || darkFraction > 0.35) {
+      // Dark background → white text on black stroke.
+      return { fontColor: '#FFFFFF', strokeColor: '#000000' };
     }
-    return { fontColor: '#FFFFFF', strokeColor: '#000000' };
+    // Bright background → dark text on light stroke.
+    return { fontColor: '#000000', strokeColor: '#FFFFFF' };
   }
 
   /**
-   * Sample up to ~8 points around the region's center and return mean
-   * luminance in [0, 255].
+   * OPT 2: capture ONE full-canvas pixel buffer up front so per-box luminance
+   * sampling can slice into it instead of doing a getImageData GPU readback per
+   * box. Returns null on a tainted (cross-origin) canvas; callers then fall
+   * back to per-box getImageData, which throws and yields the same light-bg
+   * default — identical behavior, just without the up-front read.
    */
-  private sampleMeanLuminance(
+  private captureLumaSnapshot(
+    ctx: CanvasRenderingContext2D
+  ): LumaSnapshot | null {
+    const width = ctx.canvas.width;
+    const height = ctx.canvas.height;
+    if (width <= 0 || height <= 0) return null;
+    try {
+      const data = ctx.getImageData(0, 0, width, height).data;
+      return { data, width, height };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Sample the FULL region rect from the (already-composited) canvas and return
+   * `{ median, darkFraction }` of BT.601 luminance in [0, 255], mirroring the
+   * backend sample_bg_luminance. To bound cost on large rects, we subsample on
+   * a fixed grid stride rather than reading every pixel.
+   *
+   * When a `lumaSnapshot` (OPT 2) is supplied we read pixel values from that
+   * single pre-captured full-canvas buffer; the region bounds, stride, sample
+   * grid and luma formula are IDENTICAL to the per-box getImageData path, so
+   * the returned (median, darkFraction) are byte-for-byte the same — only the
+   * source of the bytes differs (one shared readback vs. N readbacks).
+   */
+  private sampleRegionLuminance(
     ctx: CanvasRenderingContext2D,
-    region: RegionBBox
-  ): number {
-    const cx = region.x + region.width / 2;
-    const cy = region.y + region.height / 2;
-    const rx = Math.max(2, Math.floor(region.width / 4));
-    const ry = Math.max(2, Math.floor(region.height / 4));
+    region: RegionBBox,
+    lumaSnapshot?: LumaSnapshot | null
+  ): { median: number; darkFraction: number } {
+    const cw = ctx.canvas.width;
+    const ch = ctx.canvas.height;
+    const x0 = Math.max(0, Math.floor(region.x));
+    const y0 = Math.max(0, Math.floor(region.y));
+    const x1 = Math.min(cw, Math.ceil(region.x + region.width));
+    const y1 = Math.min(ch, Math.ceil(region.y + region.height));
+    if (x1 <= x0 || y1 <= y0) return { median: 255, darkFraction: 0 };
 
-    // 8 sample offsets arranged in a small diamond/grid.
-    const offsets: Array<[number, number]> = [
-      [0, 0],
-      [-rx, 0],
-      [rx, 0],
-      [0, -ry],
-      [0, ry],
-      [-rx, -ry],
-      [rx, -ry],
-      [-rx, ry],
-    ];
+    const w = x1 - x0;
+    const h = y1 - y0;
 
-    let total = 0;
-    let count = 0;
-    for (const [dx, dy] of offsets) {
-      const sx = Math.round(clamp(cx + dx, 0, ctx.canvas.width - 1));
-      const sy = Math.round(clamp(cy + dy, 0, ctx.canvas.height - 1));
+    // OPT 2: prefer the shared full-canvas snapshot. `snapStride` is the row
+    // width to index into: for the snapshot it's the full canvas width and the
+    // region pixel (xx,yy) lives at ((y0+yy)*cw + (x0+xx)); for the fallback
+    // per-region buffer it's the region width w and the pixel is at (yy*w+xx).
+    let data: Uint8ClampedArray;
+    let snapStride: number;
+    let baseX: number;
+    let baseY: number;
+    if (lumaSnapshot && lumaSnapshot.width === cw && lumaSnapshot.height === ch) {
+      data = lumaSnapshot.data;
+      snapStride = cw;
+      baseX = x0;
+      baseY = y0;
+    } else {
       try {
-        const data = ctx.getImageData(sx, sy, 1, 1).data;
-        const lum = 0.299 * data[0] + 0.587 * data[1] + 0.114 * data[2];
-        total += lum;
-        count += 1;
+        data = ctx.getImageData(x0, y0, w, h).data;
       } catch {
-        // getImageData can throw on tainted canvases (cross-origin) —
-        // fall through to default.
+        // Tainted canvas (cross-origin) — assume light background → dark text.
+        return { median: 255, darkFraction: 0 };
+      }
+      snapStride = w;
+      baseX = 0;
+      baseY = 0;
+    }
+
+    // Cap samples (~4096) by striding so the median sort stays cheap.
+    const totalPixels = w * h;
+    const maxSamples = 4096;
+    const stride = Math.max(1, Math.floor(Math.sqrt(totalPixels / maxSamples)));
+    const lums: number[] = [];
+    let dark = 0;
+    for (let yy = 0; yy < h; yy += stride) {
+      for (let xx = 0; xx < w; xx += stride) {
+        const idx = ((baseY + yy) * snapStride + (baseX + xx)) * 4;
+        const lum = 0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2];
+        lums.push(lum);
+        if (lum < 96) dark += 1;
       }
     }
-    if (count === 0) return 255; // Assume light background → dark text.
-    return total / count;
+    if (lums.length === 0) return { median: 255, darkFraction: 0 };
+    lums.sort((a, b) => a - b);
+    const mid = lums.length >> 1;
+    const median =
+      lums.length % 2 === 1 ? lums[mid] : (lums[mid - 1] + lums[mid]) / 2;
+    return { median, darkFraction: dark / lums.length };
   }
 
   /**
@@ -1132,7 +1621,12 @@ export class OverlayRenderer {
     }
 
     const centerX = boxX + boxWidth / 2;
-    const strokeWidth = Math.max(2, Math.round(fontSize * 0.12));
+    // FIX #7: stroke width mirrors the backend stroke_w = max(3, min(8,
+    // round(font.size * 0.14))). PIL's stroke_width is the full OUTER thickness,
+    // but canvas strokeText centres the stroke on the glyph path (half inside),
+    // so we double it to land the same visible outer thickness as the backend.
+    const backendStroke = Math.max(3, Math.min(8, Math.round(fontSize * 0.14)));
+    const strokeWidth = backendStroke * 2;
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
@@ -1162,7 +1656,7 @@ export class OverlayRenderer {
 
       img.onload = () => resolve(img);
       img.onerror = () => {
-        console.error('Failed to load image:', src.substring(0, 100));
+        logger.error('Failed to load image:', src.substring(0, 100));
         reject(new Error('Failed to load image'));
       };
 
@@ -1175,7 +1669,18 @@ export class OverlayRenderer {
   }
 
   /**
-   * Replace the original element with the rendered canvas
+   * Apply the rendered translation to the page.
+   *
+   * PROGRESSIVE ENHANCEMENT: the live page <img> is NEVER mutated. The
+   * translation is shown by the on-top translation layer built in
+   * buildDomOverlay (a child <img> inside the absolutely-positioned overlay),
+   * which sits above the page image. This guarantees the original image keeps
+   * loading/displaying immediately and is never blanked while we translate —
+   * and avoids the CORS/SPA-revert hazards of writing `img.src` directly.
+   *
+   * For <canvas> we still draw onto the live canvas (its own pixels are the
+   * only way to back the on-top layer for tainted/contextless canvases, and
+   * restoreOriginal can repaint it on toggle-off).
    */
   private async replaceElement(
     originalElement: HTMLImageElement | HTMLCanvasElement,
@@ -1187,10 +1692,9 @@ export class OverlayRenderer {
         ctx.clearRect(0, 0, originalElement.width, originalElement.height);
         ctx.drawImage(canvas, 0, 0);
       }
-    } else {
-      const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
-      originalElement.src = dataUrl;
     }
+    // <img>: intentionally no `src` mutation — the on-top translation layer
+    // (buildDomOverlay) renders the translated frame above the untouched image.
   }
 
   /**
@@ -1243,6 +1747,42 @@ export class OverlayRenderer {
     const scaleY =
       (imageElement.clientHeight || canvas.height) / Math.max(1, canvas.height);
 
+    // FRAMEWORK-PROOF TRANSLATION LAYER.
+    //
+    // Manga readers are usually SPAs (React/Vue/etc.) that re-render and REVERT
+    // any `img.src` we set back to their own page URL, wiping the translated
+    // image. To survive that, we paint the rendered translation as a visible
+    // layer INSIDE this overlay (which the framework doesn't touch) instead of
+    // depending on `img.src`. It is the FIRST child of the overlay so it sits
+    // BELOW the per-box boxDivs / flag button (later children, painted on top)
+    // but ABOVE the page image (the overlay itself has a high z-index). It is
+    // sized to exactly cover the image and is pointer-events:none so it never
+    // intercepts clicks meant for the boxDivs/flag button.
+    //
+    // The PIXELS are byte-identical to the canvas render (parity-matched to the
+    // backend) — we only change WHERE the canvas is shown (overlay child) vs
+    // mutating `img.src`. We render to the same data URL the <img> branch of
+    // replaceElement would have used.
+    const translationLayer = document.createElement('img');
+    translationLayer.className = 'manga-translator-translation-layer';
+    translationLayer.dataset.mangaTranslatorTranslation = '1';
+    translationLayer.src = canvas.toDataURL('image/jpeg', 0.9);
+    translationLayer.style.position = 'absolute';
+    translationLayer.style.left = '0';
+    translationLayer.style.top = '0';
+    translationLayer.style.width = '100%';
+    translationLayer.style.height = '100%';
+    // Match the canvas aspect exactly (the canvas already encodes the full
+    // original-image frame, so 'fill' reproduces what `img.src = dataURL` did:
+    // the rendered frame stretched to the image box). pointer-events:none keeps
+    // clicks flowing through to the boxDivs / flag button above it.
+    translationLayer.style.objectFit = 'fill';
+    translationLayer.style.pointerEvents = 'none';
+    translationLayer.style.zIndex = '0';
+    translationLayer.style.userSelect = 'none';
+    translationLayer.draggable = false;
+    overlay.appendChild(translationLayer);
+
     textBoxes.forEach((box, boxIndex) => {
       const boxDiv = document.createElement('div');
       boxDiv.className = CONFIG.CSS_CLASSES.TEXT_BOX + ' manga-translator-box';
@@ -1254,29 +1794,12 @@ export class OverlayRenderer {
       boxDiv.style.height = `${(box.maxY - box.minY) * scaleY}px`;
       boxDiv.style.pointerEvents = 'auto';
       boxDiv.style.cursor = 'text';
+      // Stack above the translation layer (z-index:0) so the edit hit-area and
+      // any edit UI sit on top of the rendered translation.
+      boxDiv.style.zIndex = '1';
 
-      // Retry icon.
-      const retryBtn = document.createElement('button');
-      retryBtn.type = 'button';
-      retryBtn.className = 'manga-translator-retry-btn';
-      retryBtn.title = 'Retry translation';
-      retryBtn.textContent = '↻'; // ↻
-      retryBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        e.preventDefault();
-        const detail = {
-          boxIndex,
-          originalText: box.ocrText,
-          translatedText: box.translatedText,
-          imageElement,
-        };
-        document.dispatchEvent(
-          new CustomEvent('manga-translator:retry-box', { detail })
-        );
-      });
-      boxDiv.appendChild(retryBtn);
-
-      // Double-click to edit inline.
+      // Double-click to edit inline. (The per-box visible retry button has been
+      // removed; the dblclick-to-edit affordance is kept.)
       boxDiv.addEventListener('dblclick', (e) => {
         e.stopPropagation();
         this.enterEditMode(boxDiv, boxIndex, box, imageElement, canvas);
@@ -1285,8 +1808,144 @@ export class OverlayRenderer {
       overlay.appendChild(boxDiv);
     });
 
+    // Per-image "flag bad translation" affordance. A tiny ⚑ button pinned to the
+    // top-right corner of the overlay, shown on hover (see overlay.css). Clicking
+    // it dispatches a `manga-translator:flag-image` event the content-script
+    // handles (it has the apiClient + does the SW round-trip). The button lives
+    // on the DOM overlay, NOT the canvas, so it never alters the rendered pixels
+    // the backend-parity test checks.
+    const flagBtn = document.createElement('button');
+    flagBtn.type = 'button';
+    flagBtn.className = 'manga-translator-flag-btn';
+    flagBtn.title = 'Flag this translation as poor (saves the image for fine-tuning)';
+    flagBtn.textContent = '⚑'; // ⚑
+    // Fully inline-styled so it renders identically without depending on
+    // overlay.css being injected into the host page. Subtle by default, more
+    // opaque on hover. Pinned to the overlay's top-right corner.
+    flagBtn.style.cssText = [
+      'position:absolute',
+      'top:4px',
+      'right:4px',
+      'width:22px',
+      'height:22px',
+      'padding:0',
+      'margin:0',
+      'border:none',
+      'border-radius:4px',
+      'background:rgba(17,24,39,0.55)',
+      'color:#fff',
+      'font-size:13px',
+      'line-height:22px',
+      'text-align:center',
+      'cursor:pointer',
+      'opacity:0.25',
+      'transition:opacity 0.15s ease, background 0.15s ease',
+      'pointer-events:auto',
+      'z-index:1000001',
+    ].join(';');
+    flagBtn.addEventListener('mouseenter', () => {
+      if (!flagBtn.classList.contains('flagged')) flagBtn.style.opacity = '1';
+    });
+    flagBtn.addEventListener('mouseleave', () => {
+      if (!flagBtn.classList.contains('flagged')) flagBtn.style.opacity = '0.25';
+    });
+    flagBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      this.requestFlag(imageElement, flagBtn);
+    });
+    overlay.appendChild(flagBtn);
+
     host.appendChild(overlay);
     return overlay;
+  }
+
+  /**
+   * Build the POST /flag payload for a rendered image from the TextBox[] that
+   * were drawn for it, plus the captured ORIGINAL source bytes. Coordinates are
+   * passed through in the backend's (original-image pixel) space. Returns null
+   * if the image is no longer tracked.
+   */
+  private buildFlagPayload(
+    imageElement: HTMLImageElement | HTMLCanvasElement,
+    targetLanguage: string
+  ): FlagRequest | null {
+    const rendered = this.renderedImages.get(imageElement);
+    if (!rendered) return null;
+
+    const boxes: FlagBox[] = rendered.textBoxes.map((b) => ({
+      ocr_text: b.ocrText,
+      translated_text: b.translatedText,
+      minX: b.minX,
+      minY: b.minY,
+      maxX: b.maxX,
+      maxY: b.maxY,
+    }));
+
+    return {
+      image_base64: rendered.originalImageBase64,
+      page_url: typeof location !== 'undefined' ? location.href : '',
+      target_language: targetLanguage,
+      boxes,
+    };
+  }
+
+  /**
+   * Fire the flag request for an image. Idempotent per image — once flagged (or
+   * while in-flight) the button is disabled. Gathers the payload, dispatches a
+   * `manga-translator:flag-image` event with it + a pair of callbacks so the
+   * content-script can run the actual SW round-trip and report back; we then
+   * flip the button to a ✓ (success) or restore it (failure).
+   */
+  private requestFlag(
+    imageElement: HTMLImageElement | HTMLCanvasElement,
+    flagBtn: HTMLButtonElement
+  ): void {
+    const rendered = this.renderedImages.get(imageElement);
+    if (!rendered || rendered.flagged) return;
+
+    // Optimistic disable to avoid double-send while the request is in flight.
+    flagBtn.disabled = true;
+    flagBtn.classList.add('flagging');
+
+    settingsManager
+      .getSettings()
+      .then((settings) => {
+        const payload = this.buildFlagPayload(imageElement, settings.targetLanguage);
+        if (!payload) {
+          flagBtn.disabled = false;
+          flagBtn.classList.remove('flagging');
+          return;
+        }
+        document.dispatchEvent(
+          new CustomEvent('manga-translator:flag-image', {
+            detail: {
+              payload,
+              onSuccess: () => {
+                const r = this.renderedImages.get(imageElement);
+                if (r) r.flagged = true;
+                flagBtn.classList.remove('flagging');
+                flagBtn.classList.add('flagged');
+                flagBtn.textContent = '✓'; // ✓
+                flagBtn.title = 'Flagged — thanks!';
+                // Lock in a confirmed (green, fully opaque) state.
+                flagBtn.style.background = 'rgba(16,185,129,0.9)';
+                flagBtn.style.opacity = '1';
+              },
+              onError: () => {
+                flagBtn.disabled = false;
+                flagBtn.classList.remove('flagging');
+                flagBtn.style.opacity = '0.25';
+                flagBtn.title = 'Flag failed — click to retry';
+              },
+            },
+          })
+        );
+      })
+      .catch(() => {
+        flagBtn.disabled = false;
+        flagBtn.classList.remove('flagging');
+      });
   }
 
   /**
@@ -1372,8 +2031,45 @@ export class OverlayRenderer {
   removeOverlay(imageElement: HTMLElement): void {
     const rendered = this.renderedImages.get(imageElement);
     if (rendered) {
+      this.restoreOriginal(rendered);
       rendered.domOverlay?.remove();
       this.renderedImages.delete(imageElement);
+    }
+  }
+
+  /**
+   * Restore the original image underneath:
+   *   - <img>: nothing to restore — replaceElement no longer mutates `src`,
+   *     so the live image is already the original. We only clear any opacity
+   *     we may have set. (Re-pointing `src` here would fight readers that have
+   *     since swapped the image to a new page.)
+   *   - <canvas>: redraw the saved original base64 snapshot back onto it.
+   * Best-effort; failures are swallowed so toggling OFF never throws.
+   */
+  private restoreOriginal(rendered: RenderedImage): void {
+    try {
+      const el = rendered.originalElement;
+      if (el instanceof HTMLImageElement) {
+        el.style.opacity = '';
+      } else if (el instanceof HTMLCanvasElement) {
+        const src = rendered.originalImageBase64;
+        el.style.opacity = '';
+        if (!src) return;
+        const img = new Image();
+        img.onload = () => {
+          try {
+            const ctx = el.getContext('2d');
+            if (!ctx) return;
+            ctx.clearRect(0, 0, el.width, el.height);
+            ctx.drawImage(img, 0, 0, el.width, el.height);
+          } catch {
+            /* canvas restore is best-effort */
+          }
+        };
+        img.src = src;
+      }
+    } catch {
+      /* never let a restore failure surface on the toggle path */
     }
   }
 
@@ -1381,41 +2077,42 @@ export class OverlayRenderer {
    * Show loading indicator
    */
   showLoading(imageElement: HTMLElement): HTMLDivElement {
+    // PROGRESSIVE ENHANCEMENT: the badge must NEVER obscure the image content
+    // while we translate. It is a small spinner-only chip pinned to the image's
+    // TOP-RIGHT corner (not centered over it), with no opaque backdrop covering
+    // the page. The original image stays fully visible the whole time.
     const rect = imageElement.getBoundingClientRect();
     const loading = document.createElement('div');
     loading.className = CONFIG.CSS_CLASSES.LOADING;
+    // Clamp into the viewport so a corner just off-screen still shows the chip.
+    const left = Math.max(4, Math.min(rect.right - 28, window.innerWidth - 28));
+    const top = Math.max(4, rect.top + 8);
     loading.style.cssText = `
       position: fixed;
-      left: ${rect.left + rect.width / 2 - 60}px;
-      top: ${rect.top + rect.height / 2 - 20}px;
-      background: rgba(0, 0, 0, 0.7);
-      color: white;
-      padding: 10px 20px;
-      border-radius: 4px;
-      font-family: system-ui;
-      font-size: 14px;
+      left: ${left}px;
+      top: ${top}px;
+      background: rgba(0, 0, 0, 0.45);
+      padding: 4px;
+      border-radius: 50%;
       z-index: 1000000;
       display: flex;
       align-items: center;
-      gap: 8px;
+      justify-content: center;
+      pointer-events: none;
     `;
 
     const spinner = document.createElement('div');
     spinner.className = 'manga-translator-loading-spinner';
     spinner.style.cssText = `
       display: inline-block;
-      width: 16px;
-      height: 16px;
-      border: 2px solid rgba(255, 255, 255, 0.3);
+      width: 14px;
+      height: 14px;
+      border: 2px solid rgba(255, 255, 255, 0.35);
       border-radius: 50%;
       border-top-color: white;
       animation: spin 0.6s linear infinite;
     `;
     loading.appendChild(spinner);
-
-    const text = document.createElement('span');
-    text.textContent = 'Translating...';
-    loading.appendChild(text);
 
     document.body.appendChild(loading);
     return loading;
@@ -1452,10 +2149,12 @@ export class OverlayRenderer {
   }
 
   /**
-   * Clear all overlays
+   * Clear all overlays and restore the original images underneath. Called when
+   * translation is toggled OFF (master switch / per-host disable).
    */
   clearAll(): void {
     for (const rendered of this.renderedImages.values()) {
+      this.restoreOriginal(rendered);
       rendered.domOverlay?.remove();
     }
     this.renderedImages.clear();
@@ -1489,8 +2188,106 @@ export class OverlayRenderer {
 
 /* -------------------------- utility helpers -------------------------- */
 
-function clamp(v: number, lo: number, hi: number): number {
-  return v < lo ? lo : v > hi ? hi : v;
+/**
+ * Character substitutions mirroring the backend refit_final_composites
+ * _DISPLAY_REPLACE map. The Latin display fonts (Anton/Bangers) only cover
+ * ASCII + a sliver of Latin-1, so non-ASCII punctuation is remapped to an
+ * ASCII equivalent to avoid tofu squares. Keep in sync with the backend.
+ */
+const DISPLAY_REPLACE: Record<string, string> = {
+  '…': '...', // …
+  '⋯': '...', // ⋯
+  '—': '-', // em-dash
+  '–': '-', // en-dash
+  '−': '-', // minus
+  'ー': '-', // ー prolonged sound mark
+  '‘': "'",
+  '’': "'",
+  '“': '"',
+  '”': '"',
+  '«': '"',
+  '»': '"',
+  '「': '"',
+  '」': '"',
+  '『': '"',
+  '』': '"',
+  '（': '(',
+  '）': ')',
+  '。': '.',
+  '、': ',',
+  '．': '.',
+  '，': ',',
+  '？': '?',
+  '！': '!',
+  '：': ':',
+  '；': ';',
+  '・': '.',
+  '·': '.',
+  '〜': '~',
+  '～': '~',
+  '　': ' ', // ideographic space
+  '​': '', // zero-width space
+  '‌': '',
+  '‍': '',
+  '﻿': '',
+};
+
+/** Axis-aligned overlap test for two ink rects (mirrors _rects_overlap). */
+function rectsOverlap(a: PlacedRect, b: PlacedRect, pad = 0): boolean {
+  return (
+    a.x0 < b.x1 + pad &&
+    b.x0 < a.x1 + pad &&
+    a.y0 < b.y1 + pad &&
+    b.y0 < a.y1 + pad
+  );
+}
+
+const SFX_MAX_CHARS = 16;
+
+/**
+ * Shorten a verbose SFX gloss to onomatopoeia length for a small clamped box,
+ * mirroring the backend _truncate_sfx_text. Only applies when the box is
+ * SFX-sized; already-short strings pass through unchanged.
+ */
+function truncateSfxText(text: string, sfxSized: boolean): string {
+  if (!text) return text;
+  const s = text.trim();
+  if (s.length <= SFX_MAX_CHARS || !sfxSized) return s;
+  // Prefer a clean word boundary within the budget.
+  const words = s.replace(/,/g, ' ').split(/\s+/).filter(Boolean);
+  let out = '';
+  for (const w of words) {
+    const trial = (out ? `${out} ${w}` : w).trim();
+    if (trial.length > SFX_MAX_CHARS) break;
+    out = trial;
+  }
+  if (!out) out = s.slice(0, SFX_MAX_CHARS); // single very long word
+  return out;
+}
+
+/**
+ * Replicate the backend normalize_for_display: substitute font-incompatible
+ * characters with ASCII equivalents (fullwidth ASCII letters/digits FF01..FF5E
+ * map to their U+0021.. counterparts), then the caller uppercases. Idempotent.
+ */
+function normalizeForDisplay(text: string): string {
+  if (!text) return text;
+  let out = '';
+  for (const ch of text) {
+    const direct = DISPLAY_REPLACE[ch];
+    if (direct !== undefined) {
+      out += direct;
+      continue;
+    }
+    const code = ch.codePointAt(0)!;
+    // Fullwidth ASCII range FF01..FF5E -> normal ASCII 0x21..0x7E.
+    if (code >= 0xff01 && code <= 0xff5e) {
+      out += String.fromCharCode(code - 0xff01 + 0x21);
+    } else {
+      out += ch;
+    }
+  }
+  return out;
 }
 
 interface RGB {

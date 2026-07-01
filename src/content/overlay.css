@@ -79,45 +79,59 @@
   cursor: pointer;
 }
 
-/* Font face declarations */
+/* Per-image "flag poor translation" affordance. Drawn on the DOM overlay layer
+   (never on the canvas, so backend-parity pixels are untouched). The renderer
+   also sets equivalent inline styles so this works on pages that don't load
+   overlay.css; these rules just provide the hover-reveal + state colors. */
+.manga-translator-flag-btn {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: rgba(17, 24, 39, 0.55);
+  color: #fff;
+  font-size: 13px;
+  line-height: 22px;
+  text-align: center;
+  cursor: pointer;
+  opacity: 0.25;
+  transition: opacity 0.15s ease, background 0.15s ease;
+  pointer-events: auto;
+  z-index: 1000001;
+}
+
+.manga-translator-box-layer:hover .manga-translator-flag-btn {
+  opacity: 1;
+}
+
+.manga-translator-flag-btn.flagging {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+.manga-translator-flag-btn.flagged {
+  background: rgba(16, 185, 129, 0.9);
+  opacity: 1;
+  cursor: default;
+}
+
+/* Font face declarations — only fonts shipped in public/fonts/.
+   Anton is the primary display font (matches the backend PIL renderer);
+   Bangers is used for short SFX. */
+@font-face {
+  font-family: 'Anton';
+  src: url('chrome-extension://__MSG_@@extension_id__/fonts/Anton-Regular.ttf') format('truetype');
+  font-weight: normal;
+  font-style: normal;
+}
+
 @font-face {
   font-family: 'Bangers';
   src: url('chrome-extension://__MSG_@@extension_id__/fonts/Bangers-Regular.ttf') format('truetype');
   font-weight: normal;
   font-style: normal;
-}
-
-@font-face {
-  font-family: 'Kalam';
-  src: url('chrome-extension://__MSG_@@extension_id__/fonts/Kalam-Regular.ttf') format('truetype');
-  font-weight: normal;
-  font-style: normal;
-}
-
-@font-face {
-  font-family: 'Komika Jam';
-  src: url('chrome-extension://__MSG_@@extension_id__/fonts/KOMIKAX_.ttf') format('truetype');
-  font-weight: normal;
-  font-style: normal;
-}
-
-@font-face {
-  font-family: 'Komika Slim';
-  src: url('chrome-extension://__MSG_@@extension_id__/fonts/KOMIKAH_.ttf') format('truetype');
-  font-weight: normal;
-  font-style: normal;
-}
-
-@font-face {
-  font-family: 'VTC Letterer Pro';
-  src: url('chrome-extension://__MSG_@@extension_id__/fonts/VTC-Letterer-Pro.otf') format('opentype');
-  font-weight: normal;
-  font-style: normal;
-}
-
-@font-face {
-  font-family: 'CC Wild Words';
-  src: url('chrome-extension://__MSG_@@extension_id__/fonts/CCWildWords-Italic.ttf') format('truetype');
-  font-weight: normal;
-  font-style: italic;
 }

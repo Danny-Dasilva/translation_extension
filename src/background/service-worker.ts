@@ -5,34 +5,55 @@ import browser from 'webextension-polyfill';
 import { settingsManager } from '@/services/settings-manager';
 import { webSocketClient } from '@/services/websocket-client';
 import { CONFIG } from '@/config/constants';
-import { TranslateResponse } from '@/types/api';
+import { TranslateResponse, FlagRequest, FlagResponse } from '@/types/api';
+import { logger } from '@/utils/logger';
 
-// Create context menu
+logger.setPrefix('[MT/sw]');
+
+// Create context menu.
+// NOTE: Firefox for Android does NOT implement browser.contextMenus — accessing
+// it throws and would kill the whole background script. Feature-detect and no-op
+// there (the popup toggle + content-script paths still work without menus).
 async function createContextMenu() {
+  if (!browser.contextMenus) return;
+  // Per-site activation toggle.
   await browser.contextMenus.create({
     id: 'toggle-manga-translator',
     title: 'Enable Manga Translator for this site',
     contexts: ['page', 'image'],
   });
+  // Master ON/OFF switch (global, independent of the per-site whitelist).
+  await browser.contextMenus.create({
+    id: 'toggle-translation-enabled',
+    title: 'Turn Translation OFF',
+    contexts: ['page', 'image'],
+  });
 }
 
-// Update context menu title based on current state
+// Update context menu titles based on current state
 async function updateContextMenu(hostname: string) {
+  if (!browser.contextMenus) return; // Firefox for Android: no contextMenus API
   const isEnabled = await settingsManager.isEnabledForHostname(hostname);
   await browser.contextMenus.update('toggle-manga-translator', {
     title: isEnabled
       ? `Disable Manga Translator for ${hostname}`
       : `Enable Manga Translator for ${hostname}`,
   });
+
+  const translationOn = await settingsManager.isTranslationEnabled();
+  await browser.contextMenus.update('toggle-translation-enabled', {
+    title: translationOn ? 'Turn Translation OFF' : 'Turn Translation ON',
+  });
 }
 
 // Initialize extension on install
 browser.runtime.onInstalled.addListener(async (details) => {
   if (details.reason === 'install') {
-    console.log('Manga Translator installed');
+    logger.info('Manga Translator installed');
 
-    // Initialize default settings
-    await settingsManager.loadSettings();
+    // Initialize default settings + mirror verbose flag into the logger.
+    const settings = await settingsManager.loadSettings();
+    logger.setVerbose(settings.showDebugInfo);
 
     // Create context menu
     await createContextMenu();
@@ -40,15 +61,47 @@ browser.runtime.onInstalled.addListener(async (details) => {
     // Open welcome page (optional)
     // browser.tabs.create({ url: 'popup/popup.html' });
   } else if (details.reason === 'update') {
-    console.log('Manga Translator updated');
+    logger.info('Manga Translator updated');
 
     // Ensure context menu exists
     await createContextMenu();
   }
 });
 
-// Handle context menu clicks
-browser.contextMenus.onClicked.addListener(async (info, tab) => {
+/**
+ * Flip the master translation ON/OFF switch, persist it, update the context
+ * menu, and notify the content script so it clears/restores overlays. Shared by
+ * the context-menu item, the popup, and any hotkey path.
+ */
+async function applyTranslationToggle(tabId?: number, hostname?: string): Promise<boolean> {
+  const current = await settingsManager.isTranslationEnabled();
+  const next = !current;
+  await settingsManager.setTranslationEnabled(next);
+  logger.info(`Master translation switched ${next ? 'ON' : 'OFF'}`);
+
+  if (hostname) await updateContextMenu(hostname);
+
+  if (tabId !== undefined) {
+    try {
+      await browser.tabs.sendMessage(tabId, {
+        action: 'setTranslationEnabled',
+        enabled: next,
+      });
+    } catch (err) {
+      // Content script may not be injected on this page — non-fatal.
+      logger.warn('Could not notify content script of translation toggle', err);
+    }
+  }
+  return next;
+}
+
+// Handle context menu clicks.
+// Optional-chain the top-level access: Firefox for Android has no contextMenus
+// API, and an unguarded `browser.contextMenus.onClicked` here throws at module
+// load and kills the ENTIRE background script (→ all translate messages go
+// unanswered → "translation failed"). With `?.` the listener is simply not
+// registered on Android; the popup toggle drives the same logic.
+browser.contextMenus?.onClicked.addListener(async (info, tab) => {
   if (info.menuItemId === 'toggle-manga-translator' && tab?.url) {
     const url = new URL(tab.url);
     const hostname = url.hostname;
@@ -56,10 +109,10 @@ browser.contextMenus.onClicked.addListener(async (info, tab) => {
 
     if (isEnabled) {
       await settingsManager.removeActiveUrl(hostname);
-      console.log(`Disabled for ${hostname}`);
+      logger.info(`Disabled for ${hostname}`);
     } else {
       await settingsManager.addActiveUrl(hostname);
-      console.log(`Enabled for ${hostname}`);
+      logger.info(`Enabled for ${hostname}`);
     }
 
     // Update context menu title
@@ -69,6 +122,9 @@ browser.contextMenus.onClicked.addListener(async (info, tab) => {
     if (tab.id) {
       await browser.tabs.sendMessage(tab.id, { action: 'toggle' });
     }
+  } else if (info.menuItemId === 'toggle-translation-enabled') {
+    const hostname = tab?.url ? new URL(tab.url).hostname : undefined;
+    await applyTranslationToggle(tab?.id, hostname);
   }
 });
 
@@ -120,6 +176,31 @@ async function handleMessage(message: any, sender: browser.Runtime.MessageSender
       const enabled = await settingsManager.isEnabledForHostname(message.hostname);
       return { enabled };
 
+    case 'getTranslationEnabled':
+      return { enabled: await settingsManager.isTranslationEnabled() };
+
+    case 'setTranslationEnabled': {
+      // Master ON/OFF switch toggle from the popup. Persist + notify content.
+      const result = await applyTranslationToggle(message.tabId, message.hostname);
+      return { success: true, enabled: result };
+    }
+
+    case 'flagTranslation': {
+      // Forward a poor-translation report to the backend /flag endpoint.
+      // Done here (in the SW, which has host_permissions) so the cross-origin
+      // POST is not mixed-content/CORS-blocked from the page.
+      try {
+        const data = await postFlag(message.payload as FlagRequest);
+        return { success: true, data };
+      } catch (error) {
+        logger.error('Flag request failed', error);
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Flag request failed',
+        };
+      }
+    }
+
     case 'fetchImage':
       // Fetch cross-origin image and convert to base64
       try {
@@ -131,24 +212,29 @@ async function handleMessage(message: any, sender: browser.Runtime.MessageSender
         const base64 = await blobToBase64(blob);
         return { success: true, base64 };
       } catch (error) {
-        console.error('Failed to fetch image:', error);
+        logger.error('Failed to fetch image:', error);
         return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
       }
 
-    case 'translateImages':
+    case 'translateImages': {
       // Try WebSocket first, fall back to HTTP
+      const t0 = Date.now();
       try {
         const wsResult = await translateViaWebSocket(
           message.base64Images,
           message.targetLanguage
         );
         if (wsResult.success) {
+          logger.info(
+            `translate done (ws) in ${Date.now() - t0}ms`,
+            `n=${message.base64Images?.length ?? 0}`
+          );
           return wsResult;
         }
         // If WebSocket failed, fall back to HTTP
-        console.warn('WebSocket translation failed, falling back to HTTP:', wsResult.error);
+        logger.warn('WebSocket translation failed, falling back to HTTP:', wsResult.error);
       } catch (wsError) {
-        console.warn('WebSocket translation error, falling back to HTTP:', wsError);
+        logger.warn('WebSocket translation error, falling back to HTTP:', wsError);
       }
 
       // HTTP fallback
@@ -157,11 +243,13 @@ async function handleMessage(message: any, sender: browser.Runtime.MessageSender
           message.base64Images,
           message.targetLanguage
         );
+        logger.info(`translate done (http) in ${Date.now() - t0}ms`);
         return { success: true, data };
       } catch (error) {
-        console.error('Translation API call failed:', error);
+        logger.error('Translation API call failed:', error);
         return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
       }
+    }
 
     case 'translate':
       // Forward translate message to content script
@@ -214,10 +302,10 @@ browser.action?.onClicked.addListener(async (tab) => {
   
   if (isEnabled) {
     await settingsManager.removeActiveUrl(hostname);
-    console.log(`Disabled for ${hostname}`);
+    logger.info(`Disabled for ${hostname}`);
   } else {
     await settingsManager.addActiveUrl(hostname);
-    console.log(`Enabled for ${hostname}`);
+    logger.info(`Enabled for ${hostname}`);
   }
 
   // Notify content script
@@ -285,7 +373,7 @@ async function translateViaWebSocket(
 
     return { success: true, data: result };
   } catch (error) {
-    console.error('WebSocket translation error:', error);
+    logger.error('WebSocket translation error:', error);
     return {
       success: false,
       error: error instanceof Error ? error.message : 'WebSocket translation failed',
@@ -323,4 +411,39 @@ async function translateViaHttp(
   return await response.json();
 }
 
-console.log('Manga Translator: Background service worker loaded');
+/**
+ * POST a poor-translation report to the backend /flag endpoint.
+ *
+ * The body field names are the EXACT snake_case contract the backend expects
+ * (image_base64, page_url, target_language, boxes[].{ocr_text, translated_text,
+ * minX, minY, maxX, maxY}). The payload is built on the content side and passed
+ * through verbatim — we only add auth headers here.
+ */
+async function postFlag(payload: FlagRequest): Promise<FlagResponse> {
+  const settings = await settingsManager.getSettings();
+  const endpoint = CONFIG.DEFAULT_API_ENDPOINT;
+
+  const response = await fetch(`${endpoint}/flag`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(settings.apiKey && { Authorization: `Bearer ${settings.apiKey}` }),
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    let detail = `Flag request failed: ${response.status}`;
+    try {
+      const err = await response.json();
+      detail = (err as { detail?: string }).detail || detail;
+    } catch {
+      /* response had no JSON body */
+    }
+    throw new Error(detail);
+  }
+
+  return (await response.json()) as FlagResponse;
+}
+
+logger.info('Background service worker loaded');

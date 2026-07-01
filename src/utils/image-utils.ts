@@ -167,17 +167,28 @@ export async function compressBase64Image(
   }
 
   const base64Data = base64OrUrl.split(',')[1] || base64OrUrl;
-  const sizeInMB = (base64Data.length * 3) / 4 / (1024 * 1024);
 
-  if (sizeInMB <= maxSizeMB) {
+  // OPT 7: exact decoded-byte size. Base64 packs 3 bytes per 4 chars, but the
+  // trailing '=' padding chars carry NO data — the old `length * 3/4` ignored
+  // padding and so OVER-estimated by up to 2 bytes, which on a borderline image
+  // could trip a needless lossy re-encode. Subtract the padding to get the true
+  // decoded byte count, then compare against the byte limit directly (avoids
+  // an extra /1024/1024 round-trip and its float drift).
+  const padding = base64Data.endsWith('==') ? 2 : base64Data.endsWith('=') ? 1 : 0;
+  const sizeInBytes = (base64Data.length * 3) / 4 - padding;
+  const maxSizeBytes = maxSizeMB * 1024 * 1024;
+
+  if (sizeInBytes <= maxSizeBytes) {
     return base64OrUrl;
   }
 
   // Load image
   const img = await loadImageFromBase64(base64OrUrl);
 
-  // Calculate scale factor
-  const scale = Math.sqrt(maxSizeMB / sizeInMB);
+  // Calculate scale factor. Ratio is unit-independent: maxBytes/curBytes ==
+  // maxMB/curMB, so the chosen scale is identical to the prior MB-based math
+  // (only the over-limit branch reaches here, so the divisor is non-zero).
+  const scale = Math.sqrt(maxSizeBytes / sizeInBytes);
   const newWidth = Math.floor(img.width * scale);
   const newHeight = Math.floor(img.height * scale);
 
