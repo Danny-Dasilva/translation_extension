@@ -67,6 +67,7 @@ from app.utils.page_units import (  # noqa: E402
 )
 from app.utils.bubble_grouping import (  # noqa: E402
     dedup_adjacent_identical,
+    dedup_by_bubble,
     select_backfill_targets,
 )
 
@@ -738,10 +739,27 @@ class ChapterPipeline:
                 translations = apply_postedit_glossaries(
                     translations, kept_texts, ocr_confs=kept_confs
                 )
+            # IN-BALLOON DE-DUP ("1 balloon = 1 string"). When a speech-bubble
+            # detector ran, the bubble-keyed dedup (P2.3) collapses all-but-one EN
+            # per DETECTED balloon — independent of adjacency/orientation/length/
+            # string-equality — which SUPERSEDES the narrow adjacent-identical dedup
+            # (P2.2) for the in-balloon case. dedup_adjacent_identical stays the
+            # no-bubble-detector fallback. Mirrors the API router (translate.py).
+            if (
+                getattr(settings, "translation_bubble_dedup", True)
+                and translations
+                and bubbles
+                and len(translations) == len(kept_blocks)
+            ):
+                before = sum(1 for t in translations if t and str(t).strip())
+                translations = dedup_by_bubble(translations, kept_blocks, bubbles)
+                after = sum(1 for t in translations if t and str(t).strip())
+                if before != after:
+                    stats["bubble_deduped"] = before - after
             # P2.2 ADJACENT IDENTICAL-EN DE-DUP: collapse adjacent same-balloon
             # bubbles that render the SAME English (a duplication P1 missed) —
             # full EN on the lead bubble, continuation blanked.
-            if (
+            elif (
                 getattr(settings, "translation_adjacent_dedup", False)
                 and translations
                 and len(translations) == len(kept_blocks)

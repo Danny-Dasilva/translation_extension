@@ -158,6 +158,7 @@ def _build_inpaint_mask(
     detector_mask: Optional[np.ndarray],
     erase_only_blocks: Optional[List[dict]] = None,
     fit_rects: Optional[List[Optional[dict]]] = None,
+    leave_intact_blocks: Optional[List[dict]] = None,
 ) -> np.ndarray:
     """Mask only what will be re-rendered (kept blocks) PLUS erase-only regions.
     See app.utils.ctd_utils.build_inpaint_mask — `blocks` must be the post-filter
@@ -170,6 +171,7 @@ def _build_inpaint_mask(
         image_shape, blocks, text_lines, detector_mask,
         erase_blocks=erase_only_blocks or [],
         fit_rects=fit_rects,
+        leave_intact_blocks=leave_intact_blocks,
     )
 
 
@@ -202,6 +204,7 @@ def _run_inpaint_sync(
     bubble_rects: Optional[List[Optional[Tuple[int, int, int, int]]]],
     erase_only_blocks: Optional[List[dict]] = None,
     fit_rects: Optional[List[Optional[dict]]] = None,
+    leave_intact_blocks: Optional[List[dict]] = None,
 ) -> Optional[str]:
     """Build the erase mask, run the inpaint router (interior fill → ring fast
     path → classical → LaMa) and return the encoded plate data URL. Runs in a
@@ -210,6 +213,7 @@ def _run_inpaint_sync(
         image_np.shape, blocks, text_lines, detector_mask,
         erase_only_blocks=erase_only_blocks,
         fit_rects=fit_rects,
+        leave_intact_blocks=leave_intact_blocks,
     )
     inpainted_rgb = inpaint_service.inpaint(
         image_np, inpaint_mask, bubble_rects=bubble_rects
@@ -226,6 +230,7 @@ def _maybe_start_inpaint_task(
     fit_rects: List[Optional[dict]],
     emit,
     erase_only_blocks: Optional[List[dict]] = None,
+    leave_intact_blocks: Optional[List[dict]] = None,
 ) -> Optional["asyncio.Task"]:
     """Kick off the inpaint in a worker thread so it overlaps OCR+translate.
 
@@ -246,6 +251,7 @@ def _maybe_start_inpaint_task(
             bubble_rects,
             erase_only_blocks,
             fit_rects,
+            leave_intact_blocks,
         )
     )
 
@@ -555,6 +561,7 @@ async def process_single_image(
                     bubbles=bubbles,
                 )
                 erase_only_blocks = list(units.erase_only_blocks)
+                leave_intact_blocks = list(units.leave_intact_blocks)
                 kept_indices = list(units.kept_indices)
 
                 if not kept_indices:
@@ -597,6 +604,7 @@ async def process_single_image(
                 inpaint_task = _maybe_start_inpaint_task(
                     idx, image_np, blocks, text_lines, detector_mask, fit_rects, emit,
                     erase_only_blocks=erase_only_blocks,
+                    leave_intact_blocks=leave_intact_blocks,
                 )
                 if not settings.overlap_inpaint:
                     inpainted_b64 = await _await_inpaint_task(idx, inpaint_task)
@@ -647,6 +655,7 @@ async def process_single_image(
                     bubbles=bubbles,
                 )
                 erase_only_blocks = list(units.erase_only_blocks)
+                leave_intact_blocks = list(units.leave_intact_blocks)
 
                 filtered_count = len(ocr_texts) - len(units.kept_indices)
                 if filtered_count > 0:
@@ -681,6 +690,7 @@ async def process_single_image(
                 inpaint_task = _maybe_start_inpaint_task(
                     idx, image_np, blocks, text_lines, detector_mask, fit_rects, emit,
                     erase_only_blocks=erase_only_blocks,
+                    leave_intact_blocks=leave_intact_blocks,
                 )
 
                 # When overlap is disabled, finish inpaint before releasing the
