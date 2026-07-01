@@ -9,16 +9,22 @@ import numpy as np
 
 from app.services import _ort_init  # noqa: F401  (preload CUDA before ORT sessions)
 from app.config import settings
+from app.logging_config import setup_logging, shutdown_logging
 from app.routers import translate
 from app.routers import test_page
 from app.routers import websocket_upload
 from app.routers import inpaint
+from app.routers import flag
 
-# Configure logging
-logging.basicConfig(
+# Configure non-blocking, queue-based logging. setup_logging() attaches a
+# QueueHandler to the root logger (the only thing on the hot path — it just
+# enqueues records in microseconds) and starts a background QueueListener that
+# drains the queue into the console + a rotating JSONL file under settings.log_dir.
+# It clears any pre-existing root handlers, so this replaces the old basicConfig.
+# The returned listener is stashed on app.state below and stopped on shutdown.
+_log_listener = setup_logging(
+    log_dir=settings.log_dir,
     level=logging.INFO if settings.debug else logging.WARNING,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    force=True  # Force reconfiguration even if uvicorn already set up handlers
 )
 
 logger = logging.getLogger(__name__)
@@ -139,6 +145,9 @@ async def lifespan(app: FastAPI):
 
     yield
     logger.info("Shutting down Manga Translation API")
+    # Flush and stop the background logging QueueListener so queued records are
+    # written before the process exits (and the drain thread doesn't leak).
+    shutdown_logging()
 
 
 # Create FastAPI app
@@ -148,6 +157,11 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan
 )
+
+# Keep a live reference to the logging QueueListener so its background drain
+# thread isn't GC'd while the app runs. shutdown_logging() (called on lifespan
+# shutdown) stops it via the module-level handle in logging_config.
+app.state.log_listener = _log_listener
 
 # Pure ASGI middleware for timing (5x faster than BaseHTTPMiddleware)
 # BaseHTTPMiddleware has known performance issues - causes 5x RPS reduction
@@ -167,20 +181,29 @@ class TimingMiddleware:
 
 app.add_middleware(TimingMiddleware)
 
-# Add CORS middleware
+# Add CORS middleware.
+# allow_credentials MUST be False when allow_origins is the "*" wildcard — that
+# combination is invalid per the CORS spec and browsers reject the preflight,
+# which broke chrome-extension:// / moz-extension:// fetches. The extension sends
+# no cookies; it authenticates via an Authorization header, which allow_headers
+# =["*"] already permits. So wildcard origins + credentials=False is correct and
+# lets chrome-extension:// and moz-extension:// origins through.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.get_cors_origins(),
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Include routers
+# Include routers. None use a path prefix, so /flag is reachable at the top
+# level (http://<host>:8001/flag) — same level as /translate — which is what the
+# extension POSTs to. CORS is inherited from the global CORSMiddleware above.
 app.include_router(translate.router, tags=["translation"])
 app.include_router(test_page.router)
 app.include_router(websocket_upload.router)
 app.include_router(inpaint.router)
+app.include_router(flag.router)
 
 
 @app.get("/")
