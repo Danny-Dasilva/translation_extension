@@ -421,14 +421,38 @@ def main() -> int:
     logger.info("LoRA sections (trainable tensor counts): {}", sections)
     logger.info("trainable params: {:,} / {:,} ({:.4%})",
                 trainable, total, trainable / total)
-    if sections.get("vision_tower", 0) == 0:
-        logger.error(
-            "VISION TOWER GOT NO LoRA — Phase-1 requires adapting the Qwen3-VL "
-            "vision tower. unsloth likely did not recognize the visual.* modules. "
-            "Fix: confirm the module names via --inspect and pass an explicit peft "
-            "target_modules regex, or upgrade unsloth. Bailing rather than "
-            "training a text-only LoRA under a vision banner.")
-        return 3
+    # Objective-aware audit: for the image-context POC the vision tower MUST be
+    # adapted (bail if it wasn't); for the TEXT-ONLY SHIP objective
+    # (finetune_vision_layers=false) the inverse holds — the vision tower must be
+    # UNTOUCHED and the language stack must be adapted.
+    vision_on = bool(lcfg["finetune_vision_layers"])
+    vt_count = sections.get("vision_tower", 0) + sections.get("merger", 0)
+    lm_count = sections.get("language_model", 0)
+    if vision_on:
+        if vt_count == 0:
+            logger.error(
+                "VISION TOWER GOT NO LoRA — the image-context objective requires "
+                "adapting the Qwen3-VL vision tower. unsloth likely did not "
+                "recognize the visual.* modules. Fix: confirm the module names via "
+                "--inspect and pass an explicit peft target_modules regex, or "
+                "upgrade unsloth. Bailing rather than training a text-only LoRA "
+                "under a vision banner.")
+            return 3
+    else:
+        # text-only ship objective
+        if lm_count == 0:
+            logger.error(
+                "TEXT-ONLY objective (finetune_vision_layers=false) but the "
+                "language stack got NO LoRA (language_model==0). Nothing would "
+                "train. Bailing — check the module-name mapping via --inspect.")
+            return 3
+        if vt_count != 0:
+            logger.warning(
+                "finetune_vision_layers=false but vision_tower/merger LoRA "
+                "count={} (expected 0) — the vision tower was unexpectedly "
+                "adapted.", vt_count)
+        logger.info("text-only LoRA confirmed: language_model={} vision_tower={}",
+                    lm_count, vt_count)
 
     # ---- build the (mixed) vision chat dataset -------------------------------
     data_path = _abs(cfg_data["train_path"])
