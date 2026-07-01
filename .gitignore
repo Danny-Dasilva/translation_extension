@@ -79,3 +79,29 @@ dev/visual-test/out/
 # ===== eval_vision result artifacts (regenerable) =====
 backend/scripts/eval_vision/*_results.json
 backend/scripts/eval_vision/*_ctd-lines.json
+
+# ===== Benchmark / audit artifacts (27GB+, regenerable; never commit) =====
+# (mirrors the .benchmark/ rule; .bench/ holds composites, renders, scorecards)
+backend/.bench/
+backend/logs/
+backend/data/
+backend/test.txt
+backend/scripts/data/corpus_bitext/validation_out/
+
+# ===== Editor / config backups (scratch) =====
+*.bak
+*.bak_*
+
+# ===== Local Claude Code / tldr tooling (per-machine, auto-generated) =====
+backend/.claude/
+backend/.claudeignore
+backend/.tldrignore
+
+# ===== Generated training renders / POC data (regenerable; derived from =====
+# license-restricted manga source imagery — never commit) =====
+backend/scripts/data/**/*.webp
+backend/scripts/data/**/numbered_images/
+backend/scripts/data/v12vision/data_poc_image*.jsonl
+
+# ===== External nested clone (comic-text-detector training repo — has own .git) =====
+training/comic-text-detector/
