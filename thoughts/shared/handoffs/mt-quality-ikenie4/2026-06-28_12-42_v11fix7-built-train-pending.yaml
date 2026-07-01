@@ -1,0 +1,73 @@
+---
+session: mt-quality-ikenie4
+date: 2026-06-28
+status: partial
+outcome: PARTIAL_PLUS
+---
+
+goal: Re-validated v11fix6 (ch4+ch5), upgraded eval gold to Qwen3-VL-8B, ran a full 236-page quality audit, shipped post-edit quick wins, audited the trained model+dataset, and BUILT the Phase-1 v11fix7 corrective parquet (training pending — box GPU busy)
+now: Train v11fix7 on the BOX once its Ornith job frees — scp scripts/data/v11fix7/data_v11fix7_pagecontext.parquet to box, run the sft_gemma4_e4b_v10it.py recipe pointed at it, merge LoRA, eval on the Qwen3-VL gold harness. In parallel build the Phase-2 multimodal POC scaffolding. Also commit the large uncommitted diff.
+test: cd backend && .venv/bin/python -m pytest tests/unit/test_address_glossary.py tests/unit/test_output_sanitize.py tests/unit/test_translation_postedit.py -q   # 124 pass
+
+done_this_session:
+  - task: Re-validated v11fix6 by regenerating Ikenie 4 (134pg) + 5 (102pg) FRESH through the real pipeline (local ONNX OCR/detect -> v11fix6 bf16 served on the BOX vLLM; no local stacking). ch4 re-eval (Qwen2.5 gold) certified PASS p=0.048; ch5 added (was never evaluated before)
+    files: [backend/.bench/ikenie4_v11fix6_box_insp, backend/.bench/ikenie5_v11fix6_box_insp, backend/.bench/regen_v11fix6_box.sh]
+  - task: Diagnosed the pronoun root-cause (4-agent page-by-page audit) - it's PERSON-COLLAPSE / 3rd-person avoidance (model never emits he/she/they, collapses pro-drop to I/you, swaps speaker<->addressee), a MODEL reasoning limit (~67% had referent on-page); fix6's "pronoun_gender probe 2/4->4/4" was MISLEADING (model avoids gendered pronouns entirely)
+    files: []
+  - task: Selected Qwen3-VL-8B as the gold-OCR model (research; Unlimited-OCR + Gemma rejected); rebuilt ch4+ch5 vision-gold with it (FP8, coord-norm 1000) and re-scored both
+    files: [backend/scripts/eval/transcribe_gt_vision.py, backend/scripts/eval/build_predictions_for_gold.py, backend/scripts/eval/data/ikenie4/gold_q3.jsonl, backend/scripts/eval/data/ikenie5/gold_q3.jsonl]
+  - task: "Garble-gate analysis: a confidence/heuristic tighten is UNJUSTIFIED (chrF flat across conf bands; garble carries FALSELY-HIGH conf; real fix = image->EN VLM fallback). Did NOT change the gate."
+    files: [backend/app/utils/ocr_confidence_gate.py]
+  - task: "Full 236-page quality audit (7 agents): dialogue accuracy ~65-70%; root cause MODEL ~60% / OCR ~25% / PIPELINE ~15%. Top issues: おばさん->'Old lady' register (most frequent), pronoun collapse, page-context FABRICATION on short fragments, bubble-merge omission bug, name instability, garble hallucination"
+    files: []
+  - task: "Shipped post-edit QUICK WINS (no retrain, both batch+WS paths): おばさん->'Auntie' lock (71 fixes ch4+ch5) + markdown/assistant-refusal strip. 124 post-edit tests pass."
+    files: [backend/app/services/address_glossary.py, backend/app/services/output_sanitize.py, backend/app/services/translation_postedit.py, backend/tests/unit/test_address_glossary.py, backend/tests/unit/test_output_sanitize.py]
+  - task: "Audited the v11/v11fix6 training recipe + dataset (agent); BUILT the Phase-1 v11fix7 corrective parquet (295,371 rows = base + 1125 gold corrective x3 from the NEW Qwen3-VL gold ch4+ch5 + voice_addressee_probe(18)+reverse_sense(36, human_en authored) slices x4). Validated, prompts byte-exact, NSFW 16.46%."
+    files: [backend/scripts/data/v11fix7/build_v11fix7_corrective.py, backend/scripts/data/v11fix7/data_v11fix7_pagecontext.parquet, backend/scripts/data/v11fix7/corrective_stats.json]
+
+blockers:
+  - Box GPU (100.64.235.63) is running another worker's Ornith benchmark (~25GB) -> v11fix7 TRAINING is blocked until it frees.
+  - NAS bulk corpus: data/manga_datasets/merged/ has 134k aligned PAGE-IMAGE pairs + 56k strict gallery pairs but NO text, AND the aligned images are MISSING from the mount (CIFS reaping) -> needs image-restore + EN-OCR + bubble-align before it yields (jp,en) text.
+
+questions:
+  - Train v11fix7 on the box when free (queue a watcher + auto-launch?), and start Phase-2 multimodal POC scaffolding in parallel, or hold Phase-2 until v11fix7 result is in? (user leaning: do both, sequential on box.)
+
+decisions:
+  - qwen3vl_gold_is_the_upgrade: Qwen3-VL-8B beats Qwen2.5-VL-7B on OCR+grounding (OCRBench 905 vs 864, native bbox); served FP8 LOCALLY (bf16 wouldn't fit alongside the videonest co-tenant; FP8 near-lossless, validated IoU 0.94). Box freed for Ornith mid-session.
+  - dont_tighten_garble_gate: confidence does NOT predict translation quality (chrF flat across bands) and garble carries falsely-high conf, so any tighten regresses real dialogue. The gate is already conservative/well-tuned.
+  - v11fix7_from_gold_not_nas: the NAS corpus needs a multi-day build; the Qwen3-VL gold (ch4+ch5) + the already-on-disk-but-untrained slices ARE the ready Phase-1 data.
+  - auntie_postedit_not_name_glossary: per user, lock おばさん->Auntie (deterministic post-edit) but skip a character-name glossary.
+
+findings:
+  - eval_results_on_qwen3_gold: ch4 v11fix6 vs v11 chrF++ 13.51 vs 12.25 Delta=+1.26 CI95[-0.035,+2.456] p=0.054 (near-miss, 0 probe regress); ch5 v11fix6 absolute chrF++ 25.52 BLEU 18.10 (100% coverage). Qwen3 gold gives higher absolute chrF than Qwen2.5 (cleaner reference). v11fix6 is a real-but-marginal win (~+1.2, p~0.05).
+  - dataset_audit_key: v11 recipe = LoRA r16/a32 on language_model.* ONLY (text-only by construction), 1 epoch, LR 2e-4, 293k rows (manga 45% 2x, vn/eroge 25%, 47.6% page-context). v11fix6 corrective tiny (0.54%, 100% Ikenie4-NSFW). THE TARGETED FIX DATA ALREADY EXISTS UNTRAINED on disk (voice_addressee_probe, reverse_sense, seed_cleanocr_pairs[1085, human_en empty]); おばさん has no taught convention; no multimodal supervision.
+  - phase1_unlock: this session's Qwen3-VL gold is exactly what seed_cleanocr_pairs was waiting for -> v11fix7 doubles the gold corrective (1125 vs 530) and adds the voice/sense slices.
+
+worked:
+  - hybrid GPU: heavy LLM (translation + Qwen3-VL) on the box/local 5090, light ONNX OCR local pointed at the endpoint -> removes the documented local crash (stacking). FP8 + --max-num-seqs 2 fit Qwen3-VL alongside videonest.
+  - chapter-agnostic eval scripts: transcribe_gt_vision.py --src-prefix/--missing-gt-page/--coord-norm 1000 (Qwen3 0-1000 bbox rescale) + build_predictions_for_gold.py regex ^[^:]+: -> both chapters score.
+  - mirroring build_v11fix6_corrective.py for v11fix7 (reused its pure helpers + the v11 prompt builders to stay train/serve byte-exact).
+
+failed:
+  - serving Qwen3-VL-8B BF16 locally: weights 17GB + videonest 11GB -> no KV room ("No available memory for cache blocks"). FP8 (9GB) + max-num-seqs 2 is the fix.
+  - bbox-spatial gold is too NOISY per-bubble (liberal scanlation + alignment offsets) to validate a per-bubble gate change, though great for the aggregate chrF delta.
+
+next:
+  - Train v11fix7 on the box when Ornith frees: scp data_v11fix7_pagecontext.parquet -> box ~/manga-translate-train, run scripts/train/sft_gemma4_e4b_v10it.py with a v11fix7 yaml (copy gemma4_e4b_v11_pagecontext_sft.yaml, point at the parquet), merge LoRA, eval via run_ikenie4_regression.sh --gold gold_q3.jsonl vs the v11 baseline + ch5 absolute. Gate: chrF up, no probe regress.
+  - Phase-2 multimodal POC (greenfield): unsloth Gemma-4 vision-LoRA trainer (extend target modules to vision tower/projector) + an image+page-context dataset starting from the Ikenie gold pages (have images + pairs) + a multimodal serve path.
+  - Remaining non-model quick wins: short-fragment serve-routing guard (route <=~6-char bubbles to the PLAIN prompt to stop page-context fabrication), the pipeline bubble-MERGE omission bug (~15-22 empties/range), empty-output retry, SFX/moan lexicon.
+  - NAS bulk corpus (later/bigger): restore images + add EN-OCR + bubble-alignment to data/manga_datasets/merged/ to mint ~134k page-pair text rows.
+  - COMMIT the large uncommitted diff (quick-win services + tests, eval-script changes, v11fix7 builder + parquet[gitignored]).
+
+files:
+  created:
+    - backend/app/services/{address_glossary.py, output_sanitize.py}, backend/tests/unit/{test_address_glossary.py, test_output_sanitize.py}
+    - backend/scripts/data/v11fix7/{build_v11fix7_corrective.py, data_v11fix7_pagecontext.parquet, corrective_stats.json, corrective_rows.sample.jsonl}
+    - backend/scripts/eval/data/ikenie4/gold_q3.jsonl, backend/scripts/eval/data/ikenie5/gold_q3.jsonl (+ gold_full_q3.jsonl ch4)
+    - backend/.bench/{ikenie4_v11fix6_box_insp, ikenie5_v11fix6_box_insp, regen_v11fix6_box.sh, rebuild_gold_qwen3vl.sh}
+    - backend/scripts/eval/scorecards/{ikenie4,ikenie5}/*_q3.json (per_bubble_v11fix6_q3, paired, etc.)
+    - box: ~/box_serve_qwen3vl.sh, ~/box_serve_v11fix6.sh (tmux serve scripts; box now clean/running Ornith)
+  modified:
+    - backend/app/services/translation_postedit.py (added lock_address_terms + strip_model_artifacts to the chain)
+    - backend/scripts/eval/transcribe_gt_vision.py (--src-prefix, --missing-gt-page, --vlm-endpoint/--vlm-model, --coord-norm + 0-1000 rescale + VLM_PROMPT_NORM1000)
+    - backend/scripts/eval/build_predictions_for_gold.py (_SRC_RE chapter-agnostic ^[^:]+:)

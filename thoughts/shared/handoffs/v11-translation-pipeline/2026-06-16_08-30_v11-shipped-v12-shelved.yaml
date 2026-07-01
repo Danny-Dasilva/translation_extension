@@ -1,0 +1,82 @@
+---
+session: v11-translation-pipeline
+date: 2026-06-16
+status: complete
+outcome: SUCCEEDED
+---
+
+goal: Diagnosed manga-translation errors to a train/serve format mismatch; trained+shipped v11 page-context model (fixes self-ref/comparative/coreference/vocab); v12 NSFW-oversampling experiment regressed and is shelved
+now: Optionally commit the uncommitted v12 data-loader tooling (reusable) OR salvage the NSFW-register goal by auditing the DPO/chat NSFW pairs for euphemism; otherwise the v11 arc is done and serving in production
+test: cd backend && PORT=8765 SKIP_MERGE=1 GPU_UTIL=0.6 bash scripts/eval/serve_v10it_vllm.sh & (wait ~80s) ; VLLM_BASE_URL=http://127.0.0.1:8765/v1 .venv/bin/python scripts/batch_translate_chapter.py --input-dir "<chapter>" --out-dir .bench/check --inspect-dir .bench/check_insp --pages 5,57
+
+done_this_session:
+  - task: Perf — vectorized CTD _parse_blocks (64512 rows iterated in Python -> numpy prefilter, -176ms) + rect close kernel (-18ms); detect 218ms->~20ms
+    files: [backend/app/services/ctd_service.py]
+  - task: 5-agent visual diagnosis of 12 Part13 pages -> classified each gap as OCR/translation/rendering; #1 root cause = page-context translation silently falling back to per-bubble isolation
+    files: [backend/scripts/batch_translate_chapter.py]
+  - task: Quality fixes — orphan-line recovery + overlap-merge, OCR confidence gate, confidence-gated hybrid OCR (AR re-OCR low-conf crops), compose_final bbox-clamp+collision, garble guard
+    files: [backend/app/utils/orphan_lines.py, backend/app/utils/ocr_confidence_gate.py, backend/app/services/parseq_ocr_service.py, backend/scripts/refit_final_composites.py, backend/app/routers/translate.py]
+  - task: ROOT CAUSE found — v10 SFT'd on single-line ("Japanese:{jp}") but served as multi-line numbered-block = off-distribution. Verified by reading sft script + config.
+    files: [backend/scripts/train/sft_gemma4_e4b_v10it.py, backend/training/configs/gemma4_e4b_v10it_sft.yaml]
+  - task: Built v11 page-context dataset (context-augmented single-line, 291,780 rows) + trained v11 from base (LoRA, 1 epoch ~5h) + merged + k_norm fix for vLLM + eval (fixes 5/5 error classes, no single-line regression)
+    files: [backend/scripts/data/v11/, backend/training/configs/gemma4_e4b_v11_pagecontext_sft.yaml, backend/.bench/v11_eval/]
+  - task: SHIPPED v11 to production (commit 12c904c) — serving uses v11 page-context format, serve script defaults to v11 merged_fixed; regenerated Part12+13 (99+106)
+    files: [backend/app/services/vllm_openai_translation_service.py, backend/app/config.py, backend/scripts/eval/serve_v10it_vllm.sh]
+  - task: Trained v12 (518k rows, NSFW 36%) + ran v11-vs-v12 quality comparison on locked validation set -> v12 REGRESSED, shelved
+    files: [backend/training/configs/gemma4_e4b_v12_pagecontext_sft.yaml, backend/.bench/model_compare_eval/]
+
+blockers: []
+
+questions:
+  - Commit the v12 data-loader tooling (load_vntl_chat/dpo, opensubtitles, alt_parallel, parallelfiction_v2, doujin) or leave uncommitted? It is reusable data infra from the shelved v12 experiment.
+  - Restore transformers 5.12.0 in backend/.venv, or keep 5.8.0 (needed for unsloth training; serving verified OK at 5.8.0)?
+
+decisions:
+  - serving_must_match_training_format: the whole error class came from v10 single-line training served as multi-line; v11 trains on the served (context-augmented single-line) format
+  - context_augmented_single_line_not_numbered_block: N calls/page (one output each, prefix-cacheable) > numbered-block which is N-in/N-out alignment-fragile and collapsed v10/v11 untrained on it
+  - keep_v11_shelve_v12: v12 NSFW-oversample regressed held-out NSFW chrF++ (-0.64), page-context (-1.38), eroge-vocab probes (7/9->4/9)
+  - transformers_pin_5_8_0: unsloth 2026.5.2 fails to load Gemma4 on transformers 5.12.0; 5.8.0 is the proven combo
+
+findings:
+  - v12_nsfw_backfired: more DPO/chat NSFW data taught EUPHEMISM (オチンチン->"it", dropped anatomy) — opposite of intent; audit pairs before retrying
+  - merged_knorm_quirk: transformers 5.8.0 save dedups tied k_norm (layers 24-41) -> vLLM rejects; fix = restore via model-knorm-extra.safetensors -> use merged_fixed/ (both v10 and v11)
+  - gpu_util_06_for_batch: vLLM at 0.72 OOMs the batch's ONNX models (CTD+2xPARSeq+LaMa); 0.6 leaves ~7GB headroom and completes 205/205
+  - E4B_is_8B: gemma-4-E4B is ~8B raw params (MatFormer), ~16GB bf16 weights; vLLM "24GB" is mostly gpu_memory_utilization preallocation + MTP drafter
+  - nas_cifs_reaps: /mnt/nas (CIFS) silently empties _translated_* dirs ~9min after write — output to local disk
+
+worked:
+  - per-page inspection artifacts (bubbles.json: ocr_jp+translation_en) to isolate OCR vs translation vs rendering across parallel diagnosis agents
+  - built-in dry-run (--out-suffix _dryrun, 100 steps) caught the transformers 5.12 env break before the 5h run
+  - locked validation harness (backend/.bench/model_compare_eval/run_compare.py) scoring both models identically on held-out + NSFW/slang slice + 51 probes
+failed:
+  - v12 NSFW oversampling (regressed all target metrics)
+  - serving the v11 merged/ dir directly (vLLM rejects missing k_norm — must use merged_fixed/)
+  - vLLM GPU_UTIL 0.72 during batch regen (OOM ~118 pages); 0.55 KV-OOMs
+
+next:
+  - Decide on v12 data-loader tooling commit (currently uncommitted)
+  - If pursuing NSFW register: audit backend/scripts/data/load_vntl_dpo.py + vntl_chat pairs for euphemism, rebuild, retrain
+  - Optional: re-bench v11 vs v10 on real chapters for a quality (not speed) delta if desired
+  - Cleanup: empty scripts/data/backend/ tree + dryrun run dirs (_dryrun) if desired
+
+files:
+  created:
+    - backend/scripts/data/v11/ (data_v11_pagecontext.parquet + builder + eval)
+    - backend/training/configs/gemma4_e4b_v11_pagecontext_sft.yaml
+    - backend/training/configs/gemma4_e4b_v12_pagecontext_sft.yaml
+    - backend/app/utils/ocr_confidence_gate.py
+    - backend/.bench/model_compare_eval/ (run_compare.py + NSFW/slang held-out + probes)
+    - backend/models/parseq_manga_ep60_AR_dynbatch.onnx (AR hybrid OCR, gitignored)
+    - backend/training/runs/manga-bubbles/gemma4_e4b_v11_pagecontext/ (final + merged_fixed)
+  modified:
+    - backend/app/services/vllm_openai_translation_service.py
+    - backend/app/services/parseq_ocr_service.py
+    - backend/app/services/ctd_service.py
+    - backend/app/services/translation_text_utils.py
+    - backend/app/utils/orphan_lines.py
+    - backend/app/routers/translate.py
+    - backend/app/config.py
+    - backend/scripts/refit_final_composites.py
+    - backend/scripts/batch_translate_chapter.py
+    - backend/scripts/train/sft_gemma4_e4b_v10it.py
+    - backend/scripts/eval/serve_v10it_vllm.sh

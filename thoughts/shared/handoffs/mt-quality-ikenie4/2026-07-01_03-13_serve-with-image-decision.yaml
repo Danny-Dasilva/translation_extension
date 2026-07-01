@@ -1,0 +1,86 @@
+---
+session: mt-quality-ikenie4
+date: 2026-07-01
+status: partial
+outcome: PARTIAL_PLUS
+---
+
+goal: >
+  Resumed the v11fix8 MT-quality thread, then ran a full quality program: shipped+validated Phase-0 pipeline
+  fixes (visual/coverage half now GOOD), and ran a decision-forcing model-upgrade experiment. DECISION (evidenced
+  on a 148-case held-out POV set): SHIP abliterated-Qwen3-VL-8B + text-only SFT + SERVE-WITH-THE-PAGE-IMAGE
+  (48% POV, +16pt); DO NOT fund image-context TRAINING (−4pt vs that config). v11fix8 bf16 stays production;
+  v11fix9 was a wash; GPTQ-INT4 rejected.
+now: >
+  Decide: (A) land Phase-0 branch to main (small follow-ups below) and/or (B) start the ship plan — abliterated-8B
+  text-SFT on a REFUSAL-STRIPPED set, served WITH the page image. Skip image-context training entirely.
+test: cd backend && .venv/bin/python -m pytest tests/unit/ -q   # 668 pass; the 2 fails (test_logging_async request_id, test_unify_schema register tags) are PRE-EXISTING+unrelated
+
+done_this_session:
+  - task: "4 parallel threads from the prior handoff: (1) P2+P3 verified SHIPPABLE (omission rise was a metric artifact; dups 31->0); (2) P1 rework FAILED validation again (corrected-omissions 14->50, root cause is merge->resplit truncation not membership) -> shelved, flag stays False; (3) GPTQ-INT4 with a v11fix8-faithful calib still FAILS cert (chrF -2.41, reverse_sense regress) -> bf16 stays prod; (4) v11fix9 data-clean retrain FAILED to beat v11fix8 (chrF -1.92 ns)."
+    files: [backend/app/config.py, backend/scripts/quant/build_calib_v11fix8.py, backend/scripts/data/v11fix9/]
+  - task: "Furube HUMAN-translation eval: first e2e eval vs REAL human EN scanlations (Haha to Ochite Iku, JP<->EN pairs). Translation ACCEPTABLE-not-good (POV/pronoun ceiling + hallucination); visual ROUGH (residual-JP inpaint recall #1). Reusable gold + composites."
+    files: [backend/scripts/eval/data/furube/gold_furube_p*.jsonl, backend/.bench/furube_composites/, backend/.bench/audit_ab_omissions.py]
+  - task: "10-agent improvement audit across the whole pipeline -> Phase-0 no-retrain fixes IMPLEMENTED, TESTED, VISUALLY VALIDATED, COMMITTED: coverage(unconditional backfill + bubble-keyed dedup), inpaint-mask recall (+contrast/ink over-erase guard), faithfulness(source-len max_tokens cap + over-expansion gate), typeset(Comic Neue Bold + percentile 35->60 + narrow-box widen)."
+    files: [backend/app/routers/translate.py, backend/app/utils/bubble_grouping.py, backend/app/utils/ctd_utils.py, backend/app/services/lama_inpaint_service.py, backend/app/services/vllm_openai_translation_service.py, backend/app/services/translation_postedit.py, backend/scripts/refit_final_composites.py, backend/app/config.py]
+  - task: "POV zero-shot A/B (44 cases) then FINE-TUNED POC then ENLARGED (148) eval. Trained image-on + image-off LoRAs on abliterated Qwen3-VL-8B (numbered-image PBP-VIS-NUM POC). Decisive result recorded."
+    files: [backend/scripts/train/sft_qwen3vl_8b_imagectx.py, backend/scripts/data/v12vision/build_numbered_poc.py, backend/.bench/pov_ab/testset_large.json, backend/.bench/pov_ab/results_large_*.json]
+  - task: "Fixed a LATENT PRODUCTION bug: AR hybrid OCR (_ar_decode_indices) silently emptied vertical crops on AR-inference OOM; added NAR fallback. Committed."
+    files: [backend/app/services/parseq_ocr_service.py, backend/scripts/data/corpus_bitext/run_jp_avail.py]
+  - task: "Committed on branch feat/phase0-quality-fixes: 0ff124b (AR fix), d7eb3d5 (bubble-grouping), 22fd106 (Phase-0 set), 17e214c (inpaint over-erase guard). overlay-renderer.ts held (bundled prior changes)."
+    files: []
+
+blockers: []
+
+questions:
+  - "Land Phase-0 to main now, or bundle with the ship plan?"
+  - "Refusal-strip method for the abliterated text-SFT set (machine-EN NSFW targets leaked ~2% refusals)?"
+  - "Latency budget for serve-with-image (~2-4s/page vs 1.4s) acceptable for the browser extension?"
+
+decisions:
+  - ship_serve_with_image: "N=148 held-out: text-SFT abliterated-8B + page image = 48% POV (+16pt over 32% baseline). Every model gains from the image = base VLM can read the page."
+  - kill_image_training: "FT-image+image (43.9%) is -4.1pt BELOW FT-text+image (48.0%). Image-context TRAINING is NOT worth funding. Do not do Phase-2 image SFT."
+  - base_is_8b_abliterated: "huihui-ai/Huihui-Qwen3-VL-8B-Instruct-abliterated: 0 refusals + QLoRA-trainable + POV-neutral drop-in. The 30B-A3B (user's pick) refined out: 4-bit-MoE tanked POV + not trainable on 32GB."
+  - bf16_v11fix8_stays_prod: "v11fix9 data-clean wash; GPTQ-INT4 erases the corrective signal (both calibs). Ship bf16."
+  - p1_shelved: "P1 bubble-grouping failed validation twice; real blocker is merge->resplit truncation (not grouping). translation_bubble_grouping=False."
+
+findings:
+  - fine_tuning_reintroduces_refusals: "Abliterated BASE = 0 refusals, but the FT models showed ~1-3 (2%). Machine-EN NSFW targets (mined by Qwen3-VL, which itself refuses) leaked refusals into the SFT set -> MUST strip refusals from training targets."
+  - vision_tower_usable: "Gemma-4 E4B vision tower is NOT architecturally unusable (memory was wrong); vLLM serves it. But 4B is the discourse ceiling; the lever is a 7-8B VLM base + serve-with-image."
+  - eval_caveats: "chrF is a deflated/contaminated FLOOR (ALLCAPS+fragmented human ref; 6.5% JP-in-EN; loose IoU cross-matches). Furube gold `jp` = OUR OWN ocr (proxy, not independent CER). Use a VLM page-adequacy judge + the 148-case POV harness."
+  - inpaint_over_erase: "erase-all-detected-text raises recall but over-erases dark/screentone pages; fixed by _refine_mask_to_text_ink (local bright-reference + contrast guard) in lama_inpaint_service.py."
+
+worked:
+  - "Deterministic BACKGROUND orchestration scripts for multi-hour GPU chains (dry-run gate first; setsid nohup; done-markers + poll waiters) -- survived agent flakiness."
+  - "Dry-run BEFORE the multi-hour train caught 2 blockers (meta-tensor fix_untrained_tokens -> monkeypatch no-op; read-only max_pixels -> write size-dict)."
+  - "unsloth 2026.6.7 / transformers 5.5.0 DOES support Qwen3-VL FastVisionModel (vision LoRA attaches: vision_tower=216)."
+
+failed:
+  - "Several general-purpose agents on multi-step GPU tasks returned early / zombie-re-notified (0-tool injection-garbage OR launched-bg-and-bailed); re-spawn or DRIVE-IT-YOURSELF fixes it."
+  - "vLLM 0.22.1 rejects `--limit-mm-per-prompt image=1` (wants JSON) -> just DROP the flag (Qwen3-VL serves images by default)."
+  - "Local `pkill`/`kill`/`printf >file` in dangerouslyDisableSandbox compound commands intermittently exit 144 -> use sed/separate steps; remote ssh kill is fine."
+
+next:
+  - "Land Phase-0 to main: follow-ups = copy backend/fonts/ComicNeue-Bold.ttf -> public/fonts/; wire leave_intact_blocks into translate.py:596-598 router call; batch-path dedup parity; review/commit src/services/overlay-renderer.ts (bundled prior work)."
+  - "Ship plan: abliterated-8B text-only SFT (register + model-size POV win) on a REFUSAL-STRIPPED set; serve WITH the page image as a shared per-page prefix; latency check; skip image-context training."
+  - "Optional: automate the visual-quality metric (VLM page-adequacy judge) + a multi-signal regression gate (would have caught v11fix9's wash)."
+
+files:
+  created:
+    - thoughts/shared/plans/2026-06-30_image-context-vlm-finetune.md
+    - backend/scripts/train/sft_qwen3vl_8b_imagectx.py
+    - backend/scripts/data/v12vision/build_numbered_poc.py
+    - backend/.bench/pov_ab/testset_large.json  # 148-case held-out POV harness
+    - backend/.bench/audit_ab_omissions.py, backend/.bench/audit_3way_p1.py
+    - "box: merged FT models training/runs/.../qwen3vl_8b_imagectx_poc_{imageon,imageoff}/merged"
+    - "memory: project_furube_human_eval, project_p1_bubble_grouping_resplit, project_v11fix9_dataclean_result, reference_ar_hybrid_empty_bug (+ roadmap UPDATEs)"
+  modified:
+    - backend/app/services/parseq_ocr_service.py
+    - backend/app/services/lama_inpaint_service.py
+    - backend/app/routers/translate.py
+    - backend/app/utils/bubble_grouping.py
+    - backend/app/utils/ctd_utils.py
+    - backend/app/services/vllm_openai_translation_service.py
+    - backend/app/services/translation_postedit.py
+    - backend/scripts/refit_final_composites.py
+    - backend/app/config.py

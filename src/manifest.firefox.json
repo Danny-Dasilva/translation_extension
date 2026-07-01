@@ -12,6 +12,7 @@
   "permissions": [
     "storage",
     "activeTab",
+    "scripting",
     "contextMenus",
     "<all_urls>"
   ],

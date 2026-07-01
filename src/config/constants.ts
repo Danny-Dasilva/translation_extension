@@ -4,7 +4,7 @@
 
 // API host/port from environment variables (set in .env file)
 const API_HOST = import.meta.env.VITE_API_HOST || 'localhost';
-const API_PORT = import.meta.env.VITE_API_PORT || '8000';
+const API_PORT = import.meta.env.VITE_API_PORT || '8001';
 
 export const CONFIG = {
   // API
@@ -17,6 +17,8 @@ export const CONFIG = {
   // Image Processing
   MAX_IMAGES_PER_REQUEST: 5,
   MAX_IMAGE_SIZE_MB: 2,
+  MAIN_IMAGE_MIN_PX: 256,
+  MAIN_IMAGE_DOMINANCE: 1.5,
   
   // Polling and Observers
   CANVAS_CHECK_INTERVAL: 1000, // 1 second (matching existing extension)
@@ -39,13 +41,11 @@ export const CONFIG = {
   },
   
   // Font Settings
+  // Only ship fonts that exist in public/fonts/.
+  // Anton is the backend-parity primary; Bangers is the SFX font.
   FONTS: [
+    'Anton',
     'Bangers',
-    'Kalam',
-    'Komika Jam',
-    'Komika Slim',
-    'VTC Letterer Pro',
-    'CC Wild Words',
   ] as const,
   
   DEFAULT_FONT_SIZE_RANGE: {

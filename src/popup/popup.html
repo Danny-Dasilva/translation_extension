@@ -119,10 +119,78 @@
       background: #fee2e2;
       color: #991b1b;
     }
+
+    /* Master ON/OFF switch row. */
+    .master-switch {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 12px;
+      margin-bottom: 16px;
+      border-radius: 6px;
+      background: #f1f5f9;
+    }
+
+    .master-switch .master-label {
+      font-size: 14px;
+      font-weight: 600;
+      margin: 0;
+    }
+
+    .switch {
+      position: relative;
+      display: inline-block;
+      width: 46px;
+      height: 26px;
+      flex: none;
+    }
+
+    .switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+
+    .switch .slider {
+      position: absolute;
+      cursor: pointer;
+      inset: 0;
+      background: #cbd5e1;
+      transition: 0.2s;
+      border-radius: 26px;
+    }
+
+    .switch .slider::before {
+      content: "";
+      position: absolute;
+      height: 20px;
+      width: 20px;
+      left: 3px;
+      bottom: 3px;
+      background: white;
+      transition: 0.2s;
+      border-radius: 50%;
+    }
+
+    .switch input:checked + .slider {
+      background: #10b981;
+    }
+
+    .switch input:checked + .slider::before {
+      transform: translateX(20px);
+    }
   </style>
 </head>
 <body>
   <h1>Manga Translator</h1>
+
+  <div class="master-switch">
+    <span class="master-label" id="master-label">Translation: ON</span>
+    <label class="switch" title="Turn translation on/off everywhere">
+      <input type="checkbox" id="translation-enabled" />
+      <span class="slider"></span>
+    </label>
+  </div>
 
   <button id="toggle-site" class="toggle-enable">Enable for This Site</button>
 

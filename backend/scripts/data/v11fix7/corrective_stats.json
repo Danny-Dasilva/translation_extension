@@ -1,0 +1,28 @@
+{
+  "base_rows": 291780,
+  "gold_corrective_unique": 1125,
+  "gold_corrective_pagectx": 656,
+  "gold_corrective_plain": 469,
+  "gold_corrective_upweighted": 3375,
+  "corr_upweight": 3,
+  "slice_rows_unique": 54,
+  "slice_upweighted": 216,
+  "slice_upweight": 4,
+  "reverse_sense_filled": 36,
+  "recased": 1003,
+  "per_chapter": {
+    "ikenie4": {
+      "clean": 515,
+      "divergent": 479,
+      "anchors_kept": 36
+    },
+    "ikenie5": {
+      "clean": 610,
+      "divergent": 487,
+      "anchors_kept": 123
+    }
+  },
+  "total_rows": 295371,
+  "nsfw_rows": 48612,
+  "nsfw_frac": 0.1646
+}

@@ -32,10 +32,10 @@ from app.config import settings  # noqa: E402
 
 
 FONT_STACK = [
-    BACKEND_DIR / "fonts" / "Anton-Regular.ttf",      # tall condensed bold — best for narration
-    BACKEND_DIR / "fonts" / "Bangers-Regular.ttf",    # comic-y — nice for SFX
+    BACKEND_DIR / "fonts" / "ComicNeue-Bold.ttf",     # PRIMARY: comic lettering — reads "human"
+    BACKEND_DIR / "fonts" / "Anton-Regular.ttf",      # fallback: tall condensed headline sans
+    BACKEND_DIR / "fonts" / "Bangers-Regular.ttf",    # comic-y — picked for SFX via pick_font
     BACKEND_DIR / "fonts" / "Oswald-Bold.ttf",        # fallback condensed
-    BACKEND_DIR / "fonts" / "ComicNeue-Bold.ttf",     # fallback rounded
     Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"),
 ]
 for p in FONT_STACK:
@@ -88,7 +88,19 @@ except Exception:  # pragma: no cover - fallback defaults
     CLAMPED_HARD_FLOOR = 12
     FONT_MAX_CAP = 96
     CONSISTENT_FONT_DEFAULT = True
-    CONSISTENT_FONT_PERCENTILE = 35
+    CONSISTENT_FONT_PERCENTILE = 60
+
+
+# NARROW-NARRATION horizontal widen (clamped, non-SFX caption columns only).
+# Tall-narrow vertical-JP narration columns cram horizontal EN one-word-per-line
+# all the way down to the hard floor because horizontal widen is otherwise off.
+# For these (never SFX/orphan boxes) we grant a BOUNDED horizontal widen onto the
+# clean inpaint plate — bounded by the image edges and by already-placed rects so
+# we never grow over earlier ink — bringing the aspect down toward the target,
+# then allow modest vertical overflow rather than shrinking below the floor.
+NARROW_WIDEN_TRIGGER: float = 2.5        # widen only columns with aspect h/w above this
+NARROW_WIDEN_TARGET_ASPECT: float = 2.0  # widen until aspect reaches this (conservative)
+NARROW_WIDEN_MAX_GROWTH: float = 2.5     # hard cap: never wider than this x original width
 
 
 def resolution_font_floor(img_h: int) -> int:
@@ -141,7 +153,7 @@ def page_dialogue_target(maxfit_sizes: list[int], floor: int,
 # Display-text normalization & font coverage
 # ---------------------------------------------------------------------------
 
-# Map characters our Latin display fonts don't support (Anton/Bangers/Oswald
+# Map characters our Latin display fonts don't support (Comic Neue/Bangers/Anton
 # only cover ASCII + a sliver of Latin-1) back to ASCII equivalents so they
 # render instead of showing as tofu squares (□). Keeps the same semantic
 # punctuation the model emits — just in a font-compatible encoding.
@@ -694,29 +706,60 @@ def compose_final(
 
         bw, bh = x1 - x0, y1 - y0
         cx, cy = (x0 + x1) // 2, (y0 + y1) // 2
+        narrow_widened = False  # set by the clamped narrow-narration widen below
 
         # Fixed-px inset preserves a consistent visual margin at any bubble size.
         inset_w = max(20, bw - inset_margin * 2)
         inset_h = max(12, bh - inset_margin * 2)
-        # FIX A.1: for clamped (no-bubble) blocks the fit box must be the BLOCK
-        # bbox, never widened — text is shrunk-to-fit to the bbox width and
-        # wrapped, and may be clipped at the bbox edge below rather than spill.
+        # FIX A.1: for clamped (no-bubble) blocks the fit box is the BLOCK bbox.
+        # SFX/orphan boxes are never widened (they're truncated to onomatopoeia and
+        # must stay put). But a tall-narrow *caption* column (vertical-JP origin)
+        # would otherwise cram horizontal EN one-word-per-line down to the hard
+        # floor — so for non-SFX captions whose aspect exceeds NARROW_WIDEN_TRIGGER
+        # we grant a BOUNDED horizontal widen onto the clean inpaint plate.
         if is_clamped:
             inset_w = max(8, bw - inset_margin * 2)
             inset_h = max(8, bh - inset_margin * 2)
+            if (bw > 0 and bh > 0 and (bh / bw) > NARROW_WIDEN_TRIGGER
+                    and not _is_sfx_sized(block) and not block.get("orphan")):
+                # Widen toward NARROW_WIDEN_TARGET_ASPECT, capped at
+                # NARROW_WIDEN_MAX_GROWTH x the original width.
+                target_w = min(bh / NARROW_WIDEN_TARGET_ASPECT,
+                               bw * NARROW_WIDEN_MAX_GROWTH)
+                if target_w > bw:
+                    nx0 = cx - target_w / 2.0
+                    nx1 = cx + target_w / 2.0
+                    # clamp to image bounds
+                    nx0 = max(0.0, nx0)
+                    nx1 = min(float(img_w), nx1)
+                    # bound by already-placed rects that vertically overlap this
+                    # column so we never grow over earlier ink.
+                    for pr in placed_rects:
+                        px0, py0, px1, py1, _ = pr
+                        if py1 <= y0 or py0 >= y1:
+                            continue
+                        if px1 <= cx:
+                            nx0 = max(nx0, px1 + 2)
+                        elif px0 >= cx:
+                            nx1 = min(nx1, px0 - 2)
+                    # never narrower than the original bbox
+                    nx0 = min(nx0, float(x0))
+                    nx1 = max(nx1, float(x1))
+                    if nx1 - nx0 > bw:
+                        x0, x1 = int(round(nx0)), int(round(nx1))
+                        bw = x1 - x0
+                        cx = (x0 + x1) // 2
+                        inset_w = max(8, bw - inset_margin * 2)
+                        narrow_widened = True
 
-        # Tall-narrow blocks come from vertical Japanese text columns. Rendering
-        # horizontal English into that skinny box forces one-word-per-line (or
-        # mid-word splits like "MO/M/MY"). Widen the fit box toward a readable
-        # aspect, centered on the block, clamped to the image — far better than
-        # cramming. Height may then overflow the original column, which is fine.
-        # Note: we deliberately do NOT widen narrow (vertical-JP-origin) blocks
-        # beyond their detected box. Widening blind to bubble geometry makes
-        # adjacent columns overlap into an unreadable jumble (CTD gives the
-        # tight text region, not the bubble interior). Proper widening needs a
-        # speech-bubble segmentation model — tracked as a follow-up. Here we
-        # keep text inside its block and rely on all-caps + the min floor +
-        # word-safe wrapping for legibility.
+        # Tall-narrow blocks come from vertical Japanese text columns. For CLAMPED
+        # (no-bubble) *caption* columns the bounded narrow-narration widen above
+        # already grew inset_w (and may overflow vertically below). For DIALOGUE
+        # (bubble-matched) blocks we deliberately do NOT widen: the matched bubble
+        # interior is already the right typesetting area, and widening blind to
+        # bubble geometry makes adjacent columns overlap into an unreadable jumble
+        # (CTD gives the tight text region, not the bubble interior). Dialogue
+        # relies on all-caps + the min floor + word-safe wrapping for legibility.
         eff_w, eff_h = inset_w, inset_h
 
         # Pick the display font, then swap in the widest-coverage fallback
@@ -733,11 +776,33 @@ def compose_final(
         if is_clamped:
             # Clamped track: independent shrink-to-fit, never below the hard
             # floor, then clip. (Behaviour preserved — only the floor value is
-            # resolution-aware now.)
+            # resolution-aware now.) A widened narrow caption uses the full
+            # readability floor (it has room now) instead of the lower hard floor.
+            clamped_floor = min_floor if narrow_widened else clamped_hard_floor
             font, lines, fitted = find_best_fit(
                 draw, text, eff_w, eff_h, font_path,
-                min_size=clamped_hard_floor, max_size=max_cap)
+                min_size=clamped_floor, max_size=max_cap)
             mw, mh = measure_block(draw, lines, font)
+            # Let a widened narrow caption overflow vertically onto the clean
+            # inpaint plate (bounded by overflow_frac, image edges, and any
+            # vertically-adjacent placed rect in this column) rather than clipping
+            # or shrinking below the readable floor.
+            if narrow_widened and mh > eff_h:
+                pad_y = int(round(bh * overflow_frac))
+                ny0 = max(0, y0 - pad_y // 2)
+                ny1 = min(img_h, y1 + pad_y // 2)
+                for pr in placed_rects:
+                    px0, py0, px1, py1, _ = pr
+                    if px1 <= x0 or px0 >= x1:
+                        continue  # not in this column
+                    if py1 <= cy:
+                        ny0 = max(ny0, py1 + 2)
+                    elif py0 >= cy:
+                        ny1 = min(ny1, py0 - 2)
+                if ny1 - ny0 > (y1 - y0):
+                    y0, y1 = int(ny0), int(ny1)
+                    cy = (y0 + y1) // 2
+                    eff_h = max(8, (y1 - y0) - inset_margin * 2)
         else:
             # Dialogue track. With page consistency ON we drive toward the
             # shared page target; otherwise we use the bubble's own max-fit.
@@ -950,7 +1015,7 @@ async def recompose_one(dir_: Path, detector, ocr_service) -> Optional[dict]:
     side.paste(Image.fromarray(final), (w + 20, 30))
     sd = ImageDraw.Draw(side)
     sd.text((10, 6), "LaMa plate", fill=(200, 200, 200), font=load_font(16))
-    sd.text((w + 30, 6), "+ translated text (Anton/Bangers, binary-fit, auto-contrast)",
+    sd.text((w + 30, 6), "+ translated text (Comic Neue/Bangers, binary-fit, auto-contrast)",
             fill=(0, 255, 180), font=load_font(16))
     side.save(dir_ / "12_final_side_by_side.png")
     non_empty = len([t for t in translations if t])

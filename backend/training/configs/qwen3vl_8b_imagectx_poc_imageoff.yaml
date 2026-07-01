@@ -1,0 +1,78 @@
+# ============================================================================
+# Qwen3-VL-8B IMAGE-CONTEXT LoRA SFT — Phase-1 POC (IMAGE-OFF control arm)
+# ============================================================================
+# SCAFFOLDING ONLY — NOT YET RUN. No GPU has touched this config.
+# Plan: thoughts/shared/plans/2026-06-30_image-context-vlm-finetune.md (§7 #1)
+# Trainer: backend/scripts/train/sft_qwen3vl_8b_imagectx.py
+#
+# CONTROL TWIN of qwen3vl_8b_imagectx_poc.yaml. IDENTICAL in every knob EXCEPT:
+#   * data.train_path  -> data_poc_imageoff.jsonl  (SAME text, NO image block)
+#   * output.dir       -> ..._imageoff
+# The image-off dataset has BYTE-IDENTICAL text/targets to the image-on dataset;
+# only the Ikenie image block is removed. Training this arm isolates the image's
+# value (pre-mortem #1):  image value = FT(image-on) − FT(image-off).
+#
+# The vision tower is STILL LoRA-adapted here (same recipe) so the ONLY
+# experimental difference between the two runs is the presence of the image
+# pixels at train time — not the adapted parameter set.
+# ============================================================================
+
+model:
+  name_or_path: huihui-ai/Huihui-Qwen3-VL-8B-Instruct-abliterated
+  dtype: bfloat16
+  max_seq_length: 2048
+  load_in_4bit: false
+  full_finetuning: false
+  max_pixels: 1048576
+  min_pixels: 200704
+
+lora:
+  r: 16
+  alpha: 32
+  dropout: 0.0
+  bias: none
+  finetune_vision_layers: true
+  finetune_language_layers: true
+  finetune_attention_modules: true
+  finetune_mlp_modules: true
+  target_modules_regex_hint: '(visual\.blocks\.\d+\.(attn|mlp)\.|visual\.merger\.|language_model\.layers\.\d+\.(self_attn|mlp)\.)'
+
+data:
+  # ONLY DIFFERENCE #1: the image-OFF dataset (same text, no image block).
+  train_path: backend/scripts/data/v12vision/data_poc_imageoff.jsonl
+  image_root: backend/scripts/data/v12vision
+  eval_size: 48
+  bucket_by_modality: false          # image-off has no image rows anyway
+
+train:
+  num_train_epochs: 1
+  per_device_train_batch_size: 1
+  gradient_accumulation_steps: 16
+  learning_rate: 1.0e-4
+  lr_scheduler_type: cosine
+  warmup_ratio: 0.03
+  max_grad_norm: 1.0
+  weight_decay: 0.01
+  bf16: true
+  optim: adamw_8bit
+  packing: false
+  completion_only_loss: true
+  logging_steps: 10
+  save_steps_pct: 0.25
+  eval_steps_pct: 0.10
+  save_total_limit: 5
+  seed: 42
+  dataloader_num_workers: 2
+  report_to: none
+  in_training_eval: false
+  resume_from_checkpoint: null
+
+output:
+  # ONLY DIFFERENCE #2: a distinct out_dir so the two arms don't collide.
+  dir: backend/training/runs/manga-bubbles/qwen3vl_8b_imagectx_poc_imageoff
+  log_file: backend/training/runs/manga-bubbles/qwen3vl_8b_imagectx_poc_imageoff/training.log
+
+dry_run:
+  enable: true
+  fraction: 0.05
+  max_steps: 30

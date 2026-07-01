@@ -115,6 +115,22 @@ export class SettingsManager {
   }
 
   /**
+   * Master ON/OFF switch for translation. Independent of the per-hostname
+   * activation whitelist: when this is OFF the content script clears overlays
+   * and stops translating new images everywhere, regardless of activeUrls.
+   */
+  async isTranslationEnabled(): Promise<boolean> {
+    const settings = await this.getSettings();
+    // Default ON when the field is absent (older stored settings).
+    return settings.translationEnabled !== false;
+  }
+
+  /** Set the master translation ON/OFF switch. */
+  async setTranslationEnabled(enabled: boolean): Promise<void> {
+    await this.saveSettings({ translationEnabled: enabled });
+  }
+
+  /**
    * Reset settings to defaults
    */
   async resetSettings(): Promise<void> {

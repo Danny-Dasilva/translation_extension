@@ -1,0 +1,33 @@
+{
+  "total_rows": 220,
+  "images_found_total": 220,
+  "images_missing_total": 0,
+  "image_source": "backend/.bench/<chapter>_v11fix6_box_insp/<NNN>/01_source.webp (local)",
+  "jp_ocr_source": "full-page bubbles.json (serve-faithful); gold-subset fallback if absent",
+  "page_context_format": "v11 build_v11_context_prompt prefix (instruction + numbered Page block), page-level (no 'Translate line k' suffix)",
+  "en_target_source": "gold_q3.jsonl human EN (curated worst-issues bubble subset), reading order",
+  "per_chapter": [
+    {
+      "chapter": "ikenie4",
+      "rows": 124,
+      "images_found": 124,
+      "images_missing": 0,
+      "missing_image_pages": [],
+      "pages_ocr_full_page_context": 124,
+      "pages_ocr_gold_subset_fallback": 0,
+      "gold_rows_skipped_unparseable_src": 0,
+      "total_target_bubbles": 641
+    },
+    {
+      "chapter": "ikenie5",
+      "rows": 96,
+      "images_found": 96,
+      "images_missing": 0,
+      "missing_image_pages": [],
+      "pages_ocr_full_page_context": 96,
+      "pages_ocr_gold_subset_fallback": 0,
+      "gold_rows_skipped_unparseable_src": 0,
+      "total_target_bubbles": 711
+    }
+  ]
+}

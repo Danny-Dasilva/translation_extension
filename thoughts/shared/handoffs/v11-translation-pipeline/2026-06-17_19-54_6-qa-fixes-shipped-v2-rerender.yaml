@@ -1,0 +1,73 @@
+---
+session: v11-translation-pipeline
+date: 2026-06-17
+status: complete
+outcome: SUCCEEDED
+---
+
+goal: Shipped 6 QA-driven pipeline fixes to main (post-edit glossaries + OCR gate + column-order + inpaint guards), re-rendered all 6 manga to full_pipeline_v2 with measured improvement, cleaned up worktrees, made batch OCR co-located-safe
+now: Inspect full_pipeline_v2 output (751 pages) vs full_pipeline baseline; decide on residual gaps (P1-2 register recall, P1-3 hard column cases, p001/p072 special pages) or move to SFX-detector retrain
+test: cd backend && .venv/bin/python -m pytest tests/unit/ -q --deselect tests/unit/test_unify_schema.py::test_all_register_tags_declared   (212 pass)
+
+done_this_session:
+  - task: Diagnosed 588828_mesu2 output vs HUMAN hand-translation ref (655416) via 10 parallel sub-agents (10 pages each). Found TRANSLATION+OCR dominate gaps; INPAINT/TYPESET strong. Ranked fixes P0-P2.
+    files: [backend/.bench/full_pipeline/588828_mesu2_insp/]
+  - task: Implemented 6 fixes in parallel manual worktrees (from main, NOT Agent isolation), each unit-tested, all merged to main
+    files: [backend/app/services/{name_glossary,sfx_glossary,register_glossary,translation_postedit}.py, backend/app/utils/{ocr_confidence_gate,orphan_lines}.py, backend/app/services/{parseq_ocr_service,lama_inpaint_service}.py, backend/app/routers/translate.py, backend/scripts/batch_translate_chapter.py]
+  - task: Extended SFX filter to catch word-list meta-leaks (no "SFX for" prefix) + hiragana->romaji transliteration
+    files: [backend/app/services/sfx_glossary.py, backend/tests/unit/test_sfx_glossary.py]
+  - task: Full re-render of all 6 manga (751 pages) to full_pipeline_v2; aggregate proves fixes landed at scale
+    files: [backend/.bench/full_pipeline_v2/, backend/.bench/run_full_pipeline_v2_6manga.sh]
+  - task: Cleanup (removed 6 worktrees + merged branches + 4 temp dirs) and follow-up (co-located-safe default OCR batch=2)
+    files: [backend/scripts/batch_translate_chapter.py]
+
+blockers: []
+
+questions:
+  - P1-2 register recall is low — only 潮->squirt recovered; model-DROPPED explicit content (e.g. p064 チンコ comparison) is unrecoverable by post-edit. Retrain/prompt forbidden by format-sensitivity. Accept or escalate?
+  - Special pages (p070 continues-card, p071 credits, p072 handwritten afterword) still fail (OCR garbage on vertical/handwritten). Want the special-page detector (was P0-2, NOT in this batch)?
+
+decisions:
+  - post_edit_not_prompt: v11 is train/serve format-sensitive (~95% collapse on drift), so register/name/SFX fixes are POST-PROCESSING glossaries, never prompt edits. See [[v11-page-context-model]].
+  - shared_postedit_helper: batch_translate_chapter.py is a SEPARATE impl from the API router; both now call app/services/translation_postedit.py so corrected text renders identically. See [[project-dual-pipeline-paths]].
+  - validate_gpu_free: post-edit fixes validated on stored bubbles.json (model deterministic @ temp0); only P1-3/P2-3 needed GPU re-runs (run on main — worktrees lack gitignored models).
+  - ocr_batch_2_for_colocated: batch script defaults parseq_batch_size=2 (vLLM shares GPU, ~8GB free, batch=8 OOM-spams softmax). Prod API config stays 8.
+
+findings:
+  - aggregate_win: across 751 pages BASELINE->V2 — SFX-meta-leaks 80->0, corrupted-names 20->0, word-list-leaks 2->0, squirt 6->8, 10 editorial labels preserved. Net -104 bubbles is intended (gate drops garbage titles/credits + labels left as art).
+  - oom_recovered_not_lost: ONNX softmax OOM (vLLM co-location) is logged but pipeline RETRIES through it — verified 0 empty-OCR bubbles, kept-counts match baseline. Log noise + slowdown, not data loss.
+  - p1_3_partial: parseq_ocr_service.py:538 was the REAL scrambled-join culprit (not orphan_lines.py). Fixed idx4 on p023; 2 harder bubbles (interleaved fragments) still scramble — deeper segmentation issue.
+  - p2_3_guardB_latent: over-broad mask clamp (page-fraction 0.18) did NOT fire on p001 (its smear is legit title-erase); it's a unit-tested safety net only. Guard A (label preserve) is the active win.
+
+worked:
+  - manual worktrees from main (git worktree add -b X path main) + parallel kraken agents implementing 1 fix each, conflict-free module ownership; translate.py wiring done by orchestrator at merge
+  - 10 parallel QA sub-agents reading webp + bubbles.json against human ref; aggregate grep over bubbles.json to quantify fix impact at scale
+  - PARSEQ_BATCH_SIZE=2 (env or --ocr-batch-size) eliminates co-located OCR OOM
+
+failed:
+  - first v2 re-render with batch=8 OOM-spammed (138 OOMs); pkill -f self-matched the shell (exit 144) — kill by PID or use TaskStop instead
+  - prompt-side register/glossary injection: forbidden (v11 format sensitivity) — never attempted, post-edit only
+
+next:
+  - Visually spot-check full_pipeline_v2 high-value pages vs baseline (031 squirt, 044 names, 030 SFX, 073 label) — already confirmed on mesu2; sample the other 5 manga
+  - If pursuing quality: special-page detector (P0-2, skip translate/inpaint on title/credits/handwritten) OR SFX-detector retrain (v26 dead-end, see prior handoff)
+  - Optional: fold register recall into a model-side approach if format-safe path found
+  - full_pipeline_v2 output for inspection: backend/.bench/full_pipeline_v2/{656354_numarase,640441_seikatsu,part12,part13,588828_mesu2,656660_angel}/
+
+files:
+  created:
+    - backend/app/services/name_glossary.py (canonicalize_names)
+    - backend/app/services/sfx_glossary.py (clean_sfx_output + meta-leak/word-list suppression)
+    - backend/app/services/register_glossary.py (restore_register; 潮->squirt)
+    - backend/app/services/translation_postedit.py (shared postedit_one/apply_postedit_glossaries)
+    - backend/tests/unit/{test_name_glossary,test_sfx_glossary,test_register_glossary,test_jp_plausibility_gate,test_orphan_order,test_inpaint_guard}.py
+    - backend/.bench/run_full_pipeline_v2_6manga.sh
+  modified:
+    - backend/app/utils/ocr_confidence_gate.py (is_implausible_japanese + check_plausibility)
+    - backend/app/utils/orphan_lines.py (_order_vertical_columns column-grouping)
+    - backend/app/services/parseq_ocr_service.py (line-join uses order_cluster_lines)
+    - backend/app/services/lama_inpaint_service.py (should_inpaint_region, is_leave_intact_label, over-broad clamp)
+    - backend/app/routers/translate.py (wire postedit_one)
+    - backend/scripts/batch_translate_chapter.py (postedit + leave-intact-label skip + --ocr-batch-size default 2)
+  branches:
+    - main @ e2bd804 (all 6 fixes + extension + follow-up; 6 fix/* branches deleted, worktrees removed)

@@ -50,6 +50,13 @@ class CanonicalName:
 
 
 # Per-series cast. Extend here for new series / new characters.
+#
+# NOTE(cross-title): the entries below (Kanako/Kousuke, and the Aina/Sis
+# SOURCE_CONDITIONED fixes) were collected from a DIFFERENT title's bench output
+# and only fire on that title's kanji/kana. They are harmless on other titles
+# (source-gated) but they are NOT this title's cast. The real fix is a per-title
+# cast manifest (kana name + observed mis-romanisations per character) loaded
+# per chapter, instead of one global table. See the NAME_LOCKS TODO(cast) below.
 CANONICAL_NAMES: tuple[CanonicalName, ...] = (
     # 加奈子 (Kanako) — seen as Kana / Kanan / Kana-ji / Kanakao.
     # NOTE: "Kana-ji" is handled by allowing an optional "-ji"/"-chan" name
@@ -152,11 +159,21 @@ class NameLock:
 # observed mis-spelling are verified, otherwise a real proper noun could be
 # clobbered. TODO(cast): populate the full character roster for this title.
 NAME_LOCKS: tuple[NameLock, ...] = (
-    # ユリエ (Yurie) — model emits "Julie" / "Lucia" page to page.
+    # ユリエ (Yurie) — model emits "Julie" / "Lucia" / bare "Yuri" page to page.
+    # ("Yuri" is a strict prefix of the canonical "Yurie", but the \b...\b
+    # whole-word match leaves "Yurie" itself untouched.)
     NameLock(
         canonical="Yurie",
         jp_kana="ユリエ",
-        mis_romaji=("Julie", "Lucia", "Yulie", "Yurié"),
+        mis_romaji=("Julie", "Lucia", "Yulie", "Yurié", "Yuri"),
+    ),
+    # あゆむ (Ayumu) — unstable: "Ayu" / "Aymu" / "Ayumumu" / "Ayuuuummm". The
+    # short "Ayu" mis-spelling is a strict prefix of "Ayumu"; the whole-word
+    # match means it never clobbers the canonical spelling.
+    NameLock(
+        canonical="Ayumu",
+        jp_kana="あゆむ",
+        mis_romaji=("Ayuuuummm", "Ayumumu", "Aymu", "Ayu"),
     ),
 )
 

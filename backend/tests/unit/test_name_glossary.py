@@ -185,6 +185,59 @@ class TestNameLockYurie:
         twice = canonicalize_names(once, jp)
         assert once == twice
 
+    def test_bare_yuri_locked_to_yurie(self):
+        # ユリエ leaks as the truncated "Yuri" page to page.
+        jp = "ユリエ、ありがとう"
+        out = canonicalize_names("Thanks, Yuri.", jp)
+        assert out == "Thanks, Yurie."
+
+    def test_yuri_left_alone_without_jp_trigger(self):
+        # A character actually named "Yuri" with no ユリエ in source stays Yuri.
+        assert canonicalize_names("Yuri smiled.", "彼女は微笑んだ") == "Yuri smiled."
+
+    def test_yurie_not_clobbered_by_yuri_prefix(self):
+        # "Yuri" is a strict prefix of "Yurie" but whole-word match leaves the
+        # canonical spelling intact (no "Yurie" -> "Yuriee").
+        jp = "ユリエだよ"
+        assert canonicalize_names("It's Yurie.", jp) == "It's Yurie."
+
+
+# --------------------------------------------------------------------------- #
+# Hard name-lock: あゆむ -> "Ayumu" (model emits Ayu/Aymu/Ayumumu/Ayuuuummm)
+# --------------------------------------------------------------------------- #
+class TestNameLockAyumu:
+    def test_short_ayu_locked(self):
+        jp = "あゆむ、待って"
+        out = canonicalize_names("Ayu, wait!", jp)
+        assert out == "Ayumu, wait!"
+
+    def test_garbled_variants_locked(self):
+        jp = "あゆむ……"
+        for bad in ("Aymu", "Ayumumu", "Ayuuuummm"):
+            out = canonicalize_names(f"{bad}...", jp)
+            assert out == "Ayumu..."
+
+    def test_ayumu_already_correct_unchanged(self):
+        jp = "あゆむがいる"
+        assert canonicalize_names("Ayumu is here.", jp) == "Ayumu is here."
+
+    def test_lock_does_not_fire_without_jp_trigger(self):
+        # No あゆむ in source -> someone legitimately called "Ayu" stays "Ayu".
+        assert canonicalize_names("Ayu went home.", "彼は帰った") == "Ayu went home."
+        assert canonicalize_names("Ayu went home.") == "Ayu went home."
+
+    def test_ayu_substring_not_clobbered(self):
+        # "Ayu" is a strict prefix of the canonical "Ayumu" — whole-word match
+        # must not corrupt the canonical spelling.
+        jp = "あゆむ"
+        assert canonicalize_names("Ayumu", jp) == "Ayumu"
+
+    def test_lock_idempotent(self):
+        jp = "あゆむ、待って"
+        once = canonicalize_names("Ayu, wait!", jp)
+        twice = canonicalize_names(once, jp)
+        assert once == twice == "Ayumu, wait!"
+
 
 # --------------------------------------------------------------------------- #
 # Counted-number kana: じゅうさん (=33) must NOT become "Jus-san"/honorific.

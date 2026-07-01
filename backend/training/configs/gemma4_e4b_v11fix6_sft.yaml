@@ -1,0 +1,69 @@
+model:
+  # IDENTICAL to v11: from base -it (not warm-started). Only the corrective DATA
+  # changes vs v11 -- base model + LoRA + format are byte-for-byte the v11 recipe.
+  name_or_path: unsloth/gemma-4-E4B-it
+  dtype: bfloat16
+  max_seq_length: 1024
+  load_in_4bit: false
+  full_finetuning: false
+
+lora:
+  # Proven v11 recipe — UNCHANGED.
+  r: 16
+  alpha: 32
+  dropout: 0.0
+  bias: none
+  target_modules_regex: '^model\.language_model\.layers\.\d+\.(self_attn|mlp)\.(q_proj|k_proj|v_proj|o_proj|gate_proj|up_proj|down_proj)$'
+  # 294 = 42 language layers x 7 projections, LANGUAGE-ONLY (no vision/audio leak,
+  # verified). v11's config recorded 258 under an OLDER unsloth/transformers that
+  # exposed fewer modules to this regex; the MERGED v11 (and v10it) checkpoints are
+  # BOTH 42 layers (num_hidden_layers=42), so 294 is the correct full coverage on
+  # the box env (unsloth 2026.6.7 / transformers 5.5.0). Same arch as v11 -> the
+  # only real change vs v11 is the corrective DATA.
+  expected_module_count: 294
+
+data:
+  # v11fix6: the proven v11 page-context mix PLUS the ikenie4 clean-OCR corrective
+  # rows (jp -> sentence-cased human scanlation), emitted in the SAME page-context
+  # + plain shapes as v11 (byte-exact build_v11_dataset template). Corrective rows
+  # are upweighted 3x but are a MINORITY (~0.54%); NSFW fraction is held FLAT vs
+  # v11 (NOT oversampled -- the documented v12 NSFW-oversampling regression).
+  # Schema [prompt, en, src, register_tag, gold_flag]; `prompt` is the full user
+  # message, so the template is passthrough.
+  # Build: backend/scripts/data/v11fix6/build_v11fix6_corrective.py
+  train_path: backend/scripts/data/v11fix6/data_v11fix6_pagecontext.parquet
+  eval_size: 1000
+  prompt_user_template: "{prompt}"
+  completion_field: en
+  use_chat_template: true
+
+train:
+  # Proven v11 recipe — UNCHANGED.
+  num_train_epochs: 1
+  per_device_train_batch_size: 4
+  gradient_accumulation_steps: 4   # eff batch = 16
+  learning_rate: 2.0e-4
+  lr_scheduler_type: cosine
+  warmup_ratio: 0.03
+  max_grad_norm: 1.0
+  weight_decay: 0.01
+  bf16: true
+  optim: adamw_8bit
+  packing: false
+  completion_only_loss: true
+  logging_steps: 20
+  save_steps_pct: 0.25
+  eval_steps_pct: 0.05
+  save_total_limit: 5
+  seed: 42
+  dataloader_num_workers: 4
+  report_to: none
+
+output:
+  dir: backend/training/runs/manga-bubbles/gemma4_e4b_v11fix6_pagecontext
+  log_file: backend/training/runs/manga-bubbles/gemma4_e4b_v11fix6_pagecontext/training.log
+
+dry_run:
+  enable: true
+  fraction: 0.01
+  max_steps: 100

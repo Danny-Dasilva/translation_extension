@@ -113,15 +113,17 @@ def test_dialogue_never_below_resolution_floor():
 # 3. page-level consistency tightens the spread
 # ---------------------------------------------------------------------------
 
-def test_page_dialogue_target_is_low_percentile_not_min():
+def test_page_dialogue_target_is_moderate_percentile_not_extreme():
     maxfits = [40, 42, 44, 20, 46, 48, 50]
     floor = 18
     target = R.page_dialogue_target(maxfits, floor,
                                     percentile=R.CONSISTENT_FONT_PERCENTILE)
     assert target >= floor
-    # a low percentile sits below the median but ABOVE the single tiny outlier
+    # a MODERATE percentile sits strictly between the extremes: above the single
+    # tiny outlier (so one cramped bubble doesn't shrink the page) and below the
+    # max (so it doesn't overflow the largest-fitting bubbles).
     assert target > min(maxfits), "target collapsed to the min outlier"
-    assert target <= sorted(maxfits)[len(maxfits) // 2], "target above the median"
+    assert target < max(maxfits), "target collapsed to the max (overflows most bubbles)"
 
 
 def test_page_dialogue_target_respects_floor():
@@ -136,16 +138,20 @@ def test_consistency_tightens_dialogue_spread():
     rendered DIALOGUE font sizes must be smaller (or equal) with it ON."""
     if not _font_available():
         return
-    img_h = 1600
+    img_h = 1500
     plate = np.full((img_h, 1400, 3), 255, np.uint8)
     # bubbles whose independent max-fit sizes would vary a lot:
-    #  - a huge bubble with a tiny word would fit huge
-    #  - cramped bubbles fit small
+    #  - ONE huge bubble with a tiny word fits very large
+    #  - several roomy-but-wordy bubbles fit only at a smaller size
+    # A moderate (60th pct) page target lands among the smaller-fitting majority,
+    # so the lone huge bubble is pulled down -> the rendered spread tightens.
     specs = [
-        ((100, 100, 700, 600), "HI"),                       # huge box, tiny text
-        ((100, 700, 300, 1000), "A longer sentence here please."),
-        ((800, 100, 1000, 400), "Another fairly long dialogue line for size."),
-        ((800, 500, 1300, 1100), "Yes."),                   # big box short text
+        ((100, 100, 760, 700), "HI"),                       # huge box, tiny text
+        ((100, 750, 320, 1050), "A longer sentence here please."),
+        ((360, 750, 580, 1050), "Another fairly long dialogue line for size."),
+        ((620, 750, 840, 1050), "Quite a lot of words to wrap in here now too."),
+        ((100, 1100, 320, 1400), "This sentence also needs several lines to fit."),
+        ((360, 1100, 580, 1400), "Yet another long-ish dialogue string goes here."),
     ]
     blocks = [_blk(*s[0]) for s in specs]
     fits = [_blk(*s[0]) for s in specs]

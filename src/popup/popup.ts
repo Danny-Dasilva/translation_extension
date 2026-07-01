@@ -60,6 +60,35 @@ async function toggleSite() {
   setTimeout(() => hideStatus(), 2000);
 }
 
+// Reflect the master ON/OFF switch in the popup UI.
+function renderMasterSwitch(enabled: boolean) {
+  const masterCheckbox = document.getElementById('translation-enabled') as HTMLInputElement;
+  const masterLabel = document.getElementById('master-label');
+  if (masterCheckbox) masterCheckbox.checked = enabled;
+  if (masterLabel) masterLabel.textContent = `Translation: ${enabled ? 'ON' : 'OFF'}`;
+}
+
+// Toggle the master translation switch (global ON/OFF). Routes through the
+// background SW so it persists + notifies the active tab's content script,
+// which clears/restores overlays accordingly.
+async function toggleTranslationEnabled() {
+  const tabs = await browser.tabs.query({ active: true, currentWindow: true });
+  const tabId = tabs[0]?.id;
+  const hostname = await getCurrentHostname();
+
+  const response = (await browser.runtime.sendMessage({
+    action: 'setTranslationEnabled',
+    tabId,
+    hostname,
+  })) as { success?: boolean; enabled?: boolean } | undefined;
+
+  const enabled =
+    response?.enabled ?? (await settingsManager.isTranslationEnabled());
+  renderMasterSwitch(enabled);
+  showStatus(enabled ? 'enabled' : 'disabled', `Translation ${enabled ? 'ON' : 'OFF'}`);
+  setTimeout(() => hideStatus(), 2000);
+}
+
 // Load current settings
 async function loadSettings() {
   const settings = await settingsManager.getSettings();
@@ -73,6 +102,9 @@ async function loadSettings() {
   if (defaultFontSelect) defaultFontSelect.value = settings.defaultFont;
   if (autoTranslateCheckbox) autoTranslateCheckbox.checked = settings.autoTranslate;
   if (showDebugCheckbox) showDebugCheckbox.checked = settings.showDebugInfo;
+
+  // Master ON/OFF switch (defaults ON when absent).
+  renderMasterSwitch(settings.translationEnabled !== false);
 
   // Update toggle button
   await updateToggleButton();
@@ -118,10 +150,10 @@ async function translateCurrentPage() {
   const tabs = await browser.tabs.query({ active: true, currentWindow: true });
   if (tabs[0]?.id) {
     try {
-      const response = await browser.runtime.sendMessage({
+      const response = (await browser.runtime.sendMessage({
         action: 'translate',
         tabId: tabs[0].id,
-      });
+      })) as { success?: boolean; error?: string } | undefined;
 
       if (response && response.success) {
         showStatus('enabled', 'Translation started!');
@@ -173,9 +205,17 @@ document.addEventListener('DOMContentLoaded', () => {
   const saveButton = document.getElementById('save-settings');
   const translateButton = document.getElementById('translate-now');
   const clearButton = document.getElementById('clear-overlays');
+  const masterSwitch = document.getElementById('translation-enabled');
 
   if (toggleButton) {
     toggleButton.addEventListener('click', toggleSite);
+  }
+
+  // Master ON/OFF translation switch. `change` fires on user toggle; we route
+  // through the SW (toggleTranslationEnabled) which persists the setting and
+  // notifies the active tab's content script to clear / restore overlays.
+  if (masterSwitch) {
+    masterSwitch.addEventListener('change', toggleTranslationEnabled);
   }
 
   if (saveButton) {

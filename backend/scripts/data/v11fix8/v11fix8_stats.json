@@ -1,0 +1,10 @@
+{
+  "base_rows": 295371,
+  "mined_unique": 2337,
+  "upweight": 3,
+  "mined_upweighted": 7011,
+  "total_rows": 302382,
+  "nsfw_rows": 55623,
+  "nsfw_frac": 0.1839,
+  "base_parquet": "/home/danny/Documents/personal/extension/backend/scripts/data/v11fix7/data_v11fix7_pagecontext.parquet"
+}

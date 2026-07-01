@@ -1,0 +1,6 @@
+# Aggregate OCR + translations
+# 1 page(s)
+
+## de  (de.png)
+  [1] JP: タコだ。。
+      EN: It’s a taco.

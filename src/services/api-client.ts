@@ -2,7 +2,7 @@
  * API client for manga translation service with retry logic
  */
 import browser from 'webextension-polyfill';
-import { TranslateRequest, TranslateResponse } from '@/types/api';
+import { TranslateRequest, TranslateResponse, FlagRequest, FlagResponse } from '@/types/api';
 import { CONFIG } from '@/config/constants';
 
 export class APIClient {
@@ -60,6 +60,27 @@ export class APIClient {
       }
       throw new Error('Unknown error occurred');
     }
+  }
+
+  /**
+   * Flag a poor translation for fine-tuning. Fire-and-forget from the caller's
+   * perspective; the actual cross-origin POST to `${endpoint}/flag` is performed
+   * by the background service worker (which holds host_permissions), exactly
+   * like `translate` — so it is not mixed-content / CORS-blocked from the page.
+   *
+   * Resolves with the backend's FlagResponse on success; throws on failure so
+   * the caller can surface (or swallow) it.
+   */
+  async flagTranslation(payload: FlagRequest): Promise<FlagResponse> {
+    const response = (await browser.runtime.sendMessage({
+      action: 'flagTranslation',
+      payload,
+    })) as { success?: boolean; data?: FlagResponse; error?: string } | undefined;
+
+    if (response?.success && response.data) {
+      return response.data;
+    }
+    throw new Error(response?.error || 'Flag request failed');
   }
 
   /**

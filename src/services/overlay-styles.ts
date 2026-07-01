@@ -72,35 +72,6 @@ export const OVERLAY_STYLES = `
   background-color: rgba(74, 144, 226, 0.07);
 }
 
-.manga-translator-box .manga-translator-retry-btn {
-  position: absolute;
-  top: 2px;
-  right: 2px;
-  width: 22px;
-  height: 22px;
-  padding: 0;
-  border: none;
-  border-radius: 50%;
-  background: rgba(0, 0, 0, 0.55);
-  color: #fff;
-  font-size: 14px;
-  line-height: 22px;
-  text-align: center;
-  cursor: pointer;
-  opacity: 0;
-  pointer-events: auto;
-  transition: opacity 120ms ease-out, background-color 120ms ease-out;
-}
-
-.manga-translator-box:hover .manga-translator-retry-btn,
-.manga-translator-box:focus-within .manga-translator-retry-btn {
-  opacity: 1;
-}
-
-.manga-translator-box .manga-translator-retry-btn:hover {
-  background: rgba(74, 144, 226, 0.95);
-}
-
 .manga-translator-edit-textarea {
   width: 100%;
   height: 100%;

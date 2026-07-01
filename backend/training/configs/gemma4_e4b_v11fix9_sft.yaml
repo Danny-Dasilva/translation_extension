@@ -1,0 +1,65 @@
+model:
+  # IDENTICAL to v11/v11fix6/v11fix8: from base -it (not warm-started). Only the
+  # corrective DATA changes -- base model + LoRA + format are byte-for-byte the
+  # v11 recipe.
+  name_or_path: unsloth/gemma-4-E4B-it
+  dtype: bfloat16
+  max_seq_length: 1024
+  load_in_4bit: false
+  full_finetuning: false
+
+lora:
+  # Proven v11 recipe — UNCHANGED.
+  r: 16
+  alpha: 32
+  dropout: 0.0
+  bias: none
+  target_modules_regex: '^model\.language_model\.layers\.\d+\.(self_attn|mlp)\.(q_proj|k_proj|v_proj|o_proj|gate_proj|up_proj|down_proj)$'
+  # 294 = 42 language layers x 7 projections, LANGUAGE-ONLY.
+  expected_module_count: 294
+
+data:
+  # v11fix9: same page-context + corrective mix as v11fix8, with the approved
+  # data-clean pass (full manga109 dedup x1, open_mantra dedup, '...' cap 7505->2000,
+  # fragment->full drop, obvious-garble drop). 227,709 rows; NSFW 0.239 (accepted).
+  # corpus_bitext stays CPU-NAR-mined (AR re-mine deferred — latent hybrid bug).
+  # Schema [prompt, en, src, register_tag, gold_flag]; `prompt` is the full user
+  # message, so the template is passthrough.
+  train_path: backend/scripts/data/v11fix9/data_v11fix9_pagecontext.parquet
+  eval_size: 1000
+  prompt_user_template: "{prompt}"
+  completion_field: en
+  use_chat_template: true
+
+train:
+  # Proven v11 recipe — UNCHANGED.
+  num_train_epochs: 1
+  per_device_train_batch_size: 4
+  gradient_accumulation_steps: 4   # eff batch = 16
+  learning_rate: 2.0e-4
+  lr_scheduler_type: cosine
+  warmup_ratio: 0.03
+  max_grad_norm: 1.0
+  weight_decay: 0.01
+  bf16: true
+  optim: adamw_8bit
+  packing: false
+  completion_only_loss: true
+  logging_steps: 20
+  save_steps_pct: 0.25
+  eval_steps_pct: 0.05
+  save_total_limit: 5
+  seed: 42
+  dataloader_num_workers: 0   # fork-based workers correlated with a ~1h heap-corruption abort (rc134/139); single-process data path
+  report_to: none
+  in_training_eval: false   # REQUIRED: in-training eval build segfaults on sm_120
+  # fresh run (no resume_from_checkpoint) — v11fix9 starts from base -it.
+
+output:
+  dir: backend/training/runs/manga-bubbles/gemma4_e4b_v11fix9_pagecontext
+  log_file: backend/training/runs/manga-bubbles/gemma4_e4b_v11fix9_pagecontext/training.log
+
+dry_run:
+  enable: true
+  fraction: 0.01
+  max_steps: 100

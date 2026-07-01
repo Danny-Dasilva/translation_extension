@@ -8,6 +8,36 @@ import cv2
 import numpy as np
 
 
+# --- Erase-mask tuning (module-level by design; NOT config fields) ----------
+# Seg threshold used to build the ERASE mask, DECOUPLED from and lower than the
+# detection threshold (``settings.ctd_text_threshold`` ~0.8). Detection needs
+# high precision for block/line geometry, but erasing must also catch faint
+# glyph tails / anti-aliased stroke edges — otherwise LaMa reseeds text-shaped
+# ghosts from the un-erased remnant. ``ComicTextDetectorService._process_mask``
+# thresholds the erase seg mask at this value (detection still uses 0.8).
+ERASE_SEG_THRESHOLD: float = 0.45
+
+# Over-broad (per-component) art guard: a single detected text region (line or
+# block) whose bbox covers more than this fraction of the page is almost never
+# text — it is a panel-spanning false detection or seg bleed over artwork. Such
+# a region is dropped from the erase mask so the median/NS fill never paints
+# over art. (A second, ink-ratio + page-fraction clamp runs downstream in
+# ``lama_inpaint_service.inpaint`` per connected component; this is the cheap
+# build-time guard.)
+OVER_BROAD_AREA_FRAC: float = 0.30
+
+# Proportional padding for detected line rects (detector line bboxes routinely
+# clip ascenders/descenders and the first/last glyph).
+LINE_PAD_RATIO: float = 0.25
+LINE_PAD_MIN: int = 6
+
+# Final dilation pad, proportional to glyph short-side: ``max(6, 0.25*short)``.
+# A fixed ~4-5 px pad is too small for large fonts, leaving stroke halos that
+# reseed LaMa ghosting.
+DILATE_PAD_MIN: int = 6
+DILATE_PAD_MAX: int = 48
+
+
 def match_blocks_to_bubbles(
     blocks: List[Dict],
     bubbles: List[Dict],
@@ -71,124 +101,138 @@ def build_inpaint_mask(
     detector_mask: Optional[np.ndarray],
     erase_blocks: Optional[List[Dict]] = None,
     fit_rects: Optional[List[Optional[Dict]]] = None,
+    leave_intact_blocks: Optional[List[Dict]] = None,
 ) -> np.ndarray:
-    """Binary 0/255 LaMa mask covering ONLY regions that will be re-rendered.
+    """Binary 0/255 LaMa erase mask covering ALL detected text ink.
 
-    BUBBLE-AWARE FILL (2026-06-17): only blocks matched to a speech bubble
-    (``fit_rects[i] is not None`` — i.e. dialogue inside a balloon) get a SOLID
-    rectangular fill (line-rect / block-bbox). Blocks with no bubble (SFX or text
-    over artwork) rely on the TIGHT detector seg-mask ink instead, so the eraser
-    never paints solid rectangles over art. This is the flooding fix: with the
-    high-recall v26 detector (~40 blocks / 86 lines per page) the old
-    unconditional solid fills covered ~40% of a dense page; gating them to bubbles
-    drops that to the ~4-6% tight-ink footprint. Bubble interiors are still fully
-    cleared for re-render by the separate ``enable_bubble_solid_fill`` inpaint tier
-    (via ``bubble_rects``). ``fit_rects`` must align index-for-index with ``blocks``;
-    when None (no bubble detector) ALL blocks fall back to tight ink.
+    MASK-RECALL FIX (2026-06-30): the #1 visual defect is residual Japanese — JP
+    ink the detector found but the pipeline DROPPED before re-render (jp-filter /
+    english early-exit / OCR garble-gate) and therefore never erased. The old
+    mask was gated to "what gets re-rendered" (``kept ∪ erase`` blocks): any
+    detection dropped earlier lost its seg ink and survived onto the page. This
+    builds the erase mask from EVERY detected text region instead:
 
-    `blocks` must be the post-filter ("kept") blocks — the ones whose OCR text
-    passed the Japanese filter and will receive a rendered translation. Erasing
-    anything else produces text that is inpainted away (often with ghosting on
-    large regions) but never replaced, which reads as corruption on the final
-    page. Text outside kept blocks is left untouched instead.
+      * every detected ``text_lines`` bbox (padded) — the detector found strokes
+        there, so it is text and must be erased whether or not its OCR was kept;
+      * every kept ``blocks`` bbox — re-rendered dialogue, SOLID-filled (now ALL
+        kept blocks, not only bubble-matched ones; fills are median/NS so the
+        downstream clamp + the over-broad guard protect art);
+      * ``erase_blocks`` (gate-dropped real JP) — UNCHANGED: their tight detector
+        ink is retained via the seg-mask clip; a full-bbox fill is used only for
+        SMALL erase blocks when no detector mask is available (avoids painting
+        rectangles over art);
+      * the detector seg mask (thresholded LOW upstream, see ``ERASE_SEG_THRESHOLD``)
+        OR-ed in wherever it fires inside a detected region (tight stroke pixels
+        that spill outside a line bbox).
 
-    `erase_blocks` are regions that were DROPPED by the OCR-confidence gate but
-    are real Japanese ink (e.g. stylized SFX) — they get no translation but must
-    still be erased so raw Japanese doesn't survive into the final render. We do
-    NOT draw their full bbox into the mask (that paints rectangular patches over
-    art); instead we extend the detector seg-mask clip area so the tight ink
-    pixels over them are retained. Only when there is no detector mask do we fall
-    back to a bbox fill, and only for SMALL erase_blocks (area<=9000) to avoid
-    large rectangular ghosting.
+    GUARDS kept intact:
+      * Over-broad per-region clamp (``OVER_BROAD_AREA_FRAC``): any single line /
+        block bbox larger than a sane page fraction is dropped — a panel-spanning
+        false detection must not erase artwork. (A second ink-ratio/page-fraction
+        clamp runs per connected component downstream in ``lama_inpaint_service``.)
+      * Leave-intact labels (``leave_intact_blocks`` — 表紙用イラスト / 奥付 /
+        editorial margin): punched OUT of the mask LAST (after fills, seg ink and
+        dilation) so the human-reference-kept labels are never erased even though
+        the detector also found their text lines.
 
-    Sources, in priority order per block:
-      * text_lines whose center falls inside the block (tight strokes)
-      * the block bbox itself when no line is assigned to it
-    The detector's pixel mask is OR-ed in only where it intersects a kept
-    block's bbox OR an erase_block's bbox (the raw mask covers every detection on
-    the page, including dropped ones).
+    ``fit_rects`` is retained for signature compatibility (callers pass the
+    bubble match); it no longer gates the fills.
     """
     erase_blocks = erase_blocks or []
+    leave_intact_blocks = leave_intact_blocks or []
     h, w = image_shape[:2]
     mask = np.zeros((h, w), dtype=np.uint8)
-    if not blocks and not erase_blocks:
+    if not blocks and not erase_blocks and not (text_lines or []):
         return mask
 
-    # Bubble-aware fill: a block is "dialogue in a balloon" iff it matched a
-    # bubble. Only those get solid rectangular fills; the rest (SFX / text over
-    # art) use the tight detector seg-mask ink (OR-ed in below, clipped to
-    # block_area). Without a bubble detector (fit_rects None) nothing is bubble,
-    # so every block uses tight ink — strictly safe against over-erasure.
-    is_bubble = [False] * len(blocks)
-    if fit_rects:
-        for i in range(min(len(blocks), len(fit_rects))):
-            is_bubble[i] = fit_rects[i] is not None
+    page_area = float(h * w)
+    over_broad_area = OVER_BROAD_AREA_FRAC * page_area
 
-    # Same center-containment rule recognize_blocks_with_lines uses, so the
-    # erased area always matches the OCR'd area.
-    blocks_with_lines = set()
+    def _clip(b: Dict):
+        x0 = max(0, int(b["minX"])); y0 = max(0, int(b["minY"]))
+        x1 = min(w, int(b["maxX"])); y1 = min(h, int(b["maxY"]))
+        return x0, y0, x1, y1
+
+    # Region within which detector seg ink may be erased: the UNION of every
+    # detected text region (all lines + kept + erase blocks). Retaining seg ink
+    # here — rather than clipping it to only the re-rendered kept∪erase set — is
+    # the recall fix. Over-broad (art-sized) regions are excluded entirely so
+    # neither their bbox fill NOR their seg ink reaches the mask.
+    detected_area = np.zeros((h, w), dtype=np.uint8)
+    short_sides: List[int] = []
+
+    # (1) Every detected text LINE -> solid padded box. Core recall fix: catches
+    #     residual JP whose OCR was dropped (the detector still found the strokes).
     for ln in text_lines or []:
-        cx = (ln["minX"] + ln["maxX"]) / 2
-        cy = (ln["minY"] + ln["maxY"]) / 2
-        for bi, b in enumerate(blocks):
-            if b["minX"] <= cx <= b["maxX"] and b["minY"] <= cy <= b["maxY"]:
-                # Detector line bboxes routinely clip ascenders/descenders and
-                # the first/last glyph; a fixed dilate can't cover that on
-                # large fonts. Pad proportionally to glyph size (≈ the line's
-                # short side) so the erase mask swallows the whole stroke.
-                lw = ln["maxX"] - ln["minX"]
-                lh = ln["maxY"] - ln["minY"]
-                pad = max(4, int(0.35 * min(lw, lh)))
-                x0 = max(0, int(ln["minX"]) - pad); y0 = max(0, int(ln["minY"]) - pad)
-                x1 = min(w, int(ln["maxX"]) + pad); y1 = min(h, int(ln["maxY"]) + pad)
-                # Solid line-rect only for bubble dialogue; SFX/over-art lines
-                # rely on the tight seg-mask ink OR-ed in below.
-                if is_bubble[bi] and x1 > x0 and y1 > y0:
-                    cv2.rectangle(mask, (x0, y0), (x1, y1), 255, thickness=-1)
-                blocks_with_lines.add(bi)
-                break
-
-    block_area = np.zeros((h, w), dtype=np.uint8)
-    for bi, b in enumerate(blocks):
-        x0 = max(0, int(b["minX"])); y0 = max(0, int(b["minY"]))
-        x1 = min(w, int(b["maxX"])); y1 = min(h, int(b["maxY"]))
+        x0, y0, x1, y1 = _clip(ln)
         if x1 <= x0 or y1 <= y0:
             continue
-        cv2.rectangle(block_area, (x0, y0), (x1, y1), 255, thickness=-1)
-        # Solid bbox fill only for line-less bubble dialogue; SFX/over-art blocks
-        # rely on the tight seg-mask ink (clipped to block_area) instead.
-        if bi not in blocks_with_lines and is_bubble[bi]:
-            cv2.rectangle(mask, (x0, y0), (x1, y1), 255, thickness=-1)
+        lw, lh = x1 - x0, y1 - y0
+        if lw * lh > over_broad_area:  # over-broad clamp (art guard)
+            continue
+        short_sides.append(min(lw, lh))
+        pad = max(LINE_PAD_MIN, int(LINE_PAD_RATIO * min(lw, lh)))
+        px0 = max(0, x0 - pad); py0 = max(0, y0 - pad)
+        px1 = min(w, x1 + pad); py1 = min(h, y1 + pad)
+        cv2.rectangle(mask, (px0, py0), (px1, py1), 255, thickness=-1)
+        cv2.rectangle(detected_area, (px0, py0), (px1, py1), 255, thickness=-1)
 
-    # Extend block_area to cover erase-only (dropped-but-real-JP) blocks so the
-    # detector seg-mask clip below RETAINS their ink instead of clipping it away.
-    # We do NOT draw their bbox into `mask` (avoids rectangular patches over art);
-    # the tight detector ink is what gets erased. Only fall back to a bbox fill
-    # for SMALL erase_blocks when there is no detector mask to rely on.
-    has_detector_mask = detector_mask is not None and detector_mask.size
+    # (2) Every KEPT block -> solid fill (re-rendered dialogue). fix #3: ALL kept
+    #     blocks, not only bubble-matched ones. The over-broad clamp drops any
+    #     pathologically large block so a runaway detection never paints art.
+    for b in blocks:
+        x0, y0, x1, y1 = _clip(b)
+        if x1 <= x0 or y1 <= y0:
+            continue
+        if (x1 - x0) * (y1 - y0) > over_broad_area:  # over-broad clamp (art guard)
+            continue
+        cv2.rectangle(detected_area, (x0, y0), (x1, y1), 255, thickness=-1)
+        cv2.rectangle(mask, (x0, y0), (x1, y1), 255, thickness=-1)
+
+    # (3) erase-only (dropped-but-real-JP) blocks — UNCHANGED behaviour: extend
+    #     the seg-clip area so their TIGHT detector ink is retained, but do NOT
+    #     paint their full bbox when a detector mask exists (avoids rectangles
+    #     over art). Fall back to a bbox fill only for SMALL erase blocks with no
+    #     detector mask to rely on.
+    has_detector_mask = detector_mask is not None and getattr(detector_mask, "size", 0)
     for b in erase_blocks:
-        x0 = max(0, int(b["minX"])); y0 = max(0, int(b["minY"]))
-        x1 = min(w, int(b["maxX"])); y1 = min(h, int(b["maxY"]))
+        x0, y0, x1, y1 = _clip(b)
         if x1 <= x0 or y1 <= y0:
             continue
-        cv2.rectangle(block_area, (x0, y0), (x1, y1), 255, thickness=-1)
+        cv2.rectangle(detected_area, (x0, y0), (x1, y1), 255, thickness=-1)
         if not has_detector_mask and (x1 - x0) * (y1 - y0) <= 9000:
             cv2.rectangle(mask, (x0, y0), (x1, y1), 255, thickness=-1)
 
+    # (4) Detector seg mask (tight strokes, thresholded LOW upstream) OR-ed in
+    #     wherever it fires INSIDE a detected region. Catches stroke pixels that
+    #     spill outside a line bbox; clipping to detected_area keeps stray seg
+    #     over art out of the mask.
     if has_detector_mask:
         dm = detector_mask
         if dm.shape[:2] != (h, w):
             dm = cv2.resize(dm, (w, h), interpolation=cv2.INTER_NEAREST)
-        _, dm_bin = cv2.threshold(dm, 127, 255, cv2.THRESH_BINARY)
-        # Clip to kept-block + erase-block area so unrelated dropped detections
-        # stay untouched while real-JP erase regions keep their ink.
-        dm_bin = cv2.bitwise_and(dm_bin.astype(np.uint8), block_area)
+        _, dm_bin = cv2.threshold(dm.astype(np.uint8), 127, 255, cv2.THRESH_BINARY)
+        dm_bin = cv2.bitwise_and(dm_bin, detected_area)
         mask = np.maximum(mask, dm_bin)
 
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-    # 2 iterations (~4-5 px): glyph anti-aliasing left outside a thin mask
-    # seeds LaMa into reconstructing text-shaped artifacts ("ghosting").
-    mask = cv2.dilate(mask, kernel, iterations=2)
+    # (5) Final dilation, proportional to glyph size: max(6, ~0.25 * line short
+    #     side). Anti-aliasing left outside a thin mask reseeds LaMa into
+    #     text-shaped ghosts; a fixed ~4 px pad is too small for large fonts.
+    if mask.any():
+        rep = int(np.median(short_sides)) if short_sides else 0
+        pad = int(max(DILATE_PAD_MIN, min(DILATE_PAD_MAX, round(0.25 * rep))))
+        k = 2 * pad + 1
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))
+        mask = cv2.dilate(mask, kernel, iterations=1)
+
+    # (6) Leave-intact labels are kept as ORIGINAL art — punch them OUT LAST so
+    #     neither the fills, the seg ink, nor the dilation erase them.
+    for b in leave_intact_blocks:
+        x0, y0, x1, y1 = _clip(b)
+        if x1 <= x0 or y1 <= y0:
+            continue
+        cv2.rectangle(mask, (x0, y0), (x1, y1), 0, thickness=-1)
+
     return mask
 
 

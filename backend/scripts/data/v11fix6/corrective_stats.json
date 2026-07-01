@@ -1,0 +1,74 @@
+{
+  "gold_total": 650,
+  "ocr_clean_total": 542,
+  "annotation_fragments_dropped": 12,
+  "ocr_clean_usable": 530,
+  "divergent": 514,
+  "anchors_total": 16,
+  "anchors_kept": 16,
+  "corrective_unique": 530,
+  "corrective_pagectx": 312,
+  "corrective_plain": 218,
+  "corrective_upweight": 3,
+  "corrective_rows_after_upweight": 1590,
+  "n_recased": 486,
+  "normalization_samples": [
+    {
+      "before": "EVEN THOUGH SHE WAS DOING SOMETHING LIKE THAT YESTERDAY...",
+      "after": "Even though she was doing something like that yesterday..."
+    },
+    {
+      "before": "...WE'RE CALMLY HAVING A FAMILY BREAKFAST...",
+      "after": "...We're calmly having a family breakfast..."
+    },
+    {
+      "before": "ARE YOU NOT HUNGRY?",
+      "after": "Are you not hungry?"
+    },
+    {
+      "before": "EVERY SINGLE DAY MY JAW ACHES FROM GIVING SO MUCH FELLATIO...",
+      "after": "Every single day my jaw aches from giving so much fellatio..."
+    },
+    {
+      "before": "I WONDER WHAT AWFUL THINGS THEY'LL MAKE ME DO TODAY...",
+      "after": "I wonder what awful things they'll make me do today..."
+    },
+    {
+      "before": "THEY'LL MAKE ME DO (causative-passive coercion erased)",
+      "after": "They'll make me do"
+    },
+    {
+      "before": "...THEY'LL MAKE ME DO TODAY...",
+      "after": "...They'll make me do today..."
+    },
+    {
+      "before": "I'M GLAD THOSE BOYS DIDN'T COME THIS MORNING...",
+      "after": "I'm glad those boys didn't come this morning..."
+    },
+    {
+      "before": "I... I MADE SOME CURRY",
+      "after": "I... I made some curry"
+    },
+    {
+      "before": "IF SHE'S IN HER UNDERWEAR AGAIN, LIKE YESTERDAY..!",
+      "after": "If she's in her underwear again, like yesterday..!"
+    },
+    {
+      "before": "SHE'S STILL WEARING HER CLOTHES FROM THIS MORNING...",
+      "after": "She's still wearing her clothes from this morning..."
+    },
+    {
+      "before": "EVEN WHILE YOU'RE COOKING, I'M HAVING YOU TRAIN YOUR CUNT MUSCLES SO YOU DON'T DROP THE VIBRATOR, HAHA!",
+      "after": "Even while you're cooking, I'm having you train your cunt muscles so you don't drop the vibrator, haha!"
+    }
+  ],
+  "base_v11_rows": 291780,
+  "mixed_total_rows": 293370,
+  "corrective_frac_pct": 0.542,
+  "nsfw_frac_base_pct": 15.43,
+  "nsfw_frac_mixed_pct": 15.888,
+  "nsfw_frac_delta_pp": 0.458,
+  "divergence_jac_thr": 0.55,
+  "pagectx_frac": 0.6,
+  "out_parquet": "/home/danny/Documents/personal/extension/backend/scripts/data/v11fix6/data_v11fix6_pagecontext.parquet"
+}

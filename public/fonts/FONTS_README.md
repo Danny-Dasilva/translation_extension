@@ -1,14 +1,36 @@
-# Required Font Files
+# Font Files
 
-The following font files are required for the manga translator extension. These fonts were used in the original extension and need to be placed in this directory:
+## Bundled (shipped in this directory, web-accessible via the manifest)
 
-## Required Fonts (6 total):
+These two are the renderer's actual display fonts and match the backend
+`refit_final_composites.py` FONT_STACK so the extension's canvas output visually
+matches the server-side PIL composite:
 
-1. **Bangers-Regular.ttf**
+1. **Anton-Regular.ttf** (PRIMARY)
+   - Family: Anton
+   - Used for long / dialogue / narration text (backend FONT_STACK[0],
+     `pick_font` default).
+   - Source: Google Fonts (https://fonts.google.com/specimen/Anton)
+   - License: OFL (Open Font License)
+
+2. **Bangers-Regular.ttf** (SFX)
    - Family: Bangers
-   - Style: Regular
+   - Used for short, exclamatory / all-caps SFX outbursts (backend
+     `pick_font` short-SFX branch).
    - Source: Google Fonts (https://fonts.google.com/specimen/Bangers)
    - License: OFL (Open Font License)
+
+Both are registered via the FontFace API in
+`src/services/overlay-renderer.ts` (`tryRegisterLocalFonts`) and declared in
+`web_accessible_resources` (`fonts/*`) in both manifests. A Google Fonts CDN
+`<link>` (Anton + Bangers) remains only as an offline-safety fallback.
+
+---
+
+## Optional / legacy fonts (NOT required for backend parity)
+
+The fonts below were referenced by the older multi-font UI and are not needed
+for the backend-matching renderer. Add them only if you re-enable those styles:
 
 2. **Kalam-Regular.ttf**
    - Family: Kalam
