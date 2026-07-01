@@ -1,0 +1,6 @@
+# de.png
+# 1 bubble(s)
+
+[1]
+  JP: タコだ。。
+  EN: It’s a taco.

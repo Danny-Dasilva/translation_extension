@@ -1,0 +1,74 @@
+---
+session: kraken-speedwins-20260613
+date: 2026-06-14
+status: complete
+outcome: SUCCEEDED
+---
+
+goal: Cut per-image translate latency ~1000ms->500ms; landed median 1212->489ms (-60%) on main
+now: Optionally re-test perf/inpaint-ring stacked on current main (OCR now fast, inpaint may be on critical path); confirm branch cleanup + revert dirty proposal.md
+test: cd backend && SKIP_MERGE=1 PORT=8765 GPU_UTIL=0.6 bash scripts/eval/serve_v10it_vllm.sh & (wait ~45s) ; VLLM_BASE_URL=http://127.0.0.1:8765/v1 DEBUG=False .venv/bin/python .bench/bench_e2e.py --rounds 5
+
+done_this_session:
+  - task: 10-agent research diagnosed bottleneck = PARSeq OCR (AR_single batch=1, ~60ms/line serial); translate ~65ms, CTD forward ~7ms
+    files: [backend/app/routers/translate.py, backend/app/services/parseq_ocr_service.py, backend/app/services/ctd_service.py]
+  - task: Built e2e latency harness (times process_single_image over debug_output images vs vLLM@8765)
+    files: [backend/.bench/bench_e2e.py]
+  - task: Implemented 6 changes in parallel git worktrees, e2e-evaluated each serially on shared GPU
+    files: [backend/app/routers/translate.py, backend/app/services/ctd_service.py, backend/app/utils/ctd_utils.py, backend/app/services/_ort_init.py]
+  - task: MERGED translate-fastwins (-100ms median, all images improved) into main
+    files: [backend/app/routers/translate.py, backend/app/models/response.py]
+  - task: MERGED ort-preload robustness (fail-loud on silent CPU fallback, latency-neutral)
+    files: [backend/app/services/_ort_init.py, backend/app/main.py]
+  - task: MERGED ocr-batch (batched non-AR PARSeq bs=8 + dtype-adaptive ONNX input + punct postprocess); user accepted +1.26pp CER for -54% latency
+    files: [backend/app/config.py, backend/app/services/parseq_ocr_service.py, backend/app/utils/ocr_postprocess.py]
+  - task: Re-exported PARSeq refine_iters=2 on training machine (100.64.235.63); shipped ri=1 instead (+1.26pp < r2 +1.58pp, same speed)
+    files: [backend/models/parseq_manga_ep60_r2_nonAR_dynbatch.fp16.onnx]
+
+blockers: []
+
+questions:
+  - Delete 5 perf/* branches? (translate-fastwins+ort-preload merged; ctd-gpu/inpaint-ring/ocr-batch unmerged-but-committed) - user has not confirmed
+  - Revert uncommitted thoughts/.../2026-06-13_parseq-dynamic-batch-proposal.md edit on main?
+
+decisions:
+  - ship_ri1_not_r2: ri=1 nonAR export is +1.26pp CER vs r2 +1.58pp at same speed; r2 full-fp16 input added quality cost without latency gain
+  - parseq_batch_size_8_not_24: bs=24 OOMs (PARSeq transient + concurrent LaMa ConvTranspose) when vLLM co-resident on 32GB GPU; bs=8 fits and still ~10x
+  - vllm_port_8765: avoid the config port-8000 conflict between FastAPI app and vLLM (both default 8000)
+  - quality_gated_then_overridden: OCR initially blocked by 0.5pp CER gate; user explicitly chose speed-over-quality
+
+findings:
+  - final_latency: integrated main median 489ms / mean 464ms / p95 533ms (0 errors) vs baseline 1212/1405/2235; variance collapsed (per-line serial OCR was the driver)
+  - production_on_gpu: ONNX binds CUDA only because parseq_ocr_service.py:17 imports torch before onnxruntime; fragile, hence ort-preload safety merge
+  - cer_gate_distribution_mismatch: training-machine eval (ri2 2.88% vs ri1 4.40%) is a CLEAN set; production single-line CTD distribution is hard (~21% baseline CER) where AR genuinely wins; refine_iters does not recover it there
+  - ctd_postproc_not_bottleneck: ~210ms CPU postproc is dwarfed by OCR; GPU port regressed +48ms (shaped morphology via 441-offset shift-max slower than cv2)
+  - inpaint_hidden: inpaint overlapped behind OCR in worker thread; ring-mask had no standalone win BUT may now matter post-OCR-speedup
+
+worked:
+  - parallel worktrees for implementation + serial merge/eval (shared GPU forces serial eval)
+  - per-branch e2e eval caught translate-fastwins net-positive despite de-fusing OCR/translate overlap
+  - existing eval_perline_singleline.py as authoritative CER gate (runs both models through real ParseqOCRService)
+failed:
+  - GPU morphology for CTD postproc (441-offset shaped dilation slower than cv2) - regression
+  - parseq_batch_size=24 - GPU OOM on LaMa ConvTranspose with vLLM co-resident
+  - refine_iters=2 re-export - did NOT close CER gap on production distribution (got worse: +1.58pp)
+
+next:
+  - Re-eval perf/inpaint-ring stacked on current main (inpaint may now be on critical path)
+  - Decide branch cleanup (git branch -D the 5 perf/* branches) and revert proposal.md if desired
+  - Optional: investigate why production single-line CTD crops have ~21% baseline CER (gate distribution may be noisy)
+  - Optional: lighter user-sample images likely <489ms; re-bench on representative pages
+
+files:
+  created:
+    - backend/.bench/bench_e2e.py
+    - backend/models/parseq_manga_ep60_r2_nonAR_dynbatch.fp16.onnx
+    - backend/models/parseq_manga_ep60_r2_nonAR_dynbatch.fp16.json
+    - backend/app/services/_ort_init.py
+  modified:
+    - backend/app/routers/translate.py
+    - backend/app/models/response.py
+    - backend/app/main.py
+    - backend/app/config.py
+    - backend/app/services/parseq_ocr_service.py
+    - backend/app/utils/ocr_postprocess.py

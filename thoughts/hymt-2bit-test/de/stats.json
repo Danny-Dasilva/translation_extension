@@ -1,0 +1,32 @@
+{
+  "image": "de.png",
+  "lama_device": "cpu",
+  "translator": "HyMTTransformersService",
+  "translator_instances": 1,
+  "translation_model": "HY-MT1.5-1.8B-Q8_0.gguf",
+  "detect_ms": 853.3141613006592,
+  "num_blocks": 3,
+  "num_text_lines": 5,
+  "ocr_ms": 2423.5403537750244,
+  "inpaint_ms": 14179.936647415161,
+  "inpaint_detail": {
+    "components": 6,
+    "fastpath_hits": 0,
+    "forward_calls": 4,
+    "forward_ms": 14149.594580999292,
+    "downscale": 0.376747608535688
+  },
+  "translate_ms": 6284.218549728394,
+  "ocr_samples": [
+    "タコだ。。"
+  ],
+  "translations": [
+    "It’s a taco."
+  ],
+  "ocr_all": [
+    "タコだ。。"
+  ],
+  "translations_all": [
+    "It’s a taco."
+  ]
+}

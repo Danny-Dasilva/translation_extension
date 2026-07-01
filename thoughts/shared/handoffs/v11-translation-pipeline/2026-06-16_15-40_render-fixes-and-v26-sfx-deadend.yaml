@@ -1,0 +1,82 @@
+---
+session: v11-translation-pipeline
+date: 2026-06-16
+status: complete
+outcome: PARTIAL_MINUS
+---
+
+goal: Shipped 6 render/translation fixes + ONNX arena fix to main; re-rendered all 5 manga; v26 SFX-erase is a DEAD END (seg model over-masks art at every checkpoint)
+now: Decide path — (a) tighten garble guard for runaway interjections ("HAH! HAH!...") then regenerate, or (b) retrain the v26 seg model (only real route to SFX erasure), or stop; existing 5-manga output stands
+test: cd backend && /home/danny/Documents/personal/extension/backend/.venv/bin/python -m pytest tests/unit/ -q --deselect tests/unit/test_unify_schema.py::test_all_register_tags_declared   (93 pass)
+
+done_this_session:
+  - task: Implemented 6 render/translate fixes, merged to main (each unit-tested). #1 SFX-erase(dropped-block), #2 inpaint dark/large flat-fill guards, #3 OCR per-line conf + orphan dedup + newline-join flag(default off), #4 dialogue bbox-clamp/overflow, #5 font floor+contrast+stroke, #6 garble guard(ASCII classes)+short-utterance normalize
+    files: [backend/app/utils/ctd_utils.py, backend/app/utils/ocr_confidence_gate.py, backend/app/routers/translate.py, backend/app/services/lama_inpaint_service.py, backend/app/services/parseq_ocr_service.py, backend/app/utils/orphan_lines.py, backend/scripts/refit_final_composites.py, backend/app/services/translation_text_utils.py, backend/app/services/vllm_openai_translation_service.py, backend/app/config.py]
+  - task: Visually validated fixes before/after on 7 seikatsu pages — NET BETTER, zero regressions (#3/#5/#6 strong wins; #1 no visible effect because legacy CTD doesn't detect SFX)
+    files: [backend/.bench/validate/]
+  - task: Fixed env-gated ONNX CUDA arena (ORT_ARENA_KSAME=1 -> kSameAsRequested) so the batch ONNX stops greedily filling VRAM and OOM-crashing the co-located vLLM
+    files: [backend/app/services/_ort_init.py, backend/app/services/ctd_service.py, backend/app/services/parseq_ocr_service.py]
+  - task: Re-rendered ALL 5 manga on current main (legacy CTD + 6 fixes). 676 pages, ConnectError=0, vLLM stable
+    files: [backend/.bench/full_pipeline/, backend/.bench/run_full_pipeline_5manga.sh]
+  - task: Exported v26 round1 AND round7b CTD checkpoints to ONNX; wired ono_mask into inpaint-erase; validated BOTH — UNUSABLE (art destruction)
+    files: [backend/models/comictextdetector_v26_round1seg_20260612.onnx, backend/models/comictextdetector_v26_round7b_20260615.onnx]
+  - task: Committed earlier-session reusable v12 data-loader tooling
+    files: [backend/scripts/data/]
+
+blockers:
+  - v26 SFX-erase blocked at model level — text seg over-fires on dark/screentone art (cannot be fixed by export/threshold/wiring); requires retraining
+
+questions:
+  - Merge feat/v26-detector (default-off scaffolding) to main, or leave on branch until a retrained seg model exists?
+  - Tighten garble guard for short runaway interjections (HAH! repeated) — fix #6 dedups phrases >=8 chars only?
+
+decisions:
+  - keep_legacy_ctd_no_v26: v26 erases ~1/3 of artwork for ~zero SFX benefit at every checkpoint; ctd_v26 stays False
+  - ksame_not_hard_cap: ORT_ARENA_KSAME (kSameAsRequested) fixes the vLLM-OOM coexistence; a per-session gpu_mem_limit was too tight and caused its own OOMs — dropped it
+  - ocr_line_join_newline_off: newline-join leaks literal \n into 40% of v11 outputs, no quality win — keep flag False (v11 format-sensitivity)
+  - render_5_on_legacy_not_rerun: after v26 failed, did NOT re-run identical legacy output; the existing 5-manga set is current best
+
+findings:
+  - v26_text_seg_overmasks: measured off ONNX, text mask 11-14% coverage even at thr 0.90 (legacy ~4-5%); confidently-wrong on dark art -> 33-46% erase -> gray smears. round7b (adapter-matched text) did NOT fix it
+  - v26_ono_underfires: ono channel ~0.7% coverage, misses brush SFX; ono F1 caps 0.63-0.65 across ALL rounds (round1 ep75=0.65 among best)
+  - sfx_two_classes: detected-but-dropped SFX (fix #1 handles) vs UNDETECTED hand-drawn brush SFX (needs a working detector — the dominant visible defect)
+  - gpu_shared_32GB: v11 weights ~16GB so vLLM floor ~0.55; batch ONNX ~9GB; vLLM crashes if arena greedily fills. Run vLLM GPU_UTIL=0.6 + ORT_ARENA_KSAME=1; free other GPU procs if tight
+  - vllm_serving: PORT=8765 SKIP_MERGE=1 GPU_UTIL=0.6 bash scripts/eval/serve_v10it_vllm.sh (model id v10it = v11 merged_fixed), ~65s warmup
+
+worked:
+  - manual worktrees from main (git worktree add -b X path main) — the Agent-tool isolation forked from a STALE ancestor (8080fe5), breaking 5/6 first-attempt branches
+  - before/after visual QA via parallel sub-agents reading webp pairs
+  - export via training-box (100.64.235.63) export_unified.py + dynamo=True opset=18 (legacy torch.onnx.export segfaults on torch 2.11)
+failed:
+  - Agent-tool isolation:worktree (stale base 8080fe5) — always create worktrees manually from main
+  - v26 round1 AND round7b for SFX erasure (text over-masks, ono under-fires)
+  - per-session ORT gpu_mem_limit cap (too tight, caused alloc failures with VRAM free)
+
+next:
+  - If desired: tighten _dedup_repeated_phrase / garble guard in translation_text_utils.py for short runaway interjections, then regenerate
+  - If pursuing SFX: retrain v26 seg model (hard-negative dark/screentone for text head; raise ono recall) — training task, then re-export+re-validate
+  - Optionally merge feat/v26-detector to main (default-off scaffolding) + teach download script about v26 weights (gitignored)
+  - 5-manga output for inspection: backend/.bench/full_pipeline/{656354_numarase,640441_seikatsu,part12,part13,656660_angel}/
+
+files:
+  created:
+    - backend/app/services/_ort_init.py (cuda_provider_options helper)
+    - backend/models/comictextdetector_v26_round1seg_20260612.onnx(.data,.pt) (gitignored)
+    - backend/models/comictextdetector_v26_round7b_20260615.onnx(.data) (gitignored)
+    - backend/.bench/run_full_pipeline_5manga.sh
+    - backend/tests/unit/{test_sfx_erase_mask,test_inpaint_flatfill_guard,test_ocr_join_dedup,test_compose_overflow,test_compose_legibility,test_garble_guard}.py
+  modified:
+    - backend/app/services/ctd_service.py
+    - backend/app/services/parseq_ocr_service.py
+    - backend/app/services/lama_inpaint_service.py
+    - backend/app/services/translation_text_utils.py
+    - backend/app/services/vllm_openai_translation_service.py
+    - backend/app/utils/ctd_utils.py
+    - backend/app/utils/ocr_confidence_gate.py
+    - backend/app/utils/orphan_lines.py
+    - backend/app/routers/translate.py
+    - backend/scripts/refit_final_composites.py
+    - backend/app/config.py
+  branches:
+    - main @ 2922bc7 (6 fixes + arena fix)
+    - feat/v26-detector (unmerged, default-off v26 scaffolding + ono-erase wiring + round7b config)

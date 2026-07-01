@@ -1,0 +1,73 @@
+---
+session: extension-phone-deploy
+date: 2026-06-22
+status: partial
+outcome: PARTIAL_PLUS
+---
+
+goal: Deployed the manga-translator extension to an Android phone (Firefox) hitting the local backend over Tailscale, shipped GPTQ-INT4 model + round-9 detector, added toggle/flag/logging/non-blocking-render/next-page features, and ROOT-CAUSED the recurring whole-machine crashes to GPU power (PSU transient trip), fixed via nvidia-smi -pl 400.
+now: EXTENSION FIX (real OOM fix): make the extension translate ONLY the main/largest image per page — on gallery pages (e.g. nhentai /g/<id>/ thumbnail grid) it currently detects+queues ALL thumbnails, flooding the backend with concurrent reqs -> the OCR-arena OOM. Limiting to one image fixes it at the source (the backend MAX_PARALLEL_IMAGES=1 was only a mitigation). NOTE: crash is HARDWARE power-delivery (see corrected decision) — do NOT run the model until the 12VHPWR connector/PSU is checked. Servers currently DOWN (machine just rebooted from another crash; power cap RESET to 575W).
+test: cd backend && .venv/bin/python -m pytest tests/unit/ -q --deselect tests/unit/test_unify_schema.py::test_all_register_tags_declared
+
+done_this_session:
+  - task: ROOT-CAUSED whole-computer crashes (recurred ~2-5min into model load, 5+ times). journalctl shows ABRUPT power-loss (no panic/Xid/MCE/thermal — log just stops mid-op). = PSU over-current trip from RTX 5090 transient spikes. FIX = `sudo nvidia-smi -pl 400`. VERIFIED= 8min sustained load no crash, peak only 241W/46C (was crashing in 2-5min at 575W).
+    files: [runs/crash_telemetry/]
+  - task: Shipped GPTQ-INT4 v11 model as production vLLM default (12.0GB@util0.40, beats bf16 chrF++ 32.2 vs 31.3, truncation fixed). REQUIRES --enforce-eager (torch.compile crashes w/ CUBLAS on first real batch).
+    files: [backend/scripts/eval/serve_v10it_vllm.sh, backend/training/runs/manga-bubbles/gemma4_e4b_v11_pagecontext/w4a16_gptq/, backend/scripts/quant/]
+  - task: Round-9 CTD detector confirmed wired (config.py:74, models/comictextdetector_v26_round9_onofix_20260622.onnx); flag-for-finetune endpoint + async QueueHandler logging wired into main.py; WS path unified onto process_single_image (was a 3rd divergent pipeline w/ no postedit/inpaint).
+    files: [backend/app/main.py, backend/app/routers/flag.py, backend/app/routers/websocket_upload.py, backend/app/logging_config.py]
+  - task: Extension features + phone fixes (ALL built + deployed to phone via web-ext, retested working) — on/off toggle + per-image flag(⚑) button + async logger wired; removed per-box retry(↻) buttons; FIXED contextMenus crash (Firefox-Android has no contextMenus API; an UNGUARDED `browser.contextMenus.onClicked` at top of service-worker.ts threw at module load → killed whole bg script → all translate msgs unanswered → "translation failed". Fix= optional-chain `browser.contextMenus?.onClicked` + guard updateContextMenu); non-blocking render (page <img> NEVER mutated/hidden; translation is an on-top `manga-translator-translation-layer` <img> in the overlay div, shown only when ready; loading badge is a small corner chip); next-page src/srcset-change MutationObserver (attributeFilter) + per-element invalidate() + stale-overlay cleanup + 150ms debounce/loop-guard.
+    files: [src/background/service-worker.ts, src/content/content-script.ts, src/services/overlay-renderer.ts, src/services/image-detector.ts, src/popup/popup.ts, src/services/overlay-styles.ts, src/utils/logger.ts]
+  - task: Phone deploy via web-ext (Firefox Android, temporary add-on). Extension built w/ VITE_API_HOST=100.91.164.64 (Tailscale). Backend binds 0.0.0.0:8001, reachable from phone over Tailscale (HTTP+WS verified).
+    files: [.env, package.json (web-ext dep), backend/scripts/start_dev.sh]
+
+blockers: []
+
+questions:
+  - User request NOT yet done; "enable the setting to translate boxes OUTSIDE speech bubbles" — likely a bubble-only filter; check enable_bubble_fit (config.py:170) / ctd_utils bubble-match logic. Pipeline already emits non-bubble blocks (21 detected->boxes), so clarify what's being filtered.
+  - Make power cap persistent? (resets on reboot — every prior crash+reboot reset it to 575W, why crashes recurred). Options offered to user; not yet done.
+
+decisions:
+  - crash_is_HARDWARE_power_not_code_or_load: UPDATED after a 2nd captured crash. The machine hard-crashes with NO software signature (no Xid/NVRM, no MCE [rasdaemon clean], no panic, no thermal — journal just stops mid-line = instant power loss). ~10 crashes today. The latest crash happened while the GPU was IDLE (30W, 37C, 4% util, cap at 400W active, 26min in) — which RULES OUT model code AND GPU-load/thermal as the trigger. The 400W cap DELAYS crashes (26min vs 2-5min) but does NOT prevent them. Conclusion: intermittent power-delivery hardware fault. Most likely the RTX 5090 12VHPWR/12V-2x6 connector not fully seated (the #1 '5090 instantly powers off PC, no logs' cause), or a marginal/failing PSU (needs 1000W+), or daisy-chained PCIe cables. USER MUST physically reseat the 12VHPWR connector + verify PSU. Software (power cap) only mitigates. Telemetry/journal forensics in runs/crash_telemetry/ + journalctl --list-boots.
+  - hybrid_ocr_OFF: kept disabled (HYBRID_OCR_ENABLED=false) for VRAM/latency under co-location; the garbled OCR user saw was a CHINESE manga (model/OCR are fine on Japanese), not a quality bug.
+  - onnx_arena_cap_6GB: backend ONNX arena ballooned to 17GB over hundreds of reqs (ORT_ARENA_KSAME alone doesn't cap total) → filled GPU → cuBLAS OOM → 0 boxes. Fixed w/ ORT_GPU_MEM_LIMIT_BYTES=6442450944. (2GB was too small earlier — detector needs ~1.15GB single alloc.)
+  - firefox_android_only: Chrome Android can't load extensions; Firefox 152 can via `web-ext run -t firefox-android` (temporary add-on).
+
+findings:
+  - gallery_flood_is_the_oom_root_cause: The backend OCR-arena OOM is TRIGGERED by the extension. On a GALLERY page (nhentai /g/<id>/ thumbnail grid) the extension detects EVERY thumbnail (>100x100px filter) and queues them ALL -> burst of concurrent /translate -> arena exhaustion. REAL FIX = extension translates only ONE image per page (the main/largest content image; skip thumbnails). This was the user's last request, NOT YET IMPLEMENTED. Do this in image-detector.ts/content-script.ts (select single largest visible image by area, or require a min size + only-largest). Fixes the OOM at the source; backend MAX_PARALLEL_IMAGES=1 is just a band-aid.
+  - backend_ocr_concurrency_oom: RAPID page-flip on phone sends a BURST of concurrent images -> concurrent ONNX detector/OCR runs exhaust GPU arena -> 'BFCArena Available memory X < requested Y' OOM -> 0 boxes. Mitigated (not solved) by MAX_PARALLEL_IMAGES=1 (was 4) + ORT_GPU_MEM_LIMIT_BYTES=6GB: burst of 6 -> 5/6 succeed (was ~all failing). REAL FIX options for next session: lower vLLM GPU_UTIL 0.40->0.35 to free backend headroom, OR move detector+OCR to CPUExecutionProvider (frees all backend GPU, slower), OR single shared ONNX arena budget. The 6GB cap is PER-SESSION not total (detector+ocr+bubble each get one) so backend can still hit ~12GB.
+  - web_ext_quirks: deploy needs `adb shell am force-stop org.mozilla.firefox` first (clears dup RDP sockets), screen awake, and NO --no-reload (it makes web-ext install-and-exit). web-ext exits after install regardless (unsettled-await bug) but the temp add-on persists until Firefox restart. NOT permanent — needs AMO signing for that.
+  - crash_telemetry_setup: runs/crash_telemetry/ has persistent dmon + sys loggers (survive reboot) — re-use to catch any future crash.
+  - phone_tailscale_ip: phone=100.66.219.106, host=100.91.164.64; phone reaches backend over Tailscale fine.
+
+worked:
+  - nvidia-smi -pl 400 + 8-min monitored load test = clean reproduction-by-absence (proves power root cause)
+  - delegating focused fixes to kraken agents to keep the huge (6MB) session lean
+  - persistent disk telemetry (runs/crash_telemetry) flushed per-line to survive the power-loss crash
+
+failed:
+  - ORT_GPU_MEM_LIMIT_BYTES=2GB (too small — detector single alloc is 1.15GB; use 6GB)
+  - fp8 quant (useless on this PLE model — see [[reference-gemma4-vllm-quant]])
+  - web-ext --no-reload (installs then exits immediately; drop it)
+
+next:
+  - HARDWARE FIRST: user reseats RTX 5090 12VHPWR/12V-2x6 connector + verifies PSU (>=1000W, no daisy-chain) before running the model again — crashes are power-delivery, not software.
+  - EXTENSION: translate only ONE image per page (the main/largest content image; skip gallery thumbnails) — image-detector.ts/content-script.ts. This is the user's last request AND the real fix for the backend OCR-arena OOM (gallery-flood). After: rebuild firefox + redeploy via web-ext (see web_ext_quirks).
+  - Make power cap auto-apply on boot (systemd unit: `nvidia-smi -pe 1; nvidia-smi -pl 400`) so it's at least active; bake cap + ORT_GPU_MEM_LIMIT_BYTES=6442450944 + HYBRID_OCR_ENABLED=false + MAX_PARALLEL_IMAGES=1 into start_dev.sh
+  - Address "translate boxes outside speech bubbles" request (investigate enable_bubble_fit / bubble filter)
+  - Commit the large uncommitted diff (group: model/serve, backend flag+logging+WS, extension features) — nothing committed this session
+  - Consider AMO-signing the XPI for a PERMANENT phone install (web-ext temp add-on dies on Firefox restart)
+  - To run the stack next session: `sudo nvidia-smi -pl 400` THEN start vLLM (backend/scripts/eval/serve_v10it_vllm.sh) THEN backend (HYBRID_OCR_ENABLED=false ORT_ARENA_KSAME=1 ORT_GPU_MEM_LIMIT_BYTES=6442450944 MAX_PARALLEL_IMAGES=1 PORT=8001 .venv/bin/python main.py). Phone deploy: adb force-stop firefox, then `web-ext run -t firefox-android --android-device=57031FDCQ004VF --firefox-apk=org.mozilla.firefox --source-dir=dist-firefox` (no --no-reload).
+
+files:
+  created:
+    - backend/app/routers/flag.py, backend/app/logging_config.py, backend/tests/unit/test_flag.py, backend/tests/unit/test_ws_pipeline_unify.py
+    - src/utils/logger.ts
+    - backend/scripts/quant/* (quant_w4a16.py gptq/rtn, build_calib.py, refold_knorm_singlefile.py, score_chrf.py, calib_v11_int4.jsonl)
+    - backend/training/runs/manga-bubbles/gemma4_e4b_v11_pagecontext/w4a16_gptq/ (9.5GB GPTQ-INT4 artifact)
+    - backend/scripts/start_dev.sh, runs/crash_telemetry/, scripts/parity_*.{mjs,py}
+  modified:
+    - backend/scripts/eval/serve_v10it_vllm.sh (GPTQ default, GPU_UTIL 0.40, --enforce-eager, --max-num-batched-tokens 512)
+    - backend/app/main.py (flag router + setup_logging), backend/app/routers/websocket_upload.py (unified on process_single_image)
+    - src/background/service-worker.ts, src/content/content-script.ts, src/services/overlay-renderer.ts, src/services/image-detector.ts, src/services/overlay-styles.ts, src/popup/popup.ts, src/content/overlay.css
+    - .env (VITE_API_HOST=100.91.164.64)
