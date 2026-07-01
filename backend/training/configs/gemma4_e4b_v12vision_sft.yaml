@@ -1,0 +1,136 @@
+# ============================================================================
+# v12vision — Gemma-4 E4B VISION-LoRA SFT (Phase 2: page IMAGE as context)
+# ============================================================================
+# SCAFFOLDING ONLY — NOT YET RUN. No GPU has touched this config.
+#
+# WHY A CLEAN MULTIMODAL BASE (not the v11 merged text model)
+# -----------------------------------------------------------
+# The production translator (v11 / v11fix6 / v11fix7) is a TEXT-ONLY SFT: its
+# LoRA targeted `model.language_model.*` ONLY, so the vision tower + multimodal
+# projector were never adapted. The merged checkpoint's vision tower is intact
+# but UNUSED weights — fine for text serving, useless as a Phase-2 starting
+# point. Phase 2 adds the page IMAGE as context, which REQUIRES the original,
+# unperturbed multimodal base: `unsloth/gemma-4-E4B-it`. Do NOT warm-start from
+# a merged text checkpoint — that bakes in the text-only LoRA delta and leaves
+# the vision/projector path unconditioned.
+#
+# Box env (per project notes): unsloth 2026.6.7 / trl 0.23.1 / transformers
+# 5.5.0, RTX 5090 (cu130). Trainer: backend/scripts/train/sft_gemma4_e4b_v12vision.py
+# ============================================================================
+
+model:
+  # Clean multimodal base — Gemma4ForConditionalGeneration (text + vision + audio).
+  name_or_path: unsloth/gemma-4-E4B-it
+  dtype: bfloat16
+  # Vision pages add ~280 image soft-tokens/image (config: vision_soft_tokens_per_image)
+  # ON TOP of the OCR/context text. v11 text used 1024; bump to fit image tokens
+  # + page OCR + page context + target. Tune to your POC page-token p99.
+  max_seq_length: 2048
+  load_in_4bit: false       # bf16 LoRA; RTX 5090 32GB should fit E4B + vision LoRA.
+  full_finetuning: false
+
+lora:
+  # Start from the proven v11 text recipe (r16/alpha32) and EXTEND to vision.
+  # NOTE: vision-LoRA is more sensitive than text-LoRA — if you see instability
+  # or vision-tower divergence in the dry-run loss, drop to r=8 and/or lr=1e-4
+  # (see train.learning_rate note below). r16 is the documented starting point.
+  r: 16
+  alpha: 32
+  dropout: 0.0
+  bias: none
+
+  # ----- WHICH TOWERS TO ADAPT -------------------------------------------------
+  # PRIMARY mechanism (used by the trainer): unsloth FastVisionModel boolean flags.
+  # Unsloth resolves the architecture-specific wrapped Linears internally, so we
+  # do NOT hand-write a regex by default. The trainer audits the post-attach
+  # trainable params BY TOWER and FAILS LOUDLY if vision_tower == 0 (i.e. unsloth
+  # silently skipped the vision tower for gemma4_vision).
+  finetune_vision_layers: true        # adapt the vision tower (the Phase-2 point)
+  finetune_language_layers: true      # keep adapting the language tower (translation)
+  finetune_attention_modules: true    # q/k/v/o projections
+  finetune_mlp_modules: true          # gate/up/down projections
+
+  # ----- EXACT MODULE NAMES (VERIFIED from this repo) --------------------------
+  # Confirmed from backend/scripts/eval/merge_gemma4_lora_clean.py docstring +
+  # the v9c adapter's actual safetensors keys + the merged config.json arch:
+  #
+  #   LANGUAGE (bare nn.Linear, 42 layers x 7 = 294 modules):
+  #     model.language_model.layers.{N}.self_attn.{q_proj,k_proj,v_proj,o_proj}
+  #     model.language_model.layers.{N}.mlp.{gate_proj,up_proj,down_proj}
+  #
+  #   VISION (16 layers x 7 = 112 modules) — each proj is a Gemma4ClippableLinear
+  #   WRAPPER whose real nn.Linear lives at `.linear`, so the leaf to LoRA is:
+  #     model.vision_tower.encoder.layers.{N}.self_attn.{q,k,v,o}_proj.linear
+  #     model.vision_tower.encoder.layers.{N}.mlp.{gate,up,down}_proj.linear
+  #
+  #   MULTIMODAL PROJECTOR: model.multi_modal_projector.*
+  #     ?? GUESS/UNVERIFIED: in Gemma-family models this projector is typically a
+  #     learned Parameter (mm_input_projection_weight) + an RMSNorm, with NO
+  #     nn.Linear — so LoRA may attach NOTHING here. The merge script only ever
+  #     reported sections {language_model, vision_tower, audio_tower}, never a
+  #     projector section. If you want to adapt the projector you likely must set
+  #     its Parameter trainable directly (full-tune that one tensor), not LoRA.
+  #     CONFIRM on the box: see verification snippet in V12VISION_README.md.
+  #
+  #   AUDIO: model.audio_tower.* — DELIBERATELY EXCLUDED (no audio in this task).
+  #
+  # OPTIONAL explicit override — if you bypass the unsloth boolean flags and pass
+  # an explicit peft regex instead, this is the language+vision regex. Note the
+  # trailing `.linear` on the vision branch (ClippableLinear wrapper) but NOT on
+  # the language branch (bare nn.Linear). Expected match count = 294 + 112 = 406.
+  target_modules_regex_explicit: '^model\.(language_model\.layers\.\d+\.(self_attn|mlp)\.(q_proj|k_proj|v_proj|o_proj|gate_proj|up_proj|down_proj)|vision_tower\.encoder\.layers\.\d+\.(self_attn|mlp)\.(q_proj|k_proj|v_proj|o_proj|gate_proj|up_proj|down_proj)\.linear)$'
+  expected_language_modules: 294
+  expected_vision_modules: 112
+
+data:
+  # Per-PAGE rows produced by the sibling POC dataset builder, schema:
+  #   {"image_path","jp_ocr","page_context","en_target","meta":{chapter,page,n_bubbles}}
+  # image_path is resolved relative to data.image_root if not absolute.
+  train_path: backend/scripts/data/v12vision/data_v12vision_poc.jsonl
+  image_root: backend/scripts/data/v12vision        # prefix for relative image_path
+  eval_size: 64                                      # POC is small; hold out a few pages
+  use_chat_template: true
+  # Whole-page multimodal instruction. {jp_ocr} and {page_context} are filled in;
+  # the IMAGE is injected as a separate image content block (see trainer).
+  instruction: |
+    Translate this manga page from Japanese to English. Use the page image, the
+    OCR text, and the surrounding context for speakers, pronouns, and continuity.
+    Output only the English translation.
+  # Optional labels prefixing the OCR / context blocks inside the user turn.
+  ocr_label: "Page OCR:"
+  context_label: "Context:"
+
+train:
+  num_train_epochs: 1
+  # Images are heavy: halve per-device batch vs text and double grad-accum to keep
+  # the SAME effective batch (16) as the v11 text recipe. Tune down if OOM.
+  per_device_train_batch_size: 2
+  gradient_accumulation_steps: 8     # eff batch = 16
+  # v11 text used 2e-4. Vision towers are more sensitive; 1e-4 is the safer default
+  # for a combined vision+language LoRA. Bump back to 2e-4 only if the dry-run loss
+  # is healthy and you want the v11-identical text-side schedule.
+  learning_rate: 1.0e-4
+  lr_scheduler_type: cosine
+  warmup_ratio: 0.03
+  max_grad_norm: 1.0
+  weight_decay: 0.01
+  bf16: true
+  optim: adamw_8bit
+  packing: false                     # never pack multimodal samples
+  completion_only_loss: true         # mask the prompt; loss only on en_target
+  logging_steps: 10
+  save_steps_pct: 0.25
+  eval_steps_pct: 0.10
+  save_total_limit: 5
+  seed: 42
+  dataloader_num_workers: 2          # PIL decode happens in the collator; keep low
+  report_to: none
+
+output:
+  dir: backend/training/runs/manga-bubbles/gemma4_e4b_v12vision_poc
+  log_file: backend/training/runs/manga-bubbles/gemma4_e4b_v12vision_poc/training.log
+
+dry_run:
+  enable: true
+  fraction: 0.25         # POC is tiny; sample a quarter for the smoke run
+  max_steps: 30

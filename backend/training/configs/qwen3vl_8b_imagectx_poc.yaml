@@ -1,0 +1,121 @@
+# ============================================================================
+# Qwen3-VL-8B IMAGE-CONTEXT LoRA SFT — Phase-1 POC (IMAGE-ON arm)
+# ============================================================================
+# SCAFFOLDING ONLY — NOT YET RUN. No GPU has touched this config.
+# Plan: thoughts/shared/plans/2026-06-30_image-context-vlm-finetune.md (§4, §7)
+# Trainer: backend/scripts/train/sft_qwen3vl_8b_imagectx.py
+#
+# This is the IMAGE-ON arm. Its control twin (identical text, NO image block) is
+# qwen3vl_8b_imagectx_poc_imageoff.yaml. Pre-mortem #1:
+#     image value  =  FT(image-on)  −  FT(image-off)
+# Train BOTH; promotion needs the image arm to beat the text arm on Furube-37 POV
+# (esp. he<->she), not just beat the 46% zero-shot number.
+#
+# BOX ENV (per project notes): unsloth / trl 0.23.x / transformers 5.x, RTX 5090
+# (sm_120 / cu13). Launch with (pre-mortem #4 + gemma4-training-quirks):
+#   TOKENIZERS_PARALLELISM=false MALLOC_ARENA_MAX=2 TORCH_CUDA_ARCH_LIST=12.0 \
+#   LD_PRELOAD=<libjemalloc.so> setsid nohup <python> sft_qwen3vl_8b_imagectx.py ...
+# Do NOT stack serve+train back-to-back for hours (the 5090 Xid-hung under load).
+# ============================================================================
+
+model:
+  # UNCENSORED base (pre-mortem uncensored-base direction): the abliterated twin
+  # of Qwen3-VL-8B-Instruct (the measured-46%-POV model). Abliteration removes the
+  # refusal direction at the weights -> no NSFW refusal wall. VERIFY-ON-BOX: the
+  # served alias is `qwen3vl_ablit8b` at :8001; confirm the local HF path/cache.
+  name_or_path: huihui-ai/Huihui-Qwen3-VL-8B-Instruct-abliterated
+  dtype: bfloat16
+  # image soft-tokens + numbered JP list + page context + numbered EN target.
+  max_seq_length: 2048
+  load_in_4bit: false        # bf16 LoRA; ~24-28GB on the 5090 32GB. Set true for
+                             # QLoRA-4bit fallback (~14-18GB) if OOM.
+  full_finetuning: false
+  # Image-token budget (VERIFY-ON-BOX (3)): Qwen3-VL rounds patches to mult-of-32.
+  # Cap the long side to ~1024-1280px -> a few hundred image tokens (bounds seq
+  # len + VRAM + latency; the 1810px hi-res A/B helped little). max_pixels is in
+  # PIXELS (H*W). 1280*1280 ~= 1.64M; start ~1.05M (~1024^2) and tune to page p99.
+  max_pixels: 1048576        # ~1024x1024 upper bound
+  min_pixels: 200704         # ~448x448 lower bound
+
+lora:
+  # Start from the proven v10/v11 text recipe (r16/alpha32), EXTEND to vision.
+  # Drop to r8 / lr1e-4 if the vision-tower loss is unstable in the dry-run.
+  r: 16
+  alpha: 32
+  dropout: 0.0
+  bias: none
+
+  # ----- WHICH TOWERS TO ADAPT (unsloth FastVisionModel boolean flags) --------
+  # unsloth resolves the Qwen3-VL wrapped Linears internally. The trainer AUDITS
+  # the post-attach trainable params BY TOWER and FAILS LOUDLY if vision_tower==0.
+  finetune_vision_layers: true        # adapt the visual tower (the Phase-1 point)
+  finetune_language_layers: true      # keep adapting the language tower
+  finetune_attention_modules: true    # q/k/v/o projections
+  finetune_mlp_modules: true          # gate/up/down projections
+
+  # ----- QWEN3-VL MODULE NAMES (VERIFY-ON-BOX (1)) ----------------------------
+  # ASSUMED from the Qwen3-VL / Qwen2.5-VL convention — CONFIRM via --inspect on
+  # the box before trusting. Qwen3-VL (transformers Qwen3VLForConditionalGeneration):
+  #   VISION tower (~ blocks x layers):
+  #     model.visual.blocks.{N}.attn.{qkv,proj}
+  #     model.visual.blocks.{N}.mlp.{linear_fc1,linear_fc2}   (or gate/up/down)
+  #   MERGER (vision->text projector, IS nn.Linear — adapt it):
+  #     model.visual.merger.{...}      # unlike Gemma's Parameter-only projector
+  #   LANGUAGE:
+  #     model.language_model.layers.{N}.self_attn.{q,k,v,o}_proj
+  #     model.language_model.layers.{N}.mlp.{gate,up,down}_proj
+  # If unsloth's flags do NOT attach to the vision tower, bypass them and pass an
+  # explicit peft target_modules regex built from the --inspect module dump.
+  target_modules_regex_hint: '(visual\.blocks\.\d+\.(attn|mlp)\.|visual\.merger\.|language_model\.layers\.\d+\.(self_attn|mlp)\.)'
+
+data:
+  # POC rows produced by backend/scripts/data/v12vision/build_numbered_poc.py.
+  # Each row is ALREADY a Qwen3-VL chat sample: {"messages":[...]} with the image
+  # block carrying an absolute PATH string (trainer hydrates path -> PIL).
+  train_path: backend/scripts/data/v12vision/data_poc_imageon.jsonl
+  image_root: backend/scripts/data/v12vision   # prefix for any relative image path
+  eval_size: 48                                 # small in-file holdout (see below)
+  # Mixed image/no-image dataset: Ikenie rows carry an image block; the NSFW
+  # register + v11 text backbone rows are image-absent (§3.2). VERIFY-ON-BOX (2):
+  # if UnslothVisionDataCollator rejects mixed image/text batches, flip this ON to
+  # use the ModalityBatchSampler (homogeneous batches).
+  bucket_by_modality: false
+
+train:
+  num_train_epochs: 1
+  # Images are heavy: per-device 1 x grad-accum 16 -> eff batch 16. Bump to
+  # per-device 2 / accum 8 if VRAM allows.
+  per_device_train_batch_size: 1
+  gradient_accumulation_steps: 16    # eff batch = 16
+  learning_rate: 1.0e-4              # vision towers are LR-sensitive; 1e-4 default
+  lr_scheduler_type: cosine
+  warmup_ratio: 0.03
+  max_grad_norm: 1.0
+  weight_decay: 0.01
+  bf16: true
+  optim: adamw_8bit
+  packing: false                     # never pack multimodal samples
+  completion_only_loss: true         # mask the prompt; loss only on numbered EN
+  logging_steps: 10
+  save_steps_pct: 0.25
+  eval_steps_pct: 0.10
+  save_total_limit: 5
+  seed: 42
+  dataloader_num_workers: 2          # PIL decode in the collator; keep low
+  report_to: none
+  # BOX-HARDENING (gemma4-training-quirks): in-training eval SIGSEGVs on sm_120.
+  # Keep OFF; real eval is the disjoint Furube-37 POV harness + refusal probe.
+  # NOTE: this must be set on the BOX clone too (box edits don't propagate local).
+  in_training_eval: false
+  # pre-mortem #4: resume support. null = fresh; true = auto-detect latest in
+  # output.dir; or a checkpoint path. Overridable with --resume on the CLI.
+  resume_from_checkpoint: null
+
+output:
+  dir: backend/training/runs/manga-bubbles/qwen3vl_8b_imagectx_poc_imageon
+  log_file: backend/training/runs/manga-bubbles/qwen3vl_8b_imagectx_poc_imageon/training.log
+
+dry_run:
+  enable: true
+  fraction: 0.05         # ~600 rows for the smoke (dataset is 12k)
+  max_steps: 30

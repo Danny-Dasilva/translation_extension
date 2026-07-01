@@ -60,7 +60,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-_SRC_RE = re.compile(r"^ikenie4:p(\d+):idx(\d+)")
+_SRC_RE = re.compile(r"^[^:]+:p(\d+):idx(\d+)")  # any chapter slug (ikenie4, ikenie5, …)
 
 # Gold fields to pass straight through onto the prediction row so downstream
 # scoring/probes keep their per-row config (probe_type, ocr_clean, category…).

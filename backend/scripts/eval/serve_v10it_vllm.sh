@@ -32,24 +32,52 @@
 #   DRAFTER         — MTP drafter id     (default: google/gemma-4-E4B-it-assistant)
 #   PORT            — OpenAI API port    (default: 8000)
 #   GAMMA           — speculative tokens (default: 2)
-#   MAX_LEN         — max model length   (default: 4096)
-#   GPU_UTIL        — gpu_memory_util    (default: 0.85)
+#   MAX_LEN         — max model length   (default: 3072; heaviest benched page ~2.4k prompt tok + 64 out)
+#   GPU_UTIL        — gpu_memory_util    (default: 0.55; weights ~15GB, KV barely used at this concurrency)
+#   MAX_NUM_SEQS    — max concurrent seqs (default: 8; caps KV-cache reservation)
 #   VLLM_VENV       — venv path          (default: /home/danny/.venvs/vllm)
 #   SKIP_MERGE      — set to 1 to skip the merge step (assumes MERGED_DIR is ready)
 #
 set -euo pipefail
 
 PROJECT_ROOT="${PROJECT_ROOT:-/home/danny/Documents/personal/extension}"
-# Production default: v11 page-context model (merged_fixed has the restored k_norm
-# weights vLLM needs — see reference-gemma4-training-quirks). Override via env for others.
-ADAPTER_DIR="${ADAPTER_DIR:-${PROJECT_ROOT}/backend/training/runs/manga-bubbles/gemma4_e4b_v11_pagecontext/final}"
-MERGED_DIR="${MERGED_DIR:-${PROJECT_ROOT}/backend/training/runs/manga-bubbles/gemma4_e4b_v11_pagecontext/merged_fixed}"
+# Production default (2026-06-19): v11 page-context model, GPTQ W4A16-quantized.
+# The w4a16_gptq dir self-declares quantization_config (compressed-tensors INT4, embeds
+# kept bf16) so vLLM serves it via Marlin; k_norm is already refolded in. Measured 12.9GB
+# EngineCore @ util 0.45 vs 17.5GB bf16, and chrF++ 32.21 vs bf16 31.28 (beats bf16) with
+# the RTN speaker-tag truncation fixed (5/128 -> 1/128). See scripts/quant/quant_w4a16.py.
+# To serve the bf16 original instead: MERGED_DIR=.../gemma4_e4b_v11_pagecontext/merged_fixed
+# PROMOTED 2026-06-29: v11fix8 (v11fix7 base + 2,337 corpus-mined JP→EN pairs). Clean AR-OCR
+# eval vs v11fix6: chrF++ +3.001 CI95[+1.74,+4.34] p=0.0000, zero probe regressions (PASS).
+# Default = bf16 merged_fixed (the CERTIFIED model: clean AR-OCR eval +3.001 chrF++ vs v11fix6, PASS).
+# NOTE: the RTN W4A16 INT4 (w4a16_gptq) cert-FAILED — RTN degraded it to +1.297 chrF + reverse_sense
+# regression (data-free RTN is weaker than GPTQ). For a quality INT4, build w4a16_gptq via
+# --method gptq (sequential pipeline + --fix-kv-sharing --keep-embeds-on-cpu) and re-certify.
+ADAPTER_DIR="${ADAPTER_DIR:-${PROJECT_ROOT}/backend/training/runs/manga-bubbles/gemma4_e4b_v11fix8_pagecontext/final}"
+MERGED_DIR="${MERGED_DIR:-${PROJECT_ROOT}/backend/training/runs/manga-bubbles/gemma4_e4b_v11fix8_pagecontext/merged_fixed}"
 BASE_MODEL="${BASE_MODEL:-unsloth/gemma-4-E4B-it}"
 DRAFTER="${DRAFTER:-google/gemma-4-E4B-it-assistant}"
 PORT="${PORT:-8000}"
 GAMMA="${GAMMA:-2}"  # γ=2 wins on this corpus: 109 tok/s vs γ=4's 104; per-pos accept falls off too steeply past pos 1
-MAX_LEN="${MAX_LEN:-4096}"
-GPU_UTIL="${GPU_UTIL:-0.85}"
+MAX_LEN="${MAX_LEN:-3072}"
+GPU_UTIL="${GPU_UTIL:-0.55}"  # v11fix8 bf16 merged_fixed (~15GB) needs ~0.55 (=17.6GB; fits local alongside
+                              # videonest ~11.5GB co-tenant: 29.1GB < 32GB). For a (re-certified GPTQ) INT4 use 0.40.
+                              # (v11 INT4 footprint: 12.0GB EngineCore, KV ~28k tok
+                              # outputs). util is a fraction of TOTAL vram, so a higher value just over-allocates
+                              # KV (0.45 grabbed 154k tok = 16GB). Needs ~13GB free at boot — raise if co-tenant
+                              # GPU jobs leave less. bf16 model needs ~0.55.
+MAX_NUM_SEQS="${MAX_NUM_SEQS:-8}"
+MAX_NUM_BATCHED_TOKENS="${MAX_NUM_BATCHED_TOKENS:-512}"  # caps the activation/profiling peak (MTP draft slots)
+ENFORCE_EAGER="${ENFORCE_EAGER:-1}"  # 1 = disable torch.compile/cudagraphs. REQUIRED for the GPTQ-INT4 model:
+                                     # the compiled inductor graph crashes with CUBLAS_STATUS_INTERNAL_ERROR on a
+                                     # bf16 GEMM (MTP/embedding path) on the first real batch (2026-06-21). Eager is
+                                     # fine here — workload is OCR-bound. Set ENFORCE_EAGER=0 only for bf16 model.
+QUANT="${QUANT:-}"  # weight quantization. NOTE (measured 2026-06-17): QUANT=fp8 does NOT help this
+                    # Gemma-4 E4B PLE model — fp8 only quantizes Linear layers, but the per-layer +
+                    # tied-vocab embeddings dominate and stay bf16, so weights drop just 14.8->11.7GB and
+                    # the online-fp8 activation peak forces util ~0.56 (~18GB total, no better than bf16).
+                    # To actually shrink it, serve a PRE-QUANTIZED W4A16/INT4 dir as MERGED_DIR (embeds kept
+                    # high-precision, Linear->4bit) — INT4 composes with MTP. Leave empty for bf16.
 VLLM_VENV="${VLLM_VENV:-/home/danny/.venvs/vllm}"
 SKIP_MERGE="${SKIP_MERGE:-0}"
 
@@ -107,6 +135,7 @@ log "  drafter:      $SPEC_DRAFTER (method=$SPEC_METHOD, γ=$GAMMA)"
 log "  port:         $PORT"
 log "  max_model_len: $MAX_LEN"
 log "  gpu_util:     $GPU_UTIL"
+log "  max_num_seqs: $MAX_NUM_SEQS"
 
 # Build speculative-config JSON without trusting shell quoting heuristics.
 SPEC_CONFIG=$(printf '{"method":"%s","model":"%s","num_speculative_tokens":%s}' \
@@ -116,10 +145,27 @@ SPEC_CONFIG=$(printf '{"method":"%s","model":"%s","num_speculative_tokens":%s}' 
 # but the `vllm` shim doesn't activate the venv's PATH for child processes.
 export PATH="${VLLM_VENV}/bin:${PATH}"
 
+# Optional weight quantization (e.g. fp8). Empty => bf16 (default).
+QUANT_ARGS=()
+if [[ -n "$QUANT" ]]; then
+  QUANT_ARGS+=(--quantization "$QUANT")
+  log "  quantization: $QUANT"
+fi
+# enforce-eager disables torch.compile/cudagraphs (required for GPTQ-INT4 stability).
+EAGER_ARGS=()
+if [[ "$ENFORCE_EAGER" == "1" ]]; then
+  EAGER_ARGS+=(--enforce-eager)
+  log "  enforce_eager: on"
+fi
+
 exec "${VLLM_VENV}/bin/vllm" serve "$MERGED_DIR" \
   --speculative-config "$SPEC_CONFIG" \
   --max-model-len "$MAX_LEN" \
   --gpu-memory-utilization "$GPU_UTIL" \
+  --max-num-seqs "$MAX_NUM_SEQS" \
+  --max-num-batched-tokens "$MAX_NUM_BATCHED_TOKENS" \
+  "${QUANT_ARGS[@]}" \
+  "${EAGER_ARGS[@]}" \
   --port "$PORT" \
   --host 127.0.0.1 \
   --trust-remote-code \

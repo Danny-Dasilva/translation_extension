@@ -96,6 +96,17 @@ VLM_PROMPT = (
     '{"text": "<full bubble text>", "bbox": [x0,y0,x1,y1]} in reading order. '
     "Do not split a bubble into words."
 )
+# Qwen3-VL (and Gemini-style grounders) emit grounding coords NORMALISED to
+# 0-1000, not pixels. Ask for that explicitly and rescale with --coord-norm 1000.
+VLM_PROMPT_NORM1000 = (
+    "Transcribe the English text in this manga page, grouped by speech bubble / "
+    "caption box. For EACH bubble output ONE object with the FULL bubble text "
+    "(join its words/lines with spaces) and its bounding box as integer "
+    "coordinates normalised to a 0-1000 grid over this image (0,0 = top-left, "
+    "1000,1000 = bottom-right). Return ONLY a JSON array of "
+    '{"text": "<full bubble text>", "bbox": [x0,y0,x1,y1]} in reading order. '
+    "Do not split a bubble into words."
+)
 
 # A bubble is scoreable (ocr_clean) only when OCR was confident AND the OCR'd
 # Japanese is not linguistically garbled.
@@ -126,8 +137,14 @@ def resolve_gt_image_path(
     gt_page = our_page_to_gt_page(our_page, missing_gt_page=missing_gt_page)
     if gt_page < 1:
         return None
-    p = gt_images_root / f"{gt_page:0{width}d}.{ext}"
-    return p if p.exists() else None
+    # Try the requested ext first, then the common manga page formats. The
+    # Ikenie GT is webp; the generalization-benchmark scanlations are jpg (and
+    # behindmoon mixes jpg + png). Probing extensions keeps one code path.
+    for e in [ext, "webp", "jpg", "jpeg", "png"]:
+        p = gt_images_root / f"{gt_page:0{width}d}.{e}"
+        if p.exists():
+            return p
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -172,7 +189,7 @@ def _squash_runaway(text: str) -> str:
 
 
 def _parse_vision_response(
-    raw: str, *, img_w: int, img_h: int
+    raw: str, *, img_w: int, img_h: int, coord_norm: int = 0
 ) -> list[VisionBubble]:
     """Parse the VLM JSON array into VisionBubble objects.
 
@@ -232,6 +249,15 @@ def _parse_vision_response(
         if isinstance(raw_box, (list, tuple)) and len(raw_box) == 4:
             try:
                 x0, y0, x1, y1 = (float(v) for v in raw_box)
+                # Qwen3-VL (and other Gemini-style grounders) emit coords
+                # NORMALISED to a fixed range (e.g. 0-1000) rather than pixels.
+                # Rescale to GT-image pixels so the rest of the harness (which
+                # works in pixel space + normalises by image dims) aligns.
+                if coord_norm and coord_norm > 0:
+                    x0 *= img_w / coord_norm
+                    x1 *= img_w / coord_norm
+                    y0 *= img_h / coord_norm
+                    y1 *= img_h / coord_norm
                 # tolerate reversed corners
                 x0, x1 = sorted((x0, x1))
                 y0, y1 = sorted((y0, y1))
@@ -247,10 +273,19 @@ def _parse_vision_response(
     return out
 
 
+_MIME_BY_SUFFIX = {
+    ".webp": "image/webp",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+}
+
+
 def _image_to_data_url(image_path: Path) -> str:
     raw = image_path.read_bytes()
     b64 = base64.b64encode(raw).decode("ascii")
-    return f"data:image/webp;base64,{b64}"
+    mime = _MIME_BY_SUFFIX.get(image_path.suffix.lower(), "image/webp")
+    return f"data:{mime};base64,{b64}"
 
 
 def _vision_transcribe_page(
@@ -260,6 +295,8 @@ def _vision_transcribe_page(
     img_h: int,
     endpoint: str = VLM_ENDPOINT,
     model: str = VLM_MODEL,
+    prompt: str = VLM_PROMPT,
+    coord_norm: int = 0,
     max_tokens: int = 1500,
     retries: int = 3,
     timeout: float = 180.0,
@@ -269,6 +306,8 @@ def _vision_transcribe_page(
     Deterministic (temperature 0).  Retries with exponential backoff on network
     / 5xx errors.  Returns ``[]`` if every attempt fails so the caller can skip
     the page gracefully without aborting the whole pass.
+
+    ``coord_norm`` > 0 rescales normalised (e.g. 0-1000) bbox coords to pixels.
     """
     payload = {
         "model": model,
@@ -276,7 +315,7 @@ def _vision_transcribe_page(
             {
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": VLM_PROMPT},
+                    {"type": "text", "text": prompt},
                     {
                         "type": "image_url",
                         "image_url": {"url": _image_to_data_url(image_path)},
@@ -297,7 +336,9 @@ def _vision_transcribe_page(
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 obj = json.loads(resp.read().decode("utf-8"))
             content = obj["choices"][0]["message"]["content"]
-            return _parse_vision_response(content, img_w=img_w, img_h=img_h)
+            return _parse_vision_response(
+                content, img_w=img_w, img_h=img_h, coord_norm=coord_norm
+            )
         except (urllib.error.URLError, TimeoutError, OSError, KeyError, ValueError) as e:
             last_err = e
             if attempt < retries - 1:
@@ -587,6 +628,7 @@ def build_gold_row(
     *,
     page: int,
     iou: float,
+    src_prefix: str = "ikenie4",
 ) -> dict[str, Any]:
     """Build a gold.jsonl row keyed by OUR bubble with the matched human GT EN.
 
@@ -597,7 +639,7 @@ def build_gold_row(
     return {
         "jp": (ob.get("ocr_jp") or "").strip(),
         "en": gb.text.strip(),
-        "src": f"ikenie4:p{page:02d}:idx{idx}",
+        "src": f"{src_prefix}:p{page:02d}:idx{idx}",
         "register_tag": "manga_nsfw",
         "category": "",
         "severity": 1,
@@ -668,9 +710,16 @@ def _image_size(path: Path) -> tuple[int, int] | None:
 
 
 def _resolve_our_raw_path(raw_root: Path, our_page: int) -> Path | None:
-    """The raw page our bbox coordinates live in (583875 flat ``NNN.webp``)."""
-    p = raw_root / f"{our_page:03d}.webp"
-    return p if p.exists() else None
+    """The raw page our bbox coordinates live in (flat ``NNN.<ext>``).
+
+    Ikenie raws are webp; the generalization-benchmark JP raws are jpg. Probe
+    the common formats so bbox normalisation reads the right source dimensions.
+    """
+    for e in ("webp", "jpg", "jpeg", "png"):
+        p = raw_root / f"{our_page:03d}.{e}"
+        if p.exists():
+            return p
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -712,12 +761,40 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--pages", default="1-134", help="e.g. '1-134' or '1,2,5-9'")
     ap.add_argument("--iou-threshold", type=float, default=0.2)
     ap.add_argument(
+        "--src-prefix",
+        default="ikenie4",
+        help="Chapter slug for the gold `src` key (e.g. 'ikenie5'). Must match "
+        "the prefix the eval expects when scoring this chapter.",
+    )
+    ap.add_argument(
+        "--missing-gt-page",
+        type=int,
+        default=MISSING_GT_PAGE,
+        help="Bench page with no GT counterpart (the +1 offset pivot). Default 41 "
+        "(ch4). For a 1:1 chapter (e.g. ch5, 102==102) pass a value past the last "
+        "page (e.g. 99999) so GT mapping is identity and no page is skipped.",
+    )
+    ap.add_argument("--vlm-endpoint", default=VLM_ENDPOINT,
+                    help="OpenAI-compatible /chat/completions URL of the VLM.")
+    ap.add_argument("--vlm-model", default=VLM_MODEL,
+                    help="served-model-name of the VLM (e.g. qwenvl, qwen3vl).")
+    ap.add_argument("--coord-norm", type=int, default=0,
+                    help="If >0, bbox coords are normalised to this range (e.g. "
+                    "1000 for Qwen3-VL) and are rescaled to pixels. 0 = pixels "
+                    "(Qwen2.5-VL).")
+    ap.add_argument("--vlm-prompt", default=None,
+                    help="Override the VLM prompt. Defaults to the pixel-coord "
+                    "prompt, or the 0-1000 normalised prompt when --coord-norm=1000.")
+    ap.add_argument(
         "--dry-run",
         action="store_true",
         help="Resolve GT image paths + count bubbles WITHOUT calling the vision "
         "model (verifies the p41 offset wiring end-to-end).",
     )
     args = ap.parse_args(argv)
+    vlm_prompt = args.vlm_prompt or (
+        VLM_PROMPT_NORM1000 if args.coord_norm == 1000 else VLM_PROMPT
+    )
 
     bubbles_root = Path(args.bubbles_root)
     gt_root = Path(args.gt_images_root)
@@ -735,10 +812,12 @@ def main(argv: list[str] | None = None) -> int:
         our_bubbles = _load_page_bubbles(bubbles_root, page)
         if not our_bubbles:
             continue
-        gt_path = resolve_gt_image_path(gt_root, page)
+        gt_path = resolve_gt_image_path(
+            gt_root, page, missing_gt_page=args.missing_gt_page
+        )
         if gt_path is None:
             missing += 1
-            if page == MISSING_GT_PAGE:
+            if page == args.missing_gt_page:
                 print(f"  p{page:03d}: no GT page (missing_gt_page) -- skipped")
             else:
                 print(f"  p{page:03d}: GT image not found on disk -- skipped")
@@ -766,7 +845,11 @@ def main(argv: list[str] | None = None) -> int:
         our_w, our_h = our_size if our_size else (gt_w, gt_h)
 
         # --- real path: transcribe the GT image with the box VLM ---
-        gt_bubbles = _vision_transcribe_page(gt_path, img_w=gt_w, img_h=gt_h)
+        gt_bubbles = _vision_transcribe_page(
+            gt_path, img_w=gt_w, img_h=gt_h,
+            endpoint=args.vlm_endpoint, model=args.vlm_model,
+            prompt=vlm_prompt, coord_norm=args.coord_norm,
+        )
         if not gt_bubbles:
             vlm_failed += 1
             print(f"  p{page:03d} -> GT {gt_path.name}: VLM returned 0 bubbles -- skipped")
@@ -792,11 +875,11 @@ def main(argv: list[str] | None = None) -> int:
                 unmatched += 1
                 continue
             idx = ob.get("idx")
-            src = f"ikenie4:p{page:02d}:idx{idx}"
+            src = f"{args.src_prefix}:p{page:02d}:idx{idx}"
             if src in existing_keys:
                 # Covered by the richer judge-seeded gold; don't overwrite.
                 continue
-            row = build_gold_row(ob, gb, page=page, iou=iou)
+            row = build_gold_row(ob, gb, page=page, iou=iou, src_prefix=args.src_prefix)
             new_rows.append(row)
             page_emitted += 1
             iou_values.append(iou)

@@ -1,0 +1,47 @@
+{
+  "fix2_dedup": {
+    "open_mantra_train": {
+      "rows_before": 12000,
+      "unique_prompt_en": 897,
+      "rows_after": 897,
+      "dropped": 11103,
+      "max_copies_per_dup": 1
+    },
+    "manga109": {
+      "rows_before": 132122,
+      "unique_prompt_en": 75332,
+      "rows_after": 75332,
+      "dropped": 56790,
+      "max_copies_per_dup": 1
+    }
+  },
+  "fix1_ellipsis": {
+    "ellipsis_before": 7505,
+    "ellipsis_after": 2000,
+    "dropped": 5505,
+    "kept_distinct_jp_prompts": 25,
+    "kept_by_src_prefix": {
+      "gemma_anchor": 1467,
+      "ocr_garbage": 529,
+      "vntl_v31_1k": 4
+    }
+  },
+  "fix3_fragment_to_full": {
+    "scope_rows": 7011,
+    "dropped": 1017,
+    "dropped_unique_prompt_en": 339,
+    "pct_of_scope": 14.5,
+    "thresholds": {
+      "FRAG_JP_MAXLEN": 12,
+      "FRAG_EN_MINWORDS": 8,
+      "FRAG_EN_JP_CHAR_RATIO": 5.0
+    }
+  },
+  "fix4_garble_proxy": {
+    "scope_rows": 5994,
+    "dropped": 258,
+    "dropped_unique_prompt_en": 86,
+    "pct_of_scope_proxy": 4.3,
+    "note": "high-precision proxy only; audit's 49.6% needs the AR-GPU PARSeq re-mine"
+  }
+}

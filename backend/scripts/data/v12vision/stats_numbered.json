@@ -1,0 +1,46 @@
+{
+  "format": "PBP-VIS-NUM (numbered redacted image + numbered JP/EN lists)",
+  "base_model_target": "huihui-ai/Huihui-Qwen3-VL-8B-Instruct-abliterated",
+  "reading_order": "bubbles.json idx (frozen manga_reading_order rank); manga_reading_order fallback when bubbles.json absent",
+  "en_target_casing": "to_sentence_case (POV-preserving) on gold EN",
+  "held_out": "Furube (eval set — 37 of the 44 POV cases)",
+  "image_out_dir": "/home/danny/Documents/personal/extension/backend/scripts/data/v12vision/numbered_images",
+  "text_slice_stats": {
+    "nsfw_corpus_available": 7011,
+    "sfw_backbone_available": 216759,
+    "nsfw_corpus_taken": 2000,
+    "sfw_backbone_taken": 10000
+  },
+  "nsfw_corpus_trimmed_for_cap": 24,
+  "nsfw_cap": 0.18,
+  "per_chapter": [
+    {
+      "gold_bubbles_skipped_cjk_en": 94,
+      "images_rendered": 123,
+      "pages_skipped_no_valid_bubbles": 1,
+      "pages": 123,
+      "gold_bubbles": 547,
+      "chapter": "ikenie4"
+    },
+    {
+      "images_rendered": 96,
+      "gold_bubbles_skipped_cjk_en": 60,
+      "pages": 96,
+      "gold_bubbles": 651,
+      "chapter": "ikenie5"
+    }
+  ],
+  "imageon_path": "/home/danny/Documents/personal/extension/backend/scripts/data/v12vision/data_poc_imageon.jsonl",
+  "imageoff_path": "/home/danny/Documents/personal/extension/backend/scripts/data/v12vision/data_poc_imageoff.jsonl",
+  "total_rows": 12195,
+  "rows_by_source": {
+    "ikenie_gold": 219,
+    "nsfw_corpus": 1976,
+    "v11_text": 10000
+  },
+  "image_blocks_imageon": 219,
+  "image_blocks_imageoff": 0,
+  "parity_ok": true,
+  "nsfw_rows": 2195,
+  "nsfw_pct": 18.0
+}

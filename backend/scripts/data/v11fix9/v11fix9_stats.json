@@ -1,0 +1,118 @@
+{
+  "base_parquet": "/home/danny/Documents/personal/extension/backend/scripts/data/v11fix8/data_v11fix8_pagecontext.parquet",
+  "out_parquet": "/home/danny/Documents/personal/extension/backend/scripts/data/v11fix9/data_v11fix9_pagecontext.parquet",
+  "schema_in": {
+    "prompt": "String",
+    "en": "String",
+    "src": "String",
+    "register_tag": "String",
+    "gold_flag": "Boolean"
+  },
+  "schema_out": {
+    "prompt": "String",
+    "en": "String",
+    "src": "String",
+    "register_tag": "String",
+    "gold_flag": "Boolean"
+  },
+  "schema_parity": true,
+  "before": {
+    "total_rows": 302382,
+    "ellipsis_rows": 7505,
+    "exact_dots_rows": 7502,
+    "nsfw_frac": 0.1839,
+    "source_counts": {
+      "manga109": 132122,
+      "vntl_v31_1k": 43056,
+      "vntl_raw": 28246,
+      "parallelfiction": 21000,
+      "open_mantra_train": 12000,
+      "gemma_anchor": 8538,
+      "nilane_small": 8397,
+      "sfx_jp_ono": 8040,
+      "aratako_synth": 8031,
+      "uuf_sfx": 7500,
+      "corpus_bitext": 7011,
+      "corrective_v11": 5928,
+      "sfx_yuiseki_flat": 4797,
+      "corrective_v11fix7": 3375,
+      "sfx_giongo": 2163,
+      "ocr_garbage": 1962,
+      "reverse_sense": 144,
+      "voice_probe": 72
+    }
+  },
+  "after": {
+    "total_rows": 227709,
+    "ellipsis_rows": 2000,
+    "exact_dots_rows": 1998,
+    "nsfw_frac": 0.2387,
+    "source_counts": {
+      "manga109": 75332,
+      "vntl_v31_1k": 43056,
+      "vntl_raw": 28246,
+      "parallelfiction": 20999,
+      "nilane_small": 8397,
+      "sfx_jp_ono": 8040,
+      "aratako_synth": 8031,
+      "uuf_sfx": 7500,
+      "corrective_v11": 5928,
+      "corpus_bitext": 5736,
+      "sfx_yuiseki_flat": 4797,
+      "gemma_anchor": 4467,
+      "corrective_v11fix7": 3375,
+      "sfx_giongo": 2163,
+      "open_mantra_train": 897,
+      "ocr_garbage": 529,
+      "reverse_sense": 144,
+      "voice_probe": 72
+    }
+  },
+  "fixes": {
+    "fix2_dedup": {
+      "open_mantra_train": {
+        "rows_before": 12000,
+        "unique_prompt_en": 897,
+        "rows_after": 897,
+        "dropped": 11103,
+        "max_copies_per_dup": 1
+      },
+      "manga109": {
+        "rows_before": 132122,
+        "unique_prompt_en": 75332,
+        "rows_after": 75332,
+        "dropped": 56790,
+        "max_copies_per_dup": 1
+      }
+    },
+    "fix1_ellipsis": {
+      "ellipsis_before": 7505,
+      "ellipsis_after": 2000,
+      "dropped": 5505,
+      "kept_distinct_jp_prompts": 25,
+      "kept_by_src_prefix": {
+        "gemma_anchor": 1467,
+        "ocr_garbage": 529,
+        "vntl_v31_1k": 4
+      }
+    },
+    "fix3_fragment_to_full": {
+      "scope_rows": 7011,
+      "dropped": 1017,
+      "dropped_unique_prompt_en": 339,
+      "pct_of_scope": 14.5,
+      "thresholds": {
+        "FRAG_JP_MAXLEN": 12,
+        "FRAG_EN_MINWORDS": 8,
+        "FRAG_EN_JP_CHAR_RATIO": 5.0
+      }
+    },
+    "fix4_garble_proxy": {
+      "scope_rows": 5994,
+      "dropped": 258,
+      "dropped_unique_prompt_en": 86,
+      "pct_of_scope_proxy": 4.3,
+      "note": "high-precision proxy only; audit's 49.6% needs the AR-GPU PARSeq re-mine"
+    }
+  }
+}
