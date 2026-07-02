@@ -63,18 +63,36 @@ Based on the source segment and machine translation surrounded with triple backt
 Each error is classified as one of two categories: major or minor. Major errors disrupt the flow and make the understandability of text difficult or impossible. Minor errors are errors that do not disrupt the flow significantly and what the text is trying to say is still understandable.""".strip()
 
 
-def _build_messages(source_seg: str, target_seg: str) -> list[dict[str, str]]:
+def _build_messages(
+    source_seg: str,
+    target_seg: str,
+    image_data_url: str | None = None,
+) -> list[dict[str, Any]]:
+    """Build GEMBA-MQM chat messages.
+
+    Text-only behaviour is unchanged: when ``image_data_url`` is ``None`` the
+    user message ``content`` is a plain string (exactly as before). When an
+    image data URL is supplied the user ``content`` becomes an OpenAI-style
+    multimodal parts list ``[{type: text}, {type: image_url}]`` so the same
+    ``OpenAIJudge.chat`` plumbing can talk to a vision model. This is purely
+    additive: existing callers that omit the argument get identical output.
+    """
+    user_text = GEMBA_MQM_FEW_SHOT_USER_TEMPLATE.format(
+        source_lang="Japanese",
+        source_seg=source_seg,
+        target_lang="English",
+        target_seg=target_seg,
+    )
+    if image_data_url is None:
+        user_content: Any = user_text
+    else:
+        user_content = [
+            {"type": "text", "text": user_text},
+            {"type": "image_url", "image_url": {"url": image_data_url}},
+        ]
     return [
         {"role": "system", "content": GEMBA_MQM_FEW_SHOT_SYSTEM},
-        {
-            "role": "user",
-            "content": GEMBA_MQM_FEW_SHOT_USER_TEMPLATE.format(
-                source_lang="Japanese",
-                source_seg=source_seg,
-                target_lang="English",
-                target_seg=target_seg,
-            ),
-        },
+        {"role": "user", "content": user_content},
     ]
 
 
