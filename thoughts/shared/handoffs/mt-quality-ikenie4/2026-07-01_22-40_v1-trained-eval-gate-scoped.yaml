@@ -1,0 +1,85 @@
+---
+session: mt-quality-ikenie4
+date: 2026-07-01
+status: partial
+outcome: PARTIAL_PLUS
+---
+
+goal: >
+  Restarted+FIXED the v1 text-SFT train (abliterated Qwen3-VL-8B). Diagnosed the step-243 hang as a
+  dataloader deadlock (num_workers 4->0). Two parallel validation scouts + a source read caught a
+  live defect: completion_only_loss was INERT (full-sequence loss, ~85% gradient on the JP prompt);
+  wired train_on_responses_only, verified at runtime (95.4% masked). Trained a CLEAN 1-epoch adapter
+  (2.08h, 4503 steps) -> /home/danny/ship_v1/out/final. Served base+v1 LoRA on :8001; smoke test shows
+  v1 active, no refusals, one POV/sense win over base. Scouted the eval gate: only 2/6 signals turnkey.
+now: >
+  Run the eval gate. USER DIRECTIVE: run the FULL 6-signal gate when ready, and RETHINK the approach if
+  results are poor. Serve is UP (base qwen3vl_ablit8b + v1 on box :8001). Only chrF(#3)+probes(#5) have
+  ready harnesses; POV(#1)/refusal(#2)/adequacy(#4)/serve-with-image-latency(#6) MUST BE BUILT first
+  (see findings.eval_gate_not_built for the per-signal runbook). Start with the headline: reconstruct
+  POV on Furube-37 (v1 vs base, text + image-prefix via DIRECT vLLM calls — :8001 supports image=1).
+test: cd backend && .venv/bin/python -m pytest tests/unit/ -q   # 668 pass, 2 PRE-EXISTING fails; trainer syntax: backend/.venv/bin/python -m py_compile backend/scripts/train/sft_qwen3vl_8b_imagectx.py
+
+done_this_session:
+  - task: "Diagnosed step-243 hang as a dataloader-worker deadlock (clean freeze, GPU freed on kill, nvidia-smi responsive = NOT a 5090 Xid). Fixed via dataloader_num_workers 4->0 in box cfg; run then cleared the prior hang point and ran to completion. num_workers=0 removes the fork-deadlock mechanism entirely."
+    files: ["box:/home/danny/ship_v1/cfg.yaml"]
+  - task: "TWO parallel validation scouts (data-fidelity + config/hyperparam) INDEPENDENTLY flagged that completion_only_loss:true is a NO-OP; confirmed 3 ways + my own box-source read. UnslothVisionDataCollator masks ONLY pad tokens unless train_on_responses_only is set; trl's own masking bypassed by skip_prepare_dataset + _is_vlm. Result: full-sequence loss (~85% gradient on JP prompt), invisible in the loss curve."
+    files: []
+  - task: "Fixed the objective: wired the collator to train_on_responses_only (config-driven via completion_only_loss) with ChatML delimiters instruction_part='<|im_start|>user\\n' response_part='<|im_start|>assistant\\n' (verified vs rendered chat template). Added a runtime masking PROBE that logs masked-fraction + hard-asserts at launch. Applied to repo file AND scp'd to box. py_compile OK."
+    files: [backend/scripts/train/sft_qwen3vl_8b_imagectx.py, "box:/home/danny/ship_v1/sft.py"]
+  - task: "Killed the compromised full-seq run at ~11% (user-approved), lowered save_steps_pct 0.25->0.10 (first ckpt ~step450 not 1126, thermal insurance), relaunched. Masking probe logged '95.4% masked, 41 target tokens kept' = completion-only CONFIRMED. Trained full 4503 steps in 2.08h, VRAM peak 18.24GB -> out/final."
+    files: ["box:/home/danny/ship_v1/out/final", "box:/home/danny/ship_v1/cfg.yaml"]
+  - task: "Removed the stale compromised checkpoint-1125 (from the killed full-seq run; user-approved rm) to prevent save_total_limit rotation keeping it over good checkpoints / an accidental --resume. Rotation then stayed clean."
+    files: []
+  - task: "Served base + v1 LoRA together on box :8001 (box_serve_ablit8b.sh + --enable-lora --max-lora-rank 16 --lora-modules v1=/home/danny/ship_v1/out/final). Up in 40s. Smoke test: v1 active (differs from base), 0 refusals, corrected a POV/sense flip base got wrong (母さんがついててあげるから: base 'I'll go with you, Mom' vs v1 'I'll stay right here with you')."
+    files: ["box:/home/danny/box_serve_ablit8b.sh", "box:/home/danny/serve_v1.log"]
+  - task: "Saved memory reference qwen3vl-completion-only-masking (the inert-config-key pitfall + fix + probe). Updated MEMORY.md."
+    files: ["memory: qwen3vl-completion-only-masking"]
+
+blockers:
+  - "Eval gate is NOT turnkey: only signals 3(chrF)+5(probes) have runnable harnesses. POV scorer, refusal_probe.jsonl+judge, VLM adequacy judge, and the app-level serve-with-image path DO NOT EXIST (were ad-hoc/scratchpad, never committed). The FULL gate the user asked for requires building these 4 first."
+
+questions:
+  - "Does THIS local machine have a GPU for AR-GPU-OCR? Signal-3 (chrF) needs batch_translate_chapter.py to run the detect+OCR pipeline locally (box has NO repo clone) with AR-GPU-OCR (regen_v11fix8_argocr.sh env), pointing VLLM_BASE_URL at box :8001. If no local GPU, need an alternate fair-OCR path or run OCR on box separately."
+  - "Serve-with-image at the APP level (plan §6) is unbuilt; POV-image + real E2E latency must call vLLM DIRECTLY with the page image (image=1 works at :8001). Acceptable for the gate, or does the user want the app path built too?"
+
+decisions:
+  - fix_completion_only_masking: "Both validators + box-source confirmed full-seq loss; killed the compromised run at 11% (cheap) and relaunched with train_on_responses_only rather than burn 2h on a diluted objective + guaranteed retrain. User-approved via AskUserQuestion."
+  - early_checkpoint_insurance: "save_steps_pct 0.25->0.10 so first checkpoint lands ~step450 (was 1126) — cheap insurance on a box with 5090 thermal-fault history."
+  - serve_base_plus_lora_one_server: "--enable-lora --lora-modules v1=out/final serves base + v1 on one :8001 so POV A/B compares them on the same endpoint. image=1 works at the vLLM layer even though the app service has no image code."
+  - gate_scope_FULL: "User initially chose 'headline subset' then OVERRODE: run the FULL 6-signal gate when ready, and RETHINK the approach if results are poor. Honor the full gate; build the missing harnesses."
+
+findings:
+  - completion_only_loss_inert: "THE key defect. `completion_only_loss:true`/`packing` YAML keys are never wired in sft_qwen3vl_8b_imagectx.py; UnslothVisionDataCollator masks only pads by default. Fix = train_on_responses_only + ChatML parts. Runtime probe now gates every launch. Full writeup in memory qwen3vl-completion-only-masking."
+  - eval_gate_not_built: "SCOUT RUNBOOK (distilled). READY: #3 chrF = backend/scripts/eval/run_ikenie4_regression.sh --inspect-dir <v1 AR-OCR run> --baseline-per-bubble backend/scripts/eval/scorecards/ikenie4/per_bubble_v11fix8_argocr.json --baseline-probes .../probes_v11fix8_argocr.json (gold backend/scripts/eval/data/ikenie4/{gold,probes}.jsonl; AR-OCR env in backend/.bench/regen_v11fix8_argocr.sh = LD_LIBRARY_PATH cuda13-libs + HYBRID_OCR_ENABLED=false, NOT the CPU path). #5 probes ride the same script (probes.py PROBE_DISPATCH: reverse_sense>=.90/pronoun_gender>=.85/name_invention>=1.0/sfx_meta_leak>=1.0/number_romaji>=.90). MUST BUILD: #1 POV (no committed scorer — inputs backend/.bench/pov_ab/testset_large.json [Furube-37 = work in furube_p1/p2/p3 = 26+5+6], gold_furube_p{1,2,3}.jsonl, reuse probes.check_pronoun_gender; results_large_{base,ftoff,fton}.json are OLD ad-hoc refs); #2 refusal_probe.jsonl MISSING (build 150-300 NSFW rows from corpus_bitext/manifest_pages_375k.jsonl + judge; probes.REFUSAL_RE reusable); #4 VLM adequacy judge MISSING (transcribe_gt_vision.py stubbed, gemba_mqm_judge.py text-only -> extend with an image message); #6 latency bench_e2e.py exists but TEXT-ONLY (app has no image path; measure image latency via direct vLLM calls a la the gone scratchpad/lat_spike*.py)."
+  - hang_root_cause: "Dataloader deadlock, not GPU Xid. Post-fix run held GPU 57-100% (vs 0% frozen). num_workers=0 is the fix; TOKENIZERS_PARALLELISM=false set too."
+  - v1_smoke_signal: "v1 produces sane in-domain EN, 0 refusals, and corrected >=1 POV/sense flip vs base OOTB — early positive signal before the formal gate."
+  - box_serve_state: "box :8001 UP now: models qwen3vl_ablit8b (base) + v1 (adapter root=/home/danny/ship_v1/out/final). ~22.3GB VRAM, 41C. serve_v1.log on box. Restart: box_serve_ablit8b.sh contents + --enable-lora --max-lora-rank 16 --lora-modules v1=/home/danny/ship_v1/out/final."
+
+worked:
+  - "Driving box GPU tasks DIRECTLY (train/serve/smoke) + background monitors that break on RESULT= sentinels (CLEARED/STABLE/COMPLETE/STALL/PROC_GONE) and log checkpoints — clean async status without polling."
+  - "A runtime masking PROBE baked into the trainer launch (log masked-fraction + assert) = the fix self-verifies before burning 2h."
+  - "Two parallel validation scouts independently converging on the same defect = high confidence it was real, not a hallucinated finding."
+  - "Killing the trainer by exact PID (not pkill -f) avoids the ssh self-kill footgun the prior handoff warned about."
+
+failed:
+  - "The plan §7 '6-signal gate' assumed harnesses that were never committed (POV scorer, refusal set, VLM adequacy judge, app serve-with-image) — cannot 'just run it'; 4/6 need building."
+  - "Loss is not greppable from train.log (tqdm \\r overwrites); used successful checkpoint-write as the health proxy instead."
+
+next:
+  - "RUN THE FULL GATE (user directive; rethink if results poor). Recommended order: (1) headline POV first — write a small generator+scorer against :8001: for Furube-37 rows in testset_large.json, build the v11 page-context prompt, call v1 + base text-only AND with the page image (direct vLLM, image=1), score pronoun/sense flips with probes.check_pronoun_gender vs human_en. Gate >=48% + >=1 he<->she fix."
+  - "(2) chrF+probes (#3/#5): produce a v1 AR-GPU-OCR inspect-dir (batch_translate_chapter.py on Ikenie4 raw, VLLM_BASE_URL=box:8001, AR-OCR env) then run_ikenie4_regression.sh vs the v11fix8_argocr baseline. RESOLVE the local-GPU-OCR question first (questions[0])."
+  - "(3) Build refusal_probe.jsonl + judge (#2) and the VLM adequacy judge (#4); (4) latency (#6) via direct-vLLM image calls. If the app serve-with-image path (plan §6) is wanted, build it in vllm_openai_translation_service.py."
+  - "If v1 CLEARS the gate -> fund the NSFW corpus mine (backend/scripts/data/corpus_bitext/run_gallery.py vs :8001, ~30-65 GPU-hr) for prod v2 (adds NSFW register + refusal-strip). If v1 FAILS -> keep v11fix8; rethink (e.g. gold weighting, mix, or the image-training question)."
+  - "Housekeeping: COMMIT the trainer fix on feat/ship-textsft (backend/scripts/train/sft_qwen3vl_8b_imagectx.py — masking wire + probe), still uncommitted. Consider committing the eval harnesses once built."
+  - "Serve is left RUNNING on box :8001 for the next session; kill with `kill <pid from serve_v1.log>` if the box GPU is needed."
+
+files:
+  created:
+    - "box: /home/danny/ship_v1/out/final (v1 LoRA adapter, 174MB), out/checkpoint-{4500,4503}"
+    - "box: /home/danny/ship_v1/{cfg.yaml.bak, sft.py.fullseq.bak, train_hang1.log, train_run2_killed.log, serve_v1.log}"
+    - "memory: qwen3vl-completion-only-masking (+ MEMORY.md line)"
+    - thoughts/shared/handoffs/mt-quality-ikenie4/2026-07-01_22-40_v1-trained-eval-gate-scoped.yaml
+  modified:
+    - backend/scripts/train/sft_qwen3vl_8b_imagectx.py   # wired train_on_responses_only + masking probe (UNCOMMITTED on feat/ship-textsft)
+    - "box: /home/danny/ship_v1/sft.py (scp of the above), cfg.yaml (num_workers 0, save_steps_pct 0.10)"

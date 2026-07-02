@@ -1,0 +1,102 @@
+---
+session: mt-quality-ikenie4
+date: 2026-07-02
+status: near-complete
+outcome: STRONG_PLUS
+---
+
+goal: >
+  Ran the FULL 6-signal gate for v1 (text-SFT LoRA on abliterated Qwen3-VL-8B, box :8001).
+  Built the 4 missing harnesses (POV scorer, refusal probe+judge, VLM adequacy judge,
+  image-prefix latency bench) via 5 parallel implementation agents, after a 5-agent
+  research pass that rethought the latency/quality architecture. Caught and corrected a
+  MAJOR eval confound (balloon-dedup pipeline drift) that initially made v1 look like it
+  regressed; on the fair same-code A/B v1 is a significant WIN.
+
+now: >
+  5/6 signals measured: chrF PASS (+8.62 significant WIN), probes PASS (0 regressions),
+  refusal PASS (0/250 hard gate), latency PASS (translate-with-image ~0.5-0.7s/page,
+  image ~FREE via mm-cache reuse). POV: v1+image is the best arm on EVERY denominator but
+  the old >=48% threshold is from a dead metric — needs recalibration to strict-dominance.
+  Adequacy (#4) judge comparison over 35 fair Ikenie4 pages was RUNNING at handoff time
+  (agent task; artifacts land in backend/scripts/eval/out/ + scorecards). NOTHING COMMITTED
+  YET — trainer fix + 6 new eval files + concurrency setting await user approval on
+  feat/ship-textsft.
+
+test: cd backend && .venv/bin/python -m pytest tests/unit/ -q   # 715 pass, 2 PRE-EXISTING fails (test_logging_async request_id, test_unify_schema register tags)
+
+done_this_session:
+  - task: "5-agent research rethink (pipeline trace, vLLM serving levers, eval-gate scoping, model strategy, sub-1s architecture). Key outputs: single-request-per-page vs N-marked-calls tradeoff, FP8 as quality-safe quant (INT4's rounding was the killer, not quant per se), CUDA graphs ~8x decode (never --enforce-eager on the box serve), prefetch/streaming perceived-latency designs, 4B-Qwen deconfound experiments."
+    files: []
+  - task: "Built pov_probe.py (gate #1): generator (4 arms: v1/base x img on/off, byte-matched to v1 training rows — REQUIRED short_utterance_normalize OFF; 100% byte-match proven vs data_v13ship_v1_messages.jsonl) + PRESENCE-based pronoun scorer (old absence-based check_pronoun_gender scores the evading baseline ~100% falsely). Full 4-arm run DONE."
+    files: [backend/scripts/eval/pov_probe.py, backend/scripts/eval/out/pov/score_report.json]
+  - task: "Built bench_image_prefix.py (gate #6): per-call latency + Prometheus vllm:prefix_cache_*/mm_cache_* deltas + concurrent-vs-sequential correctness diff. VERIFIED: mm image-KV cache reuse WORKS on box vLLM 0.22.1 (15/16 hits), 0 garbled. Full matrix run DONE (.bench/image_prefix/*.json)."
+    files: [backend/scripts/eval/bench_image_prefix.py]
+  - task: "Built refusal harness (gate #2): build_refusal_probe.py sampled 250 rows/50 galleries from local manga_corpus_staging (CPU OCR, 41s); refusal_eval.py uses v13ship tuned is_refusal + OpenAIJudge confirm. FULL RUN: 0/250 refusals, 0 regex hits — HARD GATE PASS."
+    files: [backend/scripts/eval/build_refusal_probe.py, backend/scripts/eval/refusal_eval.py, backend/scripts/eval/refusal_probe.jsonl]
+  - task: "Built VLM page-adequacy judge (gate #4): additive image support in gemba_mqm_judge.py (_build_messages image_data_url param, backward-compatible) + page_adequacy_judge.py (omission/hallucination counts, compare mode, JSON-salvage parser). Live-proven on a real page (caught actual hallucinations)."
+    files: [backend/scripts/eval/gemba_mqm_judge.py, backend/scripts/eval/page_adequacy_judge.py]
+  - task: "Fixed hardcoded vLLM client concurrency=8 (global semaphore shared across pages — why translate_ms scaled with bubble count): new setting translation_client_concurrency=32 wired in translate.py."
+    files: [backend/app/config.py, backend/app/routers/translate.py]
+  - task: "chrF gate (#3+#5): regen Ikenie4 with v1 (AR-GPU-OCR local, translate box :8001). FIRST run showed 33% empty translations + name_invention regression -> ROOT-CAUSED (see findings) -> FAIR same-code A/B (both models regenerated, TRANSLATION_BUBBLE_DEDUP=false TRANSLATION_SENTENCE_MERGE=false): dchrf++ +8.621 CI95[+6.42,+11.00] p=0.0000 PASS, 0 probe regressions, empty parity v1 1.7% vs v11fix8 2.7%."
+    files: ["backend/scripts/eval/scorecards/ikenie4/{per_bubble,probes,paired_bs,score_summary_metrics_v2}_{v1_fair,v11fix8_fair}.json", "backend/.bench/ikenie4_{v1,v11fix8}_fair_insp/", "backend/.bench/regen_v1_argocr.sh"]
+  - task: "POV 4-arm results (presence metric, gendered-only denominator): v11fix8 0% -> base-txt 6.7% -> base+img/v1-txt 13.3% -> v1+img 20% (Furube-37); all-148 gendered: 1.9->8.6->11.4/9.5->13.3%. Monotonic: SFT helps, image helps, compound. ZERO strict he<->she flips anywhere; all gains are evasion->correct."
+    files: [backend/scripts/eval/out/pov/score_report.json]
+
+blockers:
+  - "Adequacy (#4) comparison still running at handoff (35-page sample, both models, judge=qwen3vl_ablit8b on box). Gate: v1 adequacy >= v11fix8 AND omission/hallucination <=."
+  - "NOTHING COMMITTED: trainer masking fix (from prior session) + all new eval harnesses + concurrency fix are uncommitted on feat/ship-textsft. User approval needed."
+  - "Local 5090 oversubscribed: my v11fix8 serve (:8000, 18.6GB, pid ~2233801 via serve_v10it_vllm.sh SKIP_MERGE=1 ENFORCE_EAGER=1 VLLM_USE_FLASHINFER_SAMPLER=0) + videonest workers (~9.2GB). bench_e2e re-baseline blocked on GPU room; kill my serve when done with it."
+
+decisions:
+  - fair_eval_flags: "Per-bubble gold => eval with per-bubble-honest output: TRANSLATION_BUBBLE_DEDUP=false TRANSLATION_SENTENCE_MERGE=false for BOTH sides. v1 served with SHORT_UTTERANCE_NORMALIZE_ENABLED=false (its byte-exact training contract); v11fix8 with defaults (its contract)."
+  - pov_gate_recalibration_needed: "Old 32%/48% numbers came from the dead ad-hoc scorer (absence-based, uncommitted, .bench gitignored). Under the honest presence metric the >=48% absolute gate is unmeetable by ANY arm; recommend strict-dominance gate (v1+img beats v11fix8 on gendered + all-rows + >=N evasion->correct gains — currently ALL true)."
+  - serve_shape: "Keep N marked-line calls (v1's training format, verified from data_v13ship_v1_messages.jsonl rows); mm prefix-cache reuse EMPIRICALLY CONFIRMED so image cost is paid once/page. Single-request-per-page is the cache-bug-proof alternative if a v2 retrains on numbered-list rows."
+  - box_serve_upgrades_deferred: "Merge LoRA->base, drop --enforce-eager (CUDA graphs ~8x decode), FP8 checkpoint — all validated as safe by research but NOT applied; do after gate sign-off, re-run gate after."
+
+findings:
+  - dedup_pipeline_drift_confound: "THE session save. First v1 regen showed 33.2% empty translations vs baseline 3.9% -> probes 'regressed'. NOT the model: dedup_by_bubble ('1 balloon = 1 string', commit 6e9ab94 07-01 'batch dedup parity') blanks all-but-one EN per detected balloon BY DESIGN, and the 06-29 v11fix8_argocr baseline PREDATES it. Every direct replication of the 'empty' calls translated fine (sequential, concurrent, merged-ctx, normalize on/off). ALSO a real product bug: marked-line calls translate ONE line, so the blanked sibling's content is DROPPED from the rendered page (the balloon winner does NOT cover it) — same failure class as the documented translation_bubble_grouping disable note. Needs a fused-balloon-translate or resplit-redistribution fix."
+  - mm_prefix_cache_works: "vLLM 0.22.1 on box: image KV cached after call 1, reused by all N marked calls (mm_cache 15/16 hits, prefix hits cover shared prefix, 0 garbled, conc-vs-seq mismatches are benign temp-0 batching paraphrases ~7-10% — though one flipped I/we, so batching noise can touch POV tokens). Warm calls ~110-220ms; cold call1 ~200-250ms quiet."
+  - latency_reframe: "Old 1.4s baseline is stale (bench worktree); prod logs show 380-920ms steady-state. v1 8B translate via box: regen median 361ms/page text; with image ~0.5-0.7s/page wall-clock. Sub-1s E2E with 8B+image is REAL, not aspirational. Perceived <1s trivially via warm-prefix overlap + per-bubble streaming (geometry is final pre-translation; renderer has white-box fallback; SSE /events/{job_id} router exists but is DEAD CODE — unregistered in main.py; WS is the real substrate)."
+  - normalize_off_required_for_v1: "build_v11_context_prompt with default short_utterance_normalize_enabled=True diverges from v1 training rows on 571/29467; OFF => 100% byte-match. v1 serving MUST set it false (pov_probe forces it; regen script exports it)."
+  - eval_scorer_semantics: "probes.py check_pronoun_gender is absence-of-wrong (evasion scores as pass). probes.py REFUSAL_RE false-positives ('I can't wait!'); use v13ship build_textsft_refusalstripped.is_refusal (1/302k FP). Old POV results files are raw dumps — the old scorer never existed in git (.bench gitignored)."
+  - deconfound_pending: "4B question unanswered but cheap: score is done for v11fix8 col (0%/1.9% gendered — brutal); zero-shot Huihui-Qwen3-VL-4B-abliterated (exists on HF) on the 148 set would settle size-vs-family-vs-image attribution. Recommended before funding any 8B-only path."
+
+worked:
+  - "5 parallel research agents with distinct lenses -> synthesis caught a plan-internal contradiction (single-call PBP-VIS-NUM vs N-marked-calls) that the training-row format then settled."
+  - "5 parallel implementation agents on disjoint files; all landed clean; only cross-file coupling (gemba judge import while being edited) handled by import-only constraint."
+  - "Replicate-the-exact-call debugging (same prompt/budget/cleaning/concurrency/normalize) systematically eliminated every model-side hypothesis and forced the eval-drift conclusion."
+  - "Prometheus vllm:*cache* metrics deltas as ground truth for prefix reuse (not timing inference)."
+  - "monitor-free background chaining: serve boot watcher -> orchestrator (health-wait -> 2 regens -> 2 regressions) in one idempotent script."
+
+failed:
+  - "pkill -f 'serve_v10it' matched my own compound command and self-killed (exit 144) — kill by explicit PID or use setsid + pgrep -af first."
+  - "bench_e2e re-baseline: ONNX CUBLAS alloc fails at ~2.6GB free (serve 18.6GB + videonest workers 9.2GB); ORT_GPU_MEM_LIMIT didn't save it. 15ms 'results' were error-path short-circuits — bench without stderr checking lies."
+  - "serve_v10it_vllm.sh preflight dies on missing ADAPTER_DIR (final/ was cleaned; merged_fixed/ remains) -> SKIP_MERGE=1. flashinfer sampling-kernel JIT fails on local sm_120 -> VLLM_USE_FLASHINFER_SAMPLER=0 + ENFORCE_EAGER=1."
+
+next:
+  - "Collect adequacy (#4) result (agent was mid-run); wire into the gate summary. If PASS -> gate is 5/6 hard-pass + POV-dominance; recommend PROMOTE-track: apply box serve upgrades (merge LoRA, CUDA graphs, FP8) and re-run chrF+probes as cert."
+  - "COMMIT (user approval): trainer fix + pov_probe.py + bench_image_prefix.py + refusal harness (3 files) + gemba/page_adequacy judge + config/translate.py concurrency + regen_v1_argocr.sh (move from .bench to scripts if wanted — .bench is gitignored)."
+  - "Fix the dedup_by_bubble content-drop product bug (fused-balloon translate or resplit redistribution) — affects prod REGARDLESS of model choice."
+  - "Run the 4B deconfound (serve Huihui-Qwen3-VL-4B-abliterated on box, pov_probe generate --arms, score) — decides if the 8B tax is needed."
+  - "bench_e2e vs box-v1 (proposed prod config) once local GPU frees; kill my local serve first (it's only needed for v11fix8-locally runs)."
+  - "Wave 2 (deferred): warm-image-prefix in translate.py + image path in vllm_openai_translation_service.py, WS per-bubble streaming protocol, prefetch manager. Full designs with file:line in this session's agent reports."
+  - "POV v2 training lever: absolute grounding is low for ALL arms (20% best) — gold x3 upweight / POV-mined data for the next train; consider judge-panel POV metric."
+
+files:
+  created:
+    - backend/scripts/eval/pov_probe.py
+    - backend/scripts/eval/bench_image_prefix.py
+    - backend/scripts/eval/build_refusal_probe.py
+    - backend/scripts/eval/refusal_eval.py
+    - backend/scripts/eval/refusal_probe.jsonl
+    - backend/scripts/eval/page_adequacy_judge.py
+    - backend/scripts/eval/out/{pov,refusal}/*.json
+    - "backend/.bench/{regen_v1_argocr.sh, ikenie4_v1_argocr*, ikenie4_{v1,v11fix8}_fair*, image_prefix/, serve_v11fix8_local2.log}"
+    - "scorecards/ikenie4: *_{v1_argocr,v1_fair,v11fix8_fair}.json"
+    - thoughts/shared/handoffs/mt-quality-ikenie4/2026-07-02_01-15_gate-run-fair-eval-harnesses-built.yaml
+  modified:
+    - backend/scripts/eval/gemba_mqm_judge.py       # additive image support (UNCOMMITTED)
+    - backend/app/config.py                          # translation_client_concurrency (UNCOMMITTED)
+    - backend/app/routers/translate.py               # pass concurrency (UNCOMMITTED)
+    - backend/scripts/train/sft_qwen3vl_8b_imagectx.py  # prior session's masking fix (STILL UNCOMMITTED)

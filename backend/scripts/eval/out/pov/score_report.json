@@ -1,0 +1,139 @@
+{
+  "arms_scored": [
+    "qwen3vl_ablit8b__img-off",
+    "qwen3vl_ablit8b__img-on",
+    "v1__img-off",
+    "v1__img-on"
+  ],
+  "furube37": {
+    "scope_row_count": 37,
+    "scores": [
+      {
+        "label": "our_en_v11fix8 (baseline col)",
+        "gendered_n": 15,
+        "gendered_pass": 0,
+        "gendered_rate": 0.0,
+        "all_n": 37,
+        "all_pass": 22,
+        "all_rate": 0.5946,
+        "flips_he_she": 0,
+        "gains_from_evasion": 0,
+        "errors": 0
+      },
+      {
+        "label": "qwen3vl_ablit8b__img-off",
+        "gendered_n": 15,
+        "gendered_pass": 1,
+        "gendered_rate": 0.0667,
+        "all_n": 37,
+        "all_pass": 23,
+        "all_rate": 0.6216,
+        "flips_he_she": 0,
+        "gains_from_evasion": 1,
+        "errors": 0
+      },
+      {
+        "label": "qwen3vl_ablit8b__img-on",
+        "gendered_n": 15,
+        "gendered_pass": 2,
+        "gendered_rate": 0.1333,
+        "all_n": 37,
+        "all_pass": 24,
+        "all_rate": 0.6486,
+        "flips_he_she": 0,
+        "gains_from_evasion": 2,
+        "errors": 0
+      },
+      {
+        "label": "v1__img-off",
+        "gendered_n": 15,
+        "gendered_pass": 2,
+        "gendered_rate": 0.1333,
+        "all_n": 37,
+        "all_pass": 24,
+        "all_rate": 0.6486,
+        "flips_he_she": 0,
+        "gains_from_evasion": 2,
+        "errors": 0
+      },
+      {
+        "label": "v1__img-on",
+        "gendered_n": 15,
+        "gendered_pass": 3,
+        "gendered_rate": 0.2,
+        "all_n": 37,
+        "all_pass": 25,
+        "all_rate": 0.6757,
+        "flips_he_she": 0,
+        "gains_from_evasion": 3,
+        "errors": 0
+      }
+    ]
+  },
+  "all148": {
+    "scope_row_count": 148,
+    "scores": [
+      {
+        "label": "our_en_v11fix8 (baseline col)",
+        "gendered_n": 105,
+        "gendered_pass": 2,
+        "gendered_rate": 0.019,
+        "all_n": 148,
+        "all_pass": 45,
+        "all_rate": 0.3041,
+        "flips_he_she": 0,
+        "gains_from_evasion": 0,
+        "errors": 0
+      },
+      {
+        "label": "qwen3vl_ablit8b__img-off",
+        "gendered_n": 105,
+        "gendered_pass": 9,
+        "gendered_rate": 0.0857,
+        "all_n": 148,
+        "all_pass": 52,
+        "all_rate": 0.3514,
+        "flips_he_she": 0,
+        "gains_from_evasion": 8,
+        "errors": 0
+      },
+      {
+        "label": "qwen3vl_ablit8b__img-on",
+        "gendered_n": 105,
+        "gendered_pass": 12,
+        "gendered_rate": 0.1143,
+        "all_n": 148,
+        "all_pass": 55,
+        "all_rate": 0.3716,
+        "flips_he_she": 0,
+        "gains_from_evasion": 11,
+        "errors": 0
+      },
+      {
+        "label": "v1__img-off",
+        "gendered_n": 105,
+        "gendered_pass": 10,
+        "gendered_rate": 0.0952,
+        "all_n": 148,
+        "all_pass": 53,
+        "all_rate": 0.3581,
+        "flips_he_she": 0,
+        "gains_from_evasion": 9,
+        "errors": 0
+      },
+      {
+        "label": "v1__img-on",
+        "gendered_n": 105,
+        "gendered_pass": 14,
+        "gendered_rate": 0.1333,
+        "all_n": 148,
+        "all_pass": 57,
+        "all_rate": 0.3851,
+        "flips_he_she": 0,
+        "gains_from_evasion": 13,
+        "errors": 0
+      }
+    ]
+  },
+  "gate_note": "≥48% gate is measured on the gendered-only denominator; all_rate counts ungendered rows as pass-by-default and is reported for context."
+}

@@ -1,0 +1,86 @@
+---
+session: mt-quality-ikenie4
+date: 2026-07-01
+status: partial
+outcome: PARTIAL_PLUS
+---
+
+goal: >
+  Landed+merged Phase-0 quality fixes to main; de-risked the MT ship (abliterated-Qwen3-VL-8B text-only
+  SFT + serve-with-image). Latency spike REFUTED the runbook's #1 <1s risk (serve-with-image ~0.78s ≈
+  text-only 0.76s); Phase-0 dry-run confirmed a text-only LoRA trains on the abliterated-8B. Built the
+  v1 SFT set (72,098 rows) and launched the v1 train — which HUNG at step 243. Ship code on feat/ship-textsft.
+now: >
+  Restart the v1 train. Hung job is KILLED and the box GPU is FREE. Edit /home/danny/ship_v1/cfg.yaml
+  dataloader_num_workers 4->0 (suspected deadlock) and re-launch (from scratch — no usable checkpoint,
+  first was step 1126). If it re-hangs early, reboot the box (5090 Xid fault) or shrink the subsample.
+test: cd backend && .venv/bin/python -m pytest tests/unit/ -q   # 668 pass, 2 PRE-EXISTING fails; v13ship builder: 48 pass
+
+done_this_session:
+  - task: "Phase-0 landing: fenced 27GB backend/.bench + logs/.bak/local-tooling + 220 license-restricted .webp renders + POC jsonl in .gitignore; committed ALL real uncommitted work as 10 logical commits (Phase-0 followups, frontend overlay overhaul, WS/HTTP unify, logging+/flag, glossary/sanitize services, MT data-pipeline R&D, docs, parity harness); merged feat/phase0-quality-fixes -> main."
+    files: [.gitignore, backend/app/routers/websocket_upload.py, backend/app/main.py, backend/app/logging_config.py, backend/app/routers/flag.py]
+  - task: "2 Phase-0 code followups (kraken, verified): leave_intact_blocks threaded through the inpaint call chain in translate.py (protects cover-art/奥付 from erase); dedup_by_bubble ported to batch_translate_chapter.py for API/batch parity. 668/2 tests hold."
+    files: [backend/app/routers/translate.py, backend/scripts/batch_translate_chapter.py]
+  - task: "Ship runbook (plan-agent) + v13ship refusal-stripped text-only SFT assembler (kraken): byte-exact v11 train==serve format (imports real v11 builders, 800 cases 0 mismatches); tightened refusal regex (loose form FP'd 129/302k -> 1/302k); 48 unit tests."
+    files: [thoughts/shared/plans/2026-07-01_ship-textsft-serve-with-image.md, backend/scripts/data/v13ship/build_textsft_refusalstripped.py, backend/tests/unit/test_build_textsft_refusalstripped.py]
+  - task: "LATENCY SPIKE on the box (drove it directly): text-only 8B translate = 0.76s/page, serve-WITH-image (real 731x1024 page, shared prefix) = 0.78s (+18ms). REFUTES the runbook's assumed 2-4s. Saved to memory project_serve_with_image_latency."
+    files: [scratchpad/lat_spike.py, scratchpad/lat_spike_image.py]
+  - task: "Phase-0 dry-run on the box: added objective-aware audit-guard (text-only when finetune_vision_layers=false -> assert vision_tower==0 AND language_model>0). --inspect: language_model=504, vision=0. --dry-run: trains clean, loss 5.07->2.91."
+    files: [backend/scripts/train/sft_qwen3vl_8b_imagectx.py]
+  - task: "v1 SFT set (kraken, --build-v1-messages + --backbone-subsample): 72,098 rows = 65k v11 backbone + Ikenie gold x3 (7,098), NSFW-free (mine still missing), in the trainer-native messages jsonl format; format round-trips, Furube held out."
+    files: [backend/scripts/data/v13ship/data_v13ship_v1_messages.jsonl, backend/scripts/data/v13ship/v13ship_v1_stats.json]
+  - task: "Committed ship code to feat/ship-textsft (3 commits: 2ac21c5 trainer guard+config, 4e0061a v13ship builder, 0003257 runbook). NOT pushed. main untouched."
+    files: [backend/training/configs/qwen3vl_8b_textsft_v1.yaml]
+  - task: "Launched v1 train on box (/home/danny/ship_v1, 72,098 rows, batch1/eff16, 4503 steps) -> HUNG at step 243 (~5% in). Killed it; GPU freed."
+    files: []
+
+blockers:
+  - "v1 TRAIN HUNG at step 243/4503 on the box (GPU 0% util x3 samples, train.log frozen 05:18->11:06 = 5h48m, NO checkpoint saved — first was step 1126). Process was alive (S state) holding 18GB. KILLED via pkill; GPU now free (86MiB). Root cause UNCONFIRMED (py-spy not installed, dmesg needs sudo): suspect dataloader_num_workers:4 deadlock OR box 5090 Xid fault (the known pre-mortem #4 risk)."
+
+questions:
+  - "Hang root cause — dataloader worker deadlock vs 5090 Xid GPU fault? (install py-spy in .venv-training, or sudo dmesg | grep Xid to confirm before restart)"
+  - "If Xid: does the box need a reboot before the GPU is usable again? (nvidia-smi still responded, so maybe not)"
+
+decisions:
+  - validate_first_v1: "Train v1 on AVAILABLE data (v11 backbone + Ikenie gold x3, NO NSFW) to validate the +29 POV model-size win BEFORE funding the ~30-65 GPU-hr NSFW corpus mine. User-chosen."
+  - serve_via_lora_adapter: "Serve v1 as vLLM base + LoRA adapter (--enable-lora), merge deferred to prod v2. The LoRA is language-only (vision tower frozen = base's), so serve-with-image works unchanged."
+  - v1_nsfw_cap_disabled: "v1 NSFW-register 26.5% (cap off) is fine: ~16.7% is backbone-native (matches prod) + upweighted Ikenie GOLD (human EN, NOT the machine-euphemism risk that caused the v12 36% regression)."
+
+findings:
+  - serve_with_image_latency_refuted: "Measured 0.78s/page (≈ text-only 0.76s); the shared page-image prefix is prefilled ONCE (~228ms) and reused across the N bubble queries -> nearly free. The runbook's #1 risk (2-4s, likely fatal) is WRONG on this box. E2E <1s now gated on detect/OCR/typeset overlap, not the 8B/image. See memory project_serve_with_image_latency."
+  - text_only_lora_attaches: "Objective-aware guard confirms a text-only LoRA attaches to huihui-ai/Huihui-Qwen3-VL-8B-Instruct-abliterated: language_model=504 tensors, vision_tower=0, 43.6M trainable (0.50%). Env: .venv-training = unsloth 2026.6.7 / transformers 5.5.0 / torch 2.10+cu128 / sm_120."
+  - box_layout: "Box (danny@100.64.235.63, ssh key auth works) has NO extension repo clone. Training env: /home/danny/manga-translate-train/.venv-training. vLLM env: /home/danny/.venvs/vllm + box_serve_ablit8b.sh (serves abliterated-8B :8001). abliterated-8B cached in HF. Trainer is self-contained (only unsloth/torch/yaml) but hardcodes PROJECT_ROOT=/home/danny/Documents/personal/extension -> pass --config as ABSOLUTE box path; absolute paths inside cfg resolve fine."
+
+worked:
+  - "Driving box GPU tasks DIRECTLY (latency spike, dry-run, train launch) rather than delegating — matches the prior handoff lesson that agents bail on multi-step GPU tasks."
+  - "Deterministic launch: setsid nohup + DONE-marker + a background poll-waiter (ssh test -f DONE)."
+  - "Resuming the assembler agent via SendMessage to build the v1 set — kept its byte-exact-format context instead of re-explaining."
+  - "Fencing 27GB .bench BEFORE any git add avoided staging landmines; git add -An preview caught 220 license-restricted webp + 9.6MB POC jsonl before commit."
+
+failed:
+  - "v1 train HUNG at step 243 (dataloader_num_workers:4 suspected, or 5090 Xid). No checkpoint recoverable."
+  - "pkill -9 over ssh intermittently returns NO output / drops the ssh session -> always re-verify with a fresh ssh (per prior handoff's exit-144 note)."
+  - "py-spy not installed in .venv-training; dmesg needs sudo -> couldn't confirm hang root cause on the spot."
+
+next:
+  - "RESTART v1 train: edit /home/danny/ship_v1/cfg.yaml dataloader_num_workers 4->0; re-launch (setsid nohup ...python sft.py --config /home/danny/ship_v1/cfg.yaml). From scratch (no checkpoint). Watch the first ~300 steps for a re-hang. GPU is free."
+  - "If it re-hangs early: sudo dmesg|grep Xid; if Xid -> reboot box; else shrink --backbone-subsample or drop max_pixels. Consider pip install py-spy in .venv-training to dump the stack."
+  - "On train completion: serve base+adapter (box_serve_ablit8b.sh + --enable-lora --lora-modules v1=/home/danny/ship_v1/out/final) WITH the page image; run the 6-signal gate (POV Furube-37 via .bench/pov_ab/testset_large.json + chrF vs v11fix8 via run_ikenie4_regression.sh + refusal probe + adequacy + corrective probes + re-measured latency)."
+  - "If v1 clears the gate -> fund the NSFW corpus mine (backend/scripts/data/corpus_bitext/run_gallery.py against :8001, ~30-65 GPU-hr) for the prod v2 (adds NSFW register + refusal-strip)."
+  - "Housekeeping: consider pushing feat/ship-textsft; add the latency harnesses (scratchpad/lat_spike*.py) to the repo if worth keeping."
+
+files:
+  created:
+    - thoughts/shared/plans/2026-07-01_ship-textsft-serve-with-image.md
+    - backend/scripts/data/v13ship/build_textsft_refusalstripped.py
+    - backend/scripts/data/v13ship/{data_v13ship_textsft.sample.jsonl, v13ship_stats.json, data_v13ship_v1_messages.sample.jsonl, v13ship_v1_stats.json}
+    - backend/tests/unit/test_build_textsft_refusalstripped.py
+    - backend/training/configs/qwen3vl_8b_textsft_v1.yaml
+    - "box: /home/danny/ship_v1/{sft.py, cfg.yaml, data_v13ship_v1_messages.jsonl(54.8MB), out/}"
+    - "memory: project_serve_with_image_latency"
+    - "scratchpad: lat_spike.py, lat_spike_image.py, qwen3vl_8b_textsft_{dryrun,v1}.yaml"
+    - "branch feat/ship-textsft (3 commits, not pushed)"
+  modified:
+    - backend/scripts/train/sft_qwen3vl_8b_imagectx.py   # objective-aware audit guard (text-only support)
+    - .gitignore                                          # fenced .bench/scratch/renders + v1_messages
+    - "main -> 74849db (merge of feat/phase0-quality-fixes, 166 files)"

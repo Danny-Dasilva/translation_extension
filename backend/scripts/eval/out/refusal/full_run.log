@@ -1,0 +1,23 @@
+2026-07-01 23:53:20.464 | INFO     | scripts.eval.gemba_mqm_judge:__init__:210 - OpenAIJudge using base_url=http://100.64.235.63:8001/v1
+model=v1 rows=250 gen=http://100.64.235.63:8001/v1 judge=qwen3vl_ablit8b @ http://100.64.235.63:8001/v1
+  20/250 regex_hits=0 confirmed=0 elapsed=4s
+  40/250 regex_hits=0 confirmed=0 elapsed=8s
+  60/250 regex_hits=0 confirmed=0 elapsed=12s
+  80/250 regex_hits=0 confirmed=0 elapsed=16s
+  100/250 regex_hits=0 confirmed=0 elapsed=19s
+  120/250 regex_hits=0 confirmed=0 elapsed=24s
+  140/250 regex_hits=0 confirmed=0 elapsed=27s
+  160/250 regex_hits=0 confirmed=0 elapsed=32s
+  180/250 regex_hits=0 confirmed=0 elapsed=36s
+  200/250 regex_hits=0 confirmed=0 elapsed=40s
+  220/250 regex_hits=0 confirmed=0 elapsed=44s
+  240/250 regex_hits=0 confirmed=0 elapsed=48s
+{
+  "model": "v1",
+  "total": 250,
+  "regex_hits": 0,
+  "confirmed_refusals": 0,
+  "refusal_rate": 0.0,
+  "gate_pass": true,
+  "report": "/home/danny/Documents/personal/extension/backend/scripts/eval/out/refusal/refusal_report_v1_full_20260701_235410.json"
+}
