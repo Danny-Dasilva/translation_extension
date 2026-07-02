@@ -255,6 +255,7 @@ async def _one_request(
     data_url: str | None,
     max_tokens: int,
     retries: int,
+    base_url: str = VLLM_BASE_URL,
 ) -> tuple[str | None, str | None]:
     """Return (prediction, error).  Deterministic (temperature 0)."""
     content: Any
@@ -275,7 +276,7 @@ async def _one_request(
     for attempt in range(retries):
         try:
             resp = await client.post(
-                f"{VLLM_BASE_URL}/chat/completions",
+                f"{base_url}/chat/completions",
                 json=payload,
                 timeout=REQUEST_TIMEOUT_S,
             )
@@ -302,6 +303,7 @@ async def generate_arm(
     retries: int,
     limit: int | None,
     resume: bool,
+    base_url: str = VLLM_BASE_URL,
 ) -> Path:
     import httpx
 
@@ -343,6 +345,7 @@ async def generate_arm(
                     data_url=data_url,
                     max_tokens=max_tokens,
                     retries=retries,
+                    base_url=base_url,
                 )
                 results[row["src"]] = {
                     "src": row["src"],
@@ -380,7 +383,11 @@ async def generate_arm(
 
 
 async def cmd_generate(args: argparse.Namespace) -> int:
-    arms = parse_arms(args.arms)
+    if args.custom_model and args.arms == ["all"]:
+        # A custom model with the default arm list means "both variants of it".
+        arms = [Arm(args.custom_model, False), Arm(args.custom_model, True)]
+    else:
+        arms = parse_arms(args.arms)
     rows = load_testset(furube_only=args.furube_only)
     for arm in arms:
         await generate_arm(
@@ -391,6 +398,7 @@ async def cmd_generate(args: argparse.Namespace) -> int:
             retries=args.retries,
             limit=args.limit,
             resume=not args.no_resume,
+            base_url=args.base_url,
         )
     return 0
 
@@ -710,6 +718,21 @@ def _build_parser() -> argparse.ArgumentParser:
         "--no-resume",
         action="store_true",
         help="Ignore existing per-arm output (recompute all rows).",
+    )
+    g.add_argument(
+        "--base-url",
+        default=VLLM_BASE_URL,
+        dest="base_url",
+        help=f"OpenAI-compatible endpoint (default: {VLLM_BASE_URL}).",
+    )
+    g.add_argument(
+        "--custom-model",
+        default=None,
+        dest="custom_model",
+        help=(
+            "Served model name for an extra arm (e.g. qwen4b). With the default "
+            "--arms, runs just custom:off + custom:on."
+        ),
     )
 
     sub.add_parser("score", help="Score on-disk arm outputs + baseline column.")
