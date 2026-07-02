@@ -13,6 +13,8 @@
  *   - "Show original" Alt-hotkey (wired from content-script)
  */
 import { TextBox, FlagRequest, FlagBox } from '@/types/api';
+import { StreamDetectionBox } from '@/types/stream';
+import { detectionBoxToTextBox } from './stream-protocol';
 import { CONFIG } from '@/config/constants';
 import { settingsManager } from './settings-manager';
 import { logger } from '@/utils/logger';
@@ -41,6 +43,39 @@ interface RenderedImage {
    * Used to mark the ⚑ button as done and prevent a double-send.
    */
   flagged?: boolean;
+}
+
+/**
+ * Live state for an in-flight PROGRESSIVE (streaming) render of one element.
+ * beginOverlay creates it (source + white boxes drawn, element swapped, overlay
+ * registered early); applyTranslation paints one bubble at a time onto `canvas`
+ * and re-blits; applyPlate/finish recomposite via the shared paintComposite.
+ */
+interface StreamingRender {
+  element: HTMLImageElement | HTMLCanvasElement;
+  /** Offscreen render target whose pixels drive the on-page translation layer. */
+  canvas: HTMLCanvasElement;
+  ctx: CanvasRenderingContext2D;
+  /** The original source image (kept for recompositing on plate/revise/finish). */
+  image: HTMLImageElement;
+  /** Inpaint plate once an applyPlate frame lands; null until then. */
+  plateImage: HTMLImageElement | null;
+  fontFamily: string;
+  showDebug: boolean;
+  /** Full detection-order box set (mutated in place as tl frames fill text). */
+  textBoxes: TextBox[];
+  /** Placement-order view over the SAME box references (collision siblings). */
+  sortedTextBoxes: TextBox[];
+  /** detection `index` -> the TextBox it hydrated. */
+  indexToBox: Map<number, TextBox>;
+  /** Ink rects recorded so far (progressive collision avoidance). */
+  placedRects: PlacedRect[];
+  /** Background luma snapshot for auto-contrast (recaptured on recompose). */
+  lumaSnapshot: LumaSnapshot | null;
+  /** index -> last text drawn, for idempotent tl + revise-triggered recompose. */
+  drawn: Map<number, string>;
+  /** DOM overlay <img> whose src mirrors `canvas` (updated per incremental paint). */
+  translationLayer: HTMLImageElement | null;
 }
 
 interface FitResult {
@@ -165,6 +200,9 @@ export class OverlayRenderer {
    * change. Reset at the start of every renderTranslationsOnCanvas.
    */
   private layoutCache: Map<string, FitResult> = new Map();
+
+  /** In-flight progressive renders, keyed by the page element being translated. */
+  private streaming: Map<HTMLElement, StreamingRender> = new Map();
 
   constructor() {
     this.ensureFontsInjected();
@@ -391,6 +429,257 @@ export class OverlayRenderer {
     }
   }
 
+  /* ===================== PROGRESSIVE (STREAMING) API =====================
+   *
+   * Incremental counterpart to createOverlay, split along the existing pass
+   * seams. Used by the content-script when the backend emits v:1 event frames:
+   *
+   *   beginOverlay(detections)  -> swap element, draw source + white boxes,
+   *                                register the overlay early (source visible
+   *                                immediately, before any text arrives).
+   *   applyTranslation(i, text) -> typeset ONE bubble incrementally, reusing the
+   *                                placement/collision computed in beginOverlay.
+   *   applyPlate(b64)           -> recomposite background + redraw all text,
+   *                                recapture luma.
+   *   finish(debug)             -> authoritative final recompose (+ debug).
+   *
+   * All four are thin orchestration over the SAME internals the single-pass
+   * path uses (paintComposite / drawTextBoxText / captureLumaSnapshot), so there
+   * is no forked renderer.
+   */
+
+  /**
+   * Begin a progressive render: draw the source image + white masks from the
+   * detection geometry (no text yet), swap the element, and register the overlay
+   * so the original is visible instantly while translations stream in.
+   */
+  async beginOverlay(
+    imageElement: HTMLImageElement | HTMLCanvasElement,
+    detectionBoxes: StreamDetectionBox[],
+    showDebug: boolean,
+    sourceBase64?: string | null
+  ): Promise<void> {
+    // Tear down anything previously rendered / streaming for this element.
+    this.removeOverlay(imageElement);
+
+    const settings = await settingsManager.getSettings();
+
+    const base64Image =
+      sourceBase64 && sourceBase64.startsWith('data:')
+        ? sourceBase64
+        : await this.getImageBase64(imageElement);
+
+    // Fonts must be ready before the first measure/paint (same as legacy path).
+    await this.ensureFontsReady();
+    this.layoutCache.clear();
+
+    const image = await this.loadImage(base64Image);
+    const canvas = document.createElement('canvas');
+    canvas.width = image.width;
+    canvas.height = image.height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('Failed to get canvas context');
+
+    // Hydrate geometry-only detection boxes into TextBoxes (empty text) and
+    // index them for later tl/revise frames.
+    const textBoxes: TextBox[] = [];
+    const indexToBox = new Map<number, TextBox>();
+    for (const det of detectionBoxes) {
+      const tb = detectionBoxToTextBox(det);
+      textBoxes.push(tb);
+      indexToBox.set(det.index, tb);
+    }
+
+    // Paint source + white boxes + luma. With empty translatedText, the text
+    // pass draws nothing (drawTextBoxText early-returns), so this is exactly the
+    // "background only" frame. placedRects comes back empty.
+    const { sortedTextBoxes, placedRects, lumaSnapshot } = this.paintComposite(
+      ctx,
+      image,
+      null,
+      textBoxes,
+      settings.defaultFont,
+      false
+    );
+
+    const originalSrc =
+      imageElement instanceof HTMLImageElement ? imageElement.src : undefined;
+
+    await this.replaceElement(imageElement, canvas);
+    const domOverlay = this.buildDomOverlay(imageElement, canvas, textBoxes);
+    const translationLayer =
+      (domOverlay?.querySelector(
+        '.manga-translator-translation-layer'
+      ) as HTMLImageElement | null) ?? null;
+
+    // Register the overlay early so removeOverlay/clearAll/setOverlayOpacity and
+    // the flag/edit affordances all work mid-stream.
+    this.renderedImages.set(imageElement, {
+      originalElement: imageElement,
+      newElement: canvas,
+      domOverlay,
+      textBoxes,
+      originalImageBase64: base64Image,
+      originalSrc,
+    });
+
+    this.streaming.set(imageElement, {
+      element: imageElement,
+      canvas,
+      ctx,
+      image,
+      plateImage: null,
+      fontFamily: settings.defaultFont,
+      showDebug,
+      textBoxes,
+      sortedTextBoxes,
+      indexToBox,
+      placedRects,
+      lumaSnapshot,
+      drawn: new Map(),
+      translationLayer,
+    });
+  }
+
+  /**
+   * Apply one translated bubble to an in-flight streaming render. Idempotent by
+   * `index` (a repeated identical tl is a no-op); a CHANGED text for an already-
+   * drawn index (revise) triggers an authoritative recompose so the stale ink is
+   * cleanly replaced.
+   */
+  applyTranslation(
+    imageElement: HTMLImageElement | HTMLCanvasElement,
+    index: number,
+    text: string
+  ): void {
+    const st = this.streaming.get(imageElement);
+    if (!st) return;
+    const box = st.indexToBox.get(index);
+    if (!box) return;
+
+    const prev = st.drawn.get(index);
+    if (prev === text) return; // idempotent — nothing changed
+
+    box.translatedText = text;
+
+    if (prev !== undefined) {
+      // Text changed for an already-painted box (revise/correction). We can't
+      // erase a single box from the composited canvas, so recompose the frame.
+      this.recomposeStreaming(st);
+      return;
+    }
+
+    // First time this box gets text — draw just it, appending its ink rect to
+    // the running collision list (progressive; reuses beginOverlay placement).
+    st.drawn.set(index, text);
+    this.drawTextBoxText(
+      st.ctx,
+      box,
+      st.fontFamily,
+      st.sortedTextBoxes,
+      st.canvas.width,
+      st.canvas.height,
+      st.placedRects,
+      st.lumaSnapshot
+    );
+    this.blitStreaming(st);
+  }
+
+  /**
+   * Apply the inpaint plate to an in-flight streaming render: adopt it as the
+   * background and recomposite (redraw plate + all text so far, recapture luma).
+   */
+  async applyPlate(
+    imageElement: HTMLImageElement | HTMLCanvasElement,
+    plateBase64: string
+  ): Promise<void> {
+    const st = this.streaming.get(imageElement);
+    if (!st) return;
+    try {
+      const plateSrc = plateBase64.startsWith('data:')
+        ? plateBase64
+        : `data:image/png;base64,${plateBase64}`;
+      st.plateImage = await this.loadImage(plateSrc);
+    } catch (err) {
+      logger.warn('Streaming plate failed to load, keeping white-box mask:', err);
+      return;
+    }
+    this.recomposeStreaming(st);
+  }
+
+  /**
+   * Finalize an in-flight streaming render: authoritative recompose (guarantees
+   * the final frame is byte-identical to the single-pass path regardless of tl
+   * arrival order), optionally with debug overlays, then drop the streaming
+   * state. The registered overlay (with final textBoxes) remains.
+   */
+  finish(
+    imageElement: HTMLImageElement | HTMLCanvasElement,
+    showDebug?: boolean
+  ): void {
+    const st = this.streaming.get(imageElement);
+    if (!st) return;
+    if (showDebug !== undefined) st.showDebug = showDebug;
+
+    this.recomposeStreaming(st);
+
+    const rendered = this.renderedImages.get(imageElement);
+    if (rendered) rendered.textBoxes = st.textBoxes;
+
+    this.streaming.delete(imageElement);
+  }
+
+  /**
+   * Full authoritative recompose of a streaming frame (background + plate + ALL
+   * text in placement order + optional debug), refreshing the state's collision
+   * rects, luma snapshot and drawn-index map. Used by applyPlate, revise and
+   * finish. Deterministic and independent of tl arrival order.
+   */
+  private recomposeStreaming(st: StreamingRender): void {
+    // Match the legacy per-render reset so a stale measure can't be reused.
+    this.layoutCache.clear();
+
+    const { placedRects, lumaSnapshot } = this.paintComposite(
+      st.ctx,
+      st.image,
+      st.plateImage,
+      st.textBoxes,
+      st.fontFamily,
+      st.showDebug
+    );
+    st.placedRects = placedRects;
+    st.lumaSnapshot = lumaSnapshot;
+
+    // Rebuild the drawn-index map from whatever text has arrived so far.
+    st.drawn.clear();
+    for (const [idx, box] of st.indexToBox) {
+      if (box.translatedText && !box.skipped) st.drawn.set(idx, box.translatedText);
+    }
+
+    this.blitStreaming(st);
+  }
+
+  /**
+   * Push the offscreen streaming canvas to the page: update the DOM overlay's
+   * translation-layer <img> and, for a <canvas> element, redraw the live canvas.
+   */
+  private blitStreaming(st: StreamingRender): void {
+    try {
+      if (st.element instanceof HTMLCanvasElement) {
+        const lctx = st.element.getContext('2d');
+        if (lctx) {
+          lctx.clearRect(0, 0, st.element.width, st.element.height);
+          lctx.drawImage(st.canvas, 0, 0);
+        }
+      }
+      if (st.translationLayer) {
+        st.translationLayer.src = st.canvas.toDataURL('image/jpeg', 0.9);
+      }
+    } catch (err) {
+      logger.warn('Streaming blit failed:', err);
+    }
+  }
+
   /**
    * Get base64 image data from element
    */
@@ -473,22 +762,73 @@ export class OverlayRenderer {
     const ctx = canvas.getContext('2d');
     if (!ctx) throw new Error('Failed to get canvas context');
 
-    // Draw original image first
-    ctx.drawImage(image, 0, 0, image.width, image.height);
-
-    // If the backend supplied an inpainted plate, overlay it on top of the
-    // original. We draw the plate at image dimensions — backend is expected
-    // to return a plate aligned with the source frame.
+    // Load the inpaint plate (if any) up front so the shared painter can layer
+    // it. Failure degrades to the white-box mask path (plateImage stays null).
+    let plateImage: HTMLImageElement | null = null;
     if (inpaintedBase64) {
       try {
         const plateSrc = inpaintedBase64.startsWith('data:')
           ? inpaintedBase64
           : `data:image/png;base64,${inpaintedBase64}`;
-        const plate = await this.loadImage(plateSrc);
-        ctx.drawImage(plate, 0, 0, image.width, image.height);
+        plateImage = await this.loadImage(plateSrc);
       } catch (err) {
         logger.warn('Inpainted plate failed to load, falling back to mask:', err);
       }
+    }
+
+    // Single-pass composite (original + plate + backgrounds + text + debug).
+    // The same painter backs the incremental streaming path (beginOverlay /
+    // applyPlate / finish) so both routes produce byte-identical frames.
+    this.paintComposite(ctx, image, plateImage, textBoxes, fontFamily, showDebug);
+
+    // Suppress unused-var warning for originalElement (kept for API compat)
+    void originalElement;
+
+    return canvas;
+  }
+
+  /**
+   * Shared full-frame painter. Draws, in order:
+   *   1. the original image,
+   *   2. the inpaint plate (if `plateImage` provided) over it,
+   *   3. Pass 1 backgrounds — white masks when there is NO plate, or just the
+   *      WIDENED regions when there is (the plate already covers tight bubbles),
+   *   4. a single luminance snapshot of the text-free background,
+   *   5. Pass 2 text in placement order, threading a collision-rect list,
+   *   6. Pass 3 debug overlays (optional).
+   *
+   * Extracted verbatim from the old renderTranslationsOnCanvas body so the
+   * legacy/HTTP path is unchanged, and reused by the streaming recompose so the
+   * incremental path is a thin orchestration rather than a second renderer.
+   * Returns the derived placement order, the collision rects it recorded, and
+   * the luma snapshot so the streaming state can keep drawing incrementally.
+   */
+  private paintComposite(
+    ctx: CanvasRenderingContext2D,
+    image: HTMLImageElement,
+    plateImage: HTMLImageElement | null,
+    textBoxes: TextBox[],
+    fontFamily: string,
+    showDebug: boolean
+  ): {
+    sortedTextBoxes: TextBox[];
+    placedRects: PlacedRect[];
+    lumaSnapshot: LumaSnapshot | null;
+  } {
+    const canvas = ctx.canvas;
+
+    // Clear first so RECOMPOSITE calls (plate arrival, revise, finish) start
+    // from a blank frame. On the legacy first paint the canvas is already blank,
+    // so this is a no-op there.
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // Draw original image first.
+    ctx.drawImage(image, 0, 0, image.width, image.height);
+
+    // If a plate was supplied, overlay it on top of the original at image dims.
+    const hasPlate = !!plateImage;
+    if (plateImage) {
+      ctx.drawImage(plateImage, 0, 0, image.width, image.height);
     }
 
     // Placement order mirrors the backend compose_final `order`:
@@ -496,7 +836,6 @@ export class OverlayRenderer {
     //   2. then clamped caption/SFX blocks SMALLEST-area-first, so small
     //      specific narration columns claim their space and an over-large
     //      MERGED caption shrinks/clips around them instead of overlapping.
-    // (The previous z-index sort had no overlap awareness.)
     const sortedTextBoxes = this.computePlacementOrder(textBoxes).filter(
       (tb) => !tb.skipped
     );
@@ -504,7 +843,7 @@ export class OverlayRenderer {
     // When we have an inpainted plate, skip drawing white backgrounds — the
     // plate *is* the background. Otherwise fall back to the original masked
     // rounded rects.
-    if (!inpaintedBase64) {
+    if (!hasPlate) {
       for (const textBox of sortedTextBoxes) {
         this.drawTextBoxBackground(
           ctx,
@@ -552,8 +891,8 @@ export class OverlayRenderer {
 
     // Pass 2: Draw text in placement order, threading a collision-rect list so
     // later blocks avoid burying earlier ones (mirrors compose_final's
-    // `placed_rects`). Orphan/SFX over dialogue is suppressed; a dialogue block
-    // is skipped only when clearly (>=60%) buried (detection duplicates).
+    // `placed_rects`). Boxes with empty translatedText (streaming: not yet
+    // arrived) are skipped by drawTextBoxText and simply painted later.
     const placedRects: PlacedRect[] = [];
     for (const textBox of sortedTextBoxes) {
       this.drawTextBoxText(
@@ -573,10 +912,7 @@ export class OverlayRenderer {
       this.drawDebugOverlay(ctx, sortedTextBoxes);
     }
 
-    // Suppress unused-var warning for originalElement (kept for API compat)
-    void originalElement;
-
-    return canvas;
+    return { sortedTextBoxes, placedRects, lumaSnapshot };
   }
 
   /**
@@ -2029,6 +2365,8 @@ export class OverlayRenderer {
    * Remove overlay (restore original if possible)
    */
   removeOverlay(imageElement: HTMLElement): void {
+    // Abandon any in-flight progressive render for this element.
+    this.streaming.delete(imageElement);
     const rendered = this.renderedImages.get(imageElement);
     if (rendered) {
       this.restoreOriginal(rendered);
@@ -2153,6 +2491,7 @@ export class OverlayRenderer {
    * translation is toggled OFF (master switch / per-host disable).
    */
   clearAll(): void {
+    this.streaming.clear();
     for (const rendered of this.renderedImages.values()) {
       this.restoreOriginal(rendered);
       rendered.domOverlay?.remove();

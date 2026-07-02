@@ -3,12 +3,35 @@
  * Provides binary image upload for faster translation compared to HTTP/base64
  */
 import { TranslateResponse } from '@/types/api';
+import { StreamEventFrame } from '@/types/stream';
+import { isStreamEventFrame, StreamAssembler } from './stream-protocol';
 import { CONFIG } from '@/config/constants';
+
+/**
+ * Optional per-request callbacks for the streaming (v:1 event-frame) path. When
+ * omitted the client still works — it just resolves with the assembled legacy
+ * response once `done` arrives, giving callers the same object the monolithic
+ * path returns.
+ */
+export interface StreamCallbacks {
+  /** Invoked once per v:1 event frame, in arrival order. */
+  onEvent?: (frame: StreamEventFrame) => void;
+}
 
 interface PendingRequest {
   resolve: (response: TranslateResponse) => void;
   reject: (error: Error) => void;
   timeout: ReturnType<typeof setTimeout>;
+  /** Streaming callbacks supplied by the caller (optional). */
+  callbacks?: StreamCallbacks;
+  /**
+   * Wire mode for this request. 'unknown' until the FIRST message decides it:
+   * a legacy monolithic response resolves immediately (as today); a v:1 event
+   * frame switches to 'stream' and we accumulate until `done`.
+   */
+  mode: 'unknown' | 'legacy' | 'stream';
+  /** Folds v:1 frames into a legacy-shaped response. Set once mode==='stream'. */
+  assembler?: StreamAssembler;
 }
 
 export class WebSocketClient {
@@ -104,7 +127,10 @@ export class WebSocketClient {
   /**
    * Send binary image data and receive translation response
    */
-  async send(imageData: ArrayBuffer): Promise<TranslateResponse> {
+  async send(
+    imageData: ArrayBuffer,
+    callbacks?: StreamCallbacks
+  ): Promise<TranslateResponse> {
     if (!this.isConnected) {
       throw new Error('WebSocket not connected');
     }
@@ -122,7 +148,7 @@ export class WebSocketClient {
         }
       }, CONFIG.API_TIMEOUT);
 
-      this.pendingRequest = { resolve, reject, timeout };
+      this.pendingRequest = { resolve, reject, timeout, callbacks, mode: 'unknown' };
 
       try {
         this.ws!.send(imageData);
@@ -136,7 +162,31 @@ export class WebSocketClient {
   }
 
   /**
-   * Handle incoming WebSocket message
+   * Push the idle timeout out by API_TIMEOUT. In stream mode each frame extends
+   * the deadline so a long multi-box stream isn't killed by the single-response
+   * timeout, while a stalled stream still eventually rejects.
+   */
+  private bumpTimeout(): void {
+    if (!this.pendingRequest) return;
+    clearTimeout(this.pendingRequest.timeout);
+    this.pendingRequest.timeout = setTimeout(() => {
+      if (this.pendingRequest) {
+        const { reject } = this.pendingRequest;
+        this.pendingRequest = null;
+        reject(new Error('WebSocket request timeout'));
+      }
+    }, CONFIG.API_TIMEOUT);
+  }
+
+  /**
+   * Handle incoming WebSocket message.
+   *
+   * Dual-mode: the FIRST message decides how this request is fulfilled.
+   *   - Legacy monolithic {@link TranslateResponse} (no `v`): resolve at once,
+   *     exactly as before — full backward compatibility.
+   *   - v:1 {@link StreamEventFrame}: switch to stream mode, invoke onEvent per
+   *     frame, and resolve the overall promise with an assembled legacy-shaped
+   *     response when the terminal `done` frame arrives (or reject on `error`).
    */
   private handleMessage(event: MessageEvent): void {
     if (!this.pendingRequest) {
@@ -144,23 +194,72 @@ export class WebSocketClient {
       return;
     }
 
-    const { resolve, reject, timeout } = this.pendingRequest;
-    this.pendingRequest = null;
-    clearTimeout(timeout);
-
+    let parsed: unknown;
     try {
-      const response = JSON.parse(event.data) as TranslateResponse;
+      parsed = JSON.parse(event.data);
+    } catch (error) {
+      const { reject, timeout } = this.pendingRequest;
+      this.pendingRequest = null;
+      clearTimeout(timeout);
+      reject(new Error(`Failed to parse WebSocket response: ${error}`));
+      return;
+    }
 
+    const req = this.pendingRequest;
+
+    // Decide the mode on the first frame.
+    if (req.mode === 'unknown') {
+      req.mode = isStreamEventFrame(parsed) ? 'stream' : 'legacy';
+      if (req.mode === 'stream') req.assembler = new StreamAssembler();
+    }
+
+    if (req.mode === 'legacy') {
+      // Existing one-shot behavior.
+      this.pendingRequest = null;
+      clearTimeout(req.timeout);
+      const response = parsed as TranslateResponse;
       if (response.success === false) {
-        reject(new Error((response as any).error || 'Translation failed'));
+        req.reject(new Error((response as any).error || 'Translation failed'));
         return;
       }
-
-      console.log(`[WebSocket] Received response with ${response.images?.[0]?.length || 0} text boxes`);
-      resolve(response);
-    } catch (error) {
-      reject(new Error(`Failed to parse WebSocket response: ${error}`));
+      console.log(
+        `[WebSocket] Received response with ${response.images?.[0]?.length || 0} text boxes`
+      );
+      req.resolve(response);
+      return;
     }
+
+    // Stream mode. Ignore anything that isn't a well-formed v:1 frame.
+    if (!isStreamEventFrame(parsed)) {
+      console.warn('[WebSocket] Ignoring non-v1 frame mid-stream');
+      return;
+    }
+    const frame = parsed;
+    const assembler = req.assembler!;
+    assembler.apply(frame);
+
+    // Notify the caller (renderer) before resolving so incremental paints land.
+    try {
+      req.callbacks?.onEvent?.(frame);
+    } catch (cbErr) {
+      console.error('[WebSocket] onEvent callback threw:', cbErr);
+    }
+
+    if (frame.type === 'error') {
+      this.pendingRequest = null;
+      clearTimeout(req.timeout);
+      req.reject(new Error(assembler.error || 'Translation failed'));
+      return;
+    }
+    if (frame.type === 'done') {
+      this.pendingRequest = null;
+      clearTimeout(req.timeout);
+      req.resolve(assembler.toResponse());
+      return;
+    }
+
+    // Non-terminal frame: keep the connection alive, extend the deadline.
+    this.bumpTimeout();
   }
 
   /**

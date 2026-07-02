@@ -7,10 +7,13 @@ import { apiClient } from '@/services/api-client';
 import { ImageDetector } from '@/services/image-detector';
 import { OverlayRenderer } from '@/services/overlay-renderer';
 import { canvasMonitor } from '@/services/canvas-monitor';
-import { compressBase64Image } from '@/utils/image-utils';
+import { PrefetchManager } from '@/services/prefetch-manager';
+import { compressBase64Image, hashString } from '@/utils/image-utils';
 import { CONFIG } from '@/config/constants';
 import { logger } from '@/utils/logger';
-import { FlagRequest } from '@/types/api';
+import { FlagRequest, TranslateResponse } from '@/types/api';
+import { StreamEventFrame } from '@/types/stream';
+import { ExtensionSettings } from '@/types/settings';
 
 class MangaTranslatorContent {
   private imageDetector: ImageDetector;
@@ -18,6 +21,12 @@ class MangaTranslatorContent {
   private resizeObserver: ResizeObserver | null = null;
   private intersectionObserver: IntersectionObserver | null = null;
   private mutationObserver: MutationObserver | null = null;
+  /** Speculative next-page prefetch (predict + warm the SW translation cache). */
+  private prefetchManager: PrefetchManager | null = null;
+  /** Monotonic id correlating a streaming Port request with its port messages. */
+  private streamReqId = 0;
+  /** Hashes we have already asked the SW to prefetch, to avoid duplicate work. */
+  private prefetchedHashes: Set<string> = new Set();
   /**
    * Effective enabled state = this hostname is whitelisted AND the master
    * translation switch is ON. The content script only translates / keeps
@@ -166,6 +175,7 @@ class MangaTranslatorContent {
           this.setupIntersectionObserver();
           this.setupCanvasMonitor();
           this.setupMutationObserver();
+          this.setupPrefetchManager();
           this.start();
         } else {
           this.stop();
@@ -188,6 +198,7 @@ class MangaTranslatorContent {
     this.setupIntersectionObserver();
     this.setupCanvasMonitor();
     this.setupMutationObserver();
+    this.setupPrefetchManager();
 
     // Start processing
     this.start();
@@ -215,6 +226,11 @@ class MangaTranslatorContent {
     // Stop canvas monitor
     canvasMonitor.stop();
 
+    // Stop speculative prefetch.
+    this.prefetchManager?.stop();
+    this.prefetchManager = null;
+    this.prefetchedHashes.clear();
+
     // Clear all overlays AND restore the original images underneath.
     this.overlayRenderer.clearAll();
 
@@ -240,6 +256,7 @@ class MangaTranslatorContent {
       this.setupIntersectionObserver();
       this.setupCanvasMonitor();
       this.setupMutationObserver();
+      this.setupPrefetchManager();
       await this.start();
     } else {
       this.stop();
@@ -308,57 +325,31 @@ class MangaTranslatorContent {
         base64Images.map((imageData) => compressBase64Image(imageData, CONFIG.MAX_IMAGE_SIZE_MB))
       );
 
-      // Translate batch
-      const response = await apiClient.translate(compressedImages, settings.targetLanguage);
-
-      // Log debug timing info. logger.debug is itself gated behind the verbose
-      // (showDebugInfo) flag, so this is dropped at the call site when off.
-      if (response.debug?.timing) {
-        const t = response.debug.timing;
-        logger.debug(
-          `Timing: ` +
-          `detection=${t.detection_ms?.toFixed(1)}ms, ` +
-          `ocr=${t.ocr_ms?.toFixed(1)}ms, ` +
-          `translation=${t.translation_ms?.toFixed(1)}ms, ` +
-          `total=${t.request_total_ms?.toFixed(1)}ms`
-        );
-      }
-
-      // Create overlays
+      // Per element: (1) serve from the prefetch cache if warm, else (2) request
+      // a PROGRESSIVE stream (paints detections -> bubbles -> plate as they land),
+      // else (3) a single monolithic request when streaming is disabled. A cache
+      // hit or a legacy/HTTP response both render via the single-pass path.
       for (let i = 0; i < batch.length; i++) {
-        const { element } = batch[i];
-        const textBoxes = response.images[i] || [];
-        // Optional: per-image inpainted plate from the LaMa service.
-        // Feature-flag is implicit — renderer uses plate only if present.
-        const inpaintedPlate =
-          (response as any).inpainted_image_base64?.[i] ?? null;
-
-        if (textBoxes.length > 0) {
-          const isCanvas = element instanceof HTMLCanvasElement;
-
-          // Guard: mark canvas as translating to prevent monitor from triggering re-translate
-          if (isCanvas) this.translatingCanvases.add(element as HTMLCanvasElement);
-
-          // Pass the exact image bytes the backend received (compressed base64)
-          // so the renderer skips re-encoding the live <img> and lays text out
-          // in the backend's coordinate space. Falls back internally if this is
-          // a URL (CORS path) rather than base64.
-          const sourceBase64 = compressedImages[i];
-
-          await this.overlayRenderer.createOverlay(
-            element as HTMLImageElement | HTMLCanvasElement,
-            textBoxes,
-            settings.showDebugInfo,
-            inpaintedPlate,
-            sourceBase64
-          );
-
-          // Update hash baseline and remove guard after writing
-          if (isCanvas) {
-            canvasMonitor.updateHash(element as HTMLCanvasElement);
-            this.translatingCanvases.delete(element as HTMLCanvasElement);
-            canvasMonitor.addCanvas(element as HTMLCanvasElement);
+        const element = batch[i].element as HTMLImageElement | HTMLCanvasElement;
+        const compressed = compressedImages[i];
+        try {
+          const cached = await this.getCachedTranslation(compressed);
+          if (cached) {
+            logger.debug('prefetch cache hit — rendering without re-request');
+            await this.renderMonolithic(element, cached, settings, compressed);
+            continue;
           }
+
+          if (settings.streamingEnabled) {
+            // Holds the translatingCanvases guard for the WHOLE stream internally.
+            await this.streamElement(element, compressed, settings);
+          } else {
+            const data = await apiClient.translate([compressed], settings.targetLanguage);
+            await this.renderMonolithic(element, data, settings, compressed);
+          }
+        } catch (err) {
+          logger.error('Translation failed for element:', err);
+          this.overlayRenderer.showError(element, 'Translation failed');
         }
       }
     } catch (error) {
@@ -372,6 +363,267 @@ class MangaTranslatorContent {
       // Remove loading indicators
       loadingElements.forEach(el => el?.remove());
     }
+  }
+
+  /**
+   * Render a monolithic {@link TranslateResponse} (prefetch cache hit, HTTP
+   * fallback, or legacy WS reply) via the single-pass overlay path. Holds the
+   * canvas translating-guard across the write, exactly as the old processBatch
+   * did. `sourceBase64` is the compressed bytes the backend saw, so the renderer
+   * lays text out in the backend's coordinate space without re-encoding.
+   */
+  private async renderMonolithic(
+    element: HTMLImageElement | HTMLCanvasElement,
+    response: TranslateResponse,
+    settings: ExtensionSettings,
+    sourceBase64: string
+  ): Promise<void> {
+    if (response.debug?.timing) {
+      const t = response.debug.timing;
+      logger.debug(
+        `Timing: detection=${t.detection_ms?.toFixed(1)}ms, ` +
+          `ocr=${t.ocr_ms?.toFixed(1)}ms, ` +
+          `translation=${t.translation_ms?.toFixed(1)}ms, ` +
+          `total=${t.request_total_ms?.toFixed(1)}ms`
+      );
+    }
+
+    const textBoxes = response.images?.[0] || [];
+    const inpaintedPlate = response.inpainted_image_base64?.[0] ?? null;
+    if (textBoxes.length === 0) return;
+
+    const isCanvas = element instanceof HTMLCanvasElement;
+    if (isCanvas) this.translatingCanvases.add(element as HTMLCanvasElement);
+
+    await this.overlayRenderer.createOverlay(
+      element,
+      textBoxes,
+      settings.showDebugInfo,
+      inpaintedPlate,
+      sourceBase64
+    );
+
+    if (isCanvas) {
+      canvasMonitor.updateHash(element as HTMLCanvasElement);
+      this.translatingCanvases.delete(element as HTMLCanvasElement);
+      canvasMonitor.addCanvas(element as HTMLCanvasElement);
+    }
+  }
+
+  /**
+   * Progressive translate over a long-lived runtime Port. Event frames drive the
+   * incremental renderer (beginOverlay/applyTranslation/applyPlate/finish); the
+   * terminal port message resolves the promise. Frames are applied through a
+   * serial chain so an async beginOverlay always completes before the tl frames
+   * that follow it. The canvas translating-guard is held for the entire stream.
+   *
+   * Backward compatible: if the backend replies legacy/monolithic (or WS fails
+   * and the SW falls back to HTTP) no event frames arrive and we render the
+   * single `result` via renderMonolithic.
+   */
+  private streamElement(
+    element: HTMLImageElement | HTMLCanvasElement,
+    compressed: string,
+    settings: ExtensionSettings
+  ): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      const requestId = ++this.streamReqId;
+      const isCanvas = element instanceof HTMLCanvasElement;
+      if (isCanvas) this.translatingCanvases.add(element as HTMLCanvasElement);
+
+      let settled = false;
+      let chain: Promise<void> = Promise.resolve();
+      const port = browser.runtime.connect({ name: 'mt-translate-stream' });
+
+      const releaseGuard = () => {
+        if (isCanvas) {
+          canvasMonitor.updateHash(element as HTMLCanvasElement);
+          this.translatingCanvases.delete(element as HTMLCanvasElement);
+          canvasMonitor.addCanvas(element as HTMLCanvasElement);
+        }
+      };
+      const done = (err?: Error) => {
+        if (settled) return;
+        settled = true;
+        releaseGuard();
+        try {
+          port.disconnect();
+        } catch {
+          /* already gone */
+        }
+        if (err) reject(err);
+        else resolve();
+      };
+
+      port.onMessage.addListener((raw) => {
+        const msg = raw as {
+          requestId?: number;
+          type?: string;
+          frame?: StreamEventFrame;
+          data?: TranslateResponse;
+          streamed?: boolean;
+          error?: string;
+        };
+        if (msg?.requestId !== requestId) return;
+
+        if (msg.type === 'event' && msg.frame) {
+          const frame = msg.frame;
+          chain = chain
+            .then(() => this.handleStreamFrame(element, frame, settings, compressed))
+            .catch((e) => logger.error('stream frame render failed:', e));
+        } else if (msg.type === 'result') {
+          const data = msg.data;
+          const streamed = !!msg.streamed;
+          chain
+            .then(async () => {
+              // Only render here when the backend did NOT stream (legacy/HTTP);
+              // the streamed path already painted via begin/apply/finish.
+              if (!streamed && data) {
+                await this.renderMonolithic(element, data, settings, compressed);
+              }
+              done();
+            })
+            .catch((e) =>
+              done(e instanceof Error ? e : new Error(String(e)))
+            );
+        } else if (msg.type === 'error') {
+          const err = new Error(msg.error || 'Translation failed');
+          chain.then(() => done(err)).catch(() => done(err));
+        }
+      });
+
+      port.onDisconnect.addListener(() => {
+        if (!settled) done(new Error('translate stream port disconnected'));
+      });
+
+      port.postMessage({
+        action: 'translateStream',
+        requestId,
+        base64Images: [compressed],
+        targetLanguage: settings.targetLanguage,
+      });
+    });
+  }
+
+  /**
+   * Apply one streaming event frame to the incremental renderer. Awaited via the
+   * per-stream serial chain so ordering (detections before tl, plate/finish
+   * after) is preserved regardless of message dispatch timing.
+   */
+  private async handleStreamFrame(
+    element: HTMLImageElement | HTMLCanvasElement,
+    frame: StreamEventFrame,
+    settings: ExtensionSettings,
+    compressed: string
+  ): Promise<void> {
+    switch (frame.type) {
+      case 'detections':
+        await this.overlayRenderer.beginOverlay(
+          element,
+          frame.boxes,
+          settings.showDebugInfo,
+          compressed
+        );
+        break;
+      case 'tl':
+        this.overlayRenderer.applyTranslation(element, frame.index, frame.translatedText);
+        break;
+      case 'revise':
+        this.overlayRenderer.applyTranslation(element, frame.index, frame.translatedText);
+        break;
+      case 'plate':
+        await this.overlayRenderer.applyPlate(element, frame.data);
+        break;
+      case 'done':
+        this.overlayRenderer.finish(element, settings.showDebugInfo);
+        break;
+      case 'error':
+        // Leave the source image visible; the terminal port message rejects.
+        this.overlayRenderer.removeOverlay(element);
+        break;
+    }
+  }
+
+  /**
+   * Ask the service worker whether a warm prefetch result exists for these exact
+   * compressed bytes. Returns the cached response or null. Only meaningful for
+   * real base64 (the hash is over the bytes); URL/CORS inputs never hit.
+   */
+  private async getCachedTranslation(
+    compressed: string
+  ): Promise<TranslateResponse | null> {
+    if (!compressed.startsWith('data:')) return null;
+    try {
+      const resp = (await browser.runtime.sendMessage({
+        action: 'getCachedTranslation',
+        hash: hashString(compressed),
+      })) as { success?: boolean; data?: TranslateResponse } | undefined;
+      if (resp?.success && resp.data) return resp.data;
+    } catch (err) {
+      logger.debug('getCachedTranslation failed', err);
+    }
+    return null;
+  }
+
+  /**
+   * Create + start the speculative PrefetchManager. Idempotent: reuses the
+   * existing instance if present. Prediction is gated on the effective enabled
+   * state AND the prefetch setting (checked inside prefetchElement).
+   */
+  private setupPrefetchManager(): void {
+    if (!this.prefetchManager) {
+      this.prefetchManager = new PrefetchManager({
+        enabled: () => this.isEnabled,
+        prefetch: (el) => this.prefetchElement(el),
+      });
+    }
+    this.prefetchManager.start();
+  }
+
+  /**
+   * Speculatively translate a predicted (soon-to-be-visible) image and warm the
+   * service-worker cache, keyed by the hash of its compressed bytes. Does NOT
+   * render — when the image is later displayed for real, processBatch finds the
+   * cache hit and renders instantly. Skips the current main image (the real path
+   * owns it), already-processed elements, tiny images, and duplicates.
+   */
+  private async prefetchElement(element: HTMLElement): Promise<void> {
+    if (!this.isEnabled) return;
+    const settings = await settingsManager.getSettings();
+    if (!settings.prefetchEnabled) return;
+
+    // Don't speculatively translate the image the real path is already handling.
+    if (this.imageDetector.isMainContentImage(element)) return;
+    if (this.imageDetector.isProcessed(element)) return;
+
+    let base64: string | null = null;
+    if (element instanceof HTMLImageElement) {
+      if (!element.complete || element.naturalWidth <= 100 || element.naturalHeight <= 100) {
+        return;
+      }
+      base64 = await import('@/utils/image-utils').then((m) => m.elementToBase64(element));
+    } else if (element instanceof HTMLCanvasElement) {
+      if (element.width <= 100 || element.height <= 100) return;
+      base64 = await import('@/utils/image-utils').then((m) => m.elementToBase64(element));
+    } else {
+      return;
+    }
+    if (!base64) return;
+
+    const compressed = await compressBase64Image(base64, CONFIG.MAX_IMAGE_SIZE_MB);
+    if (!compressed.startsWith('data:')) return; // need real bytes to hash
+
+    const hash = hashString(compressed);
+    if (this.prefetchedHashes.has(hash)) return;
+    this.prefetchedHashes.add(hash);
+
+    logger.debug('prefetching predicted image', hash);
+    await browser.runtime.sendMessage({
+      action: 'prefetchTranslate',
+      base64Images: [compressed],
+      targetLanguage: settings.targetLanguage,
+      hash,
+    });
   }
 
   /**
@@ -458,11 +710,15 @@ class MangaTranslatorContent {
           // Check if the added node itself is an image/canvas
           if (node instanceof HTMLImageElement || node instanceof HTMLCanvasElement) {
             this.intersectionObserver?.observe(node);
+            this.prefetchManager?.observe(node);
           }
 
           // Check for image/canvas descendants
           const images = node.querySelectorAll?.('img, canvas');
-          images?.forEach((el) => this.intersectionObserver?.observe(el));
+          images?.forEach((el) => {
+            this.intersectionObserver?.observe(el);
+            this.prefetchManager?.observe(el);
+          });
         }
       }
     });

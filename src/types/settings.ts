@@ -30,6 +30,23 @@ export interface ExtensionSettings {
   showLoadingIndicator: boolean;
   showDebugInfo: boolean; // Show detection boxes and timing info
 
+  /**
+   * Progressive (streaming) rendering. When true (default) the content script
+   * requests translations over a long-lived Port and paints detections /
+   * bubbles / plate incrementally as the backend streams v:1 event frames. When
+   * false, or when the backend replies with a legacy monolithic response, it
+   * falls back to a single-pass render. Backend support is auto-detected per
+   * response, so disabling this only skips the Port path.
+   */
+  streamingEnabled: boolean;
+
+  /**
+   * Speculative prefetch of predicted next-page images. When true (default) the
+   * PrefetchManager translates images approaching the viewport ahead of time and
+   * caches them in the service worker so they render instantly on display.
+   */
+  prefetchEnabled: boolean;
+
   // Premium/Auth (optional)
   isPremium: boolean;
   authToken?: string;
@@ -53,6 +70,8 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
   useCache: true,
   showLoadingIndicator: true,
   showDebugInfo: false,
+  streamingEnabled: true,
+  prefetchEnabled: true,
   isPremium: false,
 };
 

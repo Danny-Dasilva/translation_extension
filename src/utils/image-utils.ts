@@ -56,6 +56,26 @@ function fnv1a(data: Uint8ClampedArray): number {
 }
 
 /**
+ * Fast, stable FNV-1a hash of a string (typically a compressed-image base64
+ * data URL). Used as the prefetch cache key: the same compressed bytes always
+ * produce the same key, so a speculatively-translated image is served from the
+ * service-worker cache when it is later displayed for real. Samples every 7th
+ * char to stay cheap on multi-hundred-KB base64 strings while keeping the length
+ * in the mix to avoid trivial collisions.
+ */
+export function hashString(input: string): string {
+  let hash = 0x811c9dc5; // FNV offset basis
+  for (let i = 0; i < input.length; i += 7) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193); // FNV prime
+  }
+  // Fold the length in so two same-prefix strings of different size differ.
+  hash ^= input.length;
+  hash = Math.imul(hash, 0x01000193);
+  return (hash >>> 0).toString(36);
+}
+
+/**
  * Calculate hash of canvas content for change detection.
  * Samples 5 regions (corners + center) with FNV-1a for collision resistance.
  */

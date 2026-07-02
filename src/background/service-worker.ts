@@ -6,9 +6,65 @@ import { settingsManager } from '@/services/settings-manager';
 import { webSocketClient } from '@/services/websocket-client';
 import { CONFIG } from '@/config/constants';
 import { TranslateResponse, FlagRequest, FlagResponse } from '@/types/api';
+import { StreamEventFrame } from '@/types/stream';
 import { logger } from '@/utils/logger';
 
 logger.setPrefix('[MT/sw]');
+
+/**
+ * PREFETCH CACHE (LRU, bounded).
+ *
+ * The content-script's PrefetchManager speculatively translates images it
+ * predicts the reader will reach next, keyed by a fast hash of the COMPRESSED
+ * image bytes (the exact bytes the backend sees). When the page actually
+ * displays that image the content-script asks for the cached result instead of
+ * re-requesting, so a predicted page renders instantly.
+ *
+ * A plain Map preserves insertion order, which we use for O(1) LRU eviction:
+ * `get` re-inserts to mark recency; `put` drops the oldest key past the bound.
+ */
+const PREFETCH_CACHE_MAX = 5;
+const prefetchCache = new Map<string, TranslateResponse>();
+
+function prefetchCacheGet(hash: string): TranslateResponse | undefined {
+  const hit = prefetchCache.get(hash);
+  if (hit) {
+    // Bump recency.
+    prefetchCache.delete(hash);
+    prefetchCache.set(hash, hit);
+  }
+  return hit;
+}
+
+function prefetchCachePut(hash: string, data: TranslateResponse): void {
+  if (prefetchCache.has(hash)) prefetchCache.delete(hash);
+  prefetchCache.set(hash, data);
+  while (prefetchCache.size > PREFETCH_CACHE_MAX) {
+    const oldest = prefetchCache.keys().next().value;
+    if (oldest === undefined) break;
+    prefetchCache.delete(oldest);
+  }
+}
+
+/**
+ * Translate a single image the "monolithic" way (no streaming): WebSocket
+ * first, HTTP fallback. Shared by the prefetch path and any non-streaming
+ * caller. Streaming is intentionally NOT used for prefetch — a speculative
+ * request has no visible overlay to paint into, so we only want the final
+ * assembled result to cache.
+ */
+async function translateMonolithic(
+  base64Images: string[],
+  targetLanguage: string
+): Promise<TranslateResponse> {
+  try {
+    const ws = await translateViaWebSocket(base64Images, targetLanguage);
+    if (ws.success && ws.data) return ws.data;
+  } catch (err) {
+    logger.warn('Prefetch WS failed, falling back to HTTP:', err);
+  }
+  return await translateViaHttp(base64Images, targetLanguage);
+}
 
 // Create context menu.
 // NOTE: Firefox for Android does NOT implement browser.contextMenus — accessing
@@ -251,6 +307,38 @@ async function handleMessage(message: any, sender: browser.Runtime.MessageSender
       }
     }
 
+    case 'getCachedTranslation': {
+      // Content-script asks whether a predicted image was already translated by
+      // the prefetch path. Keyed by the fast hash of the compressed bytes.
+      const data = prefetchCacheGet(message.hash);
+      return data ? { success: true, data } : { success: false };
+    }
+
+    case 'prefetchTranslate': {
+      // Speculative translation of a predicted next-page image. Result is cached
+      // (not returned for rendering). Deduped by hash so we never translate the
+      // same predicted image twice.
+      const hash: string = message.hash;
+      if (prefetchCache.has(hash)) {
+        return { success: true, cached: true };
+      }
+      try {
+        const data = await translateMonolithic(
+          message.base64Images,
+          message.targetLanguage
+        );
+        prefetchCachePut(hash, data);
+        logger.info(`prefetch cached (hash=${hash}, size=${prefetchCache.size})`);
+        return { success: true, cached: false };
+      } catch (error) {
+        logger.warn('Prefetch translate failed:', error);
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Prefetch failed',
+        };
+      }
+    }
+
     case 'translate':
       // Forward translate message to content script
       if (message.tabId) {
@@ -329,11 +417,19 @@ function base64ToArrayBuffer(base64: string): ArrayBuffer {
 }
 
 /**
- * Translate images via WebSocket (binary upload)
+ * Translate images via WebSocket (binary upload).
+ *
+ * `onFrame`, when supplied, receives each v:1 streaming event frame as it
+ * arrives (with the 0-based image index it belongs to) so a caller holding a
+ * long-lived Port can forward progressive updates to the tab. The underlying
+ * websocket-client transparently supports BOTH the legacy monolithic response
+ * (onFrame simply never fires) and the streaming path, so this function's
+ * assembled return value is identical in either case.
  */
 async function translateViaWebSocket(
   base64Images: string[],
-  targetLanguage: string
+  targetLanguage: string,
+  onFrame?: (imageIndex: number, frame: StreamEventFrame) => void
 ): Promise<{ success: boolean; data?: TranslateResponse; error?: string }> {
   try {
     // Connect to WebSocket
@@ -341,14 +437,19 @@ async function translateViaWebSocket(
 
     // Process images one at a time (WebSocket protocol is request-response)
     const allTextBoxes: any[][] = [];
+    const allPlates: (string | null)[] = [];
     let debugInfo: TranslateResponse['debug'] | undefined;
 
-    for (const base64Image of base64Images) {
+    for (let i = 0; i < base64Images.length; i++) {
       // Convert base64 to binary
-      const imageBuffer = base64ToArrayBuffer(base64Image);
+      const imageBuffer = base64ToArrayBuffer(base64Images[i]);
 
-      // Send via WebSocket
-      const response = await webSocketClient.send(imageBuffer);
+      // Send via WebSocket, forwarding stream frames (if any) tagged with the
+      // image index so the content-script can route them to the right overlay.
+      const response = await webSocketClient.send(
+        imageBuffer,
+        onFrame ? { onEvent: (frame) => onFrame(i, frame) } : undefined
+      );
 
       if (response.success === false) {
         return { success: false, error: (response as any).error || 'Translation failed' };
@@ -357,6 +458,12 @@ async function translateViaWebSocket(
       // Collect results
       if (response.images && response.images.length > 0) {
         allTextBoxes.push(...response.images);
+      }
+      // Collect per-image plate (streaming path assembles it; legacy may too).
+      if (response.inpainted_image_base64 && response.inpainted_image_base64.length > 0) {
+        allPlates.push(...response.inpainted_image_base64);
+      } else {
+        allPlates.push(null);
       }
 
       // Keep the last debug info
@@ -368,6 +475,7 @@ async function translateViaWebSocket(
     const result: TranslateResponse = {
       success: true,
       images: allTextBoxes,
+      inpainted_image_base64: allPlates,
       debug: debugInfo,
     };
 
@@ -445,5 +553,84 @@ async function postFlag(payload: FlagRequest): Promise<FlagResponse> {
 
   return (await response.json()) as FlagResponse;
 }
+
+/**
+ * STREAMING TRANSLATE PORT (MV3-safe progressive delivery).
+ *
+ * The content-script opens a long-lived `browser.runtime` Port named
+ * `mt-translate-stream` and posts a single `translateStream` request. We run the
+ * websocket translate with an onFrame forwarder so each v:1 event frame is
+ * pushed to the tab as `{ type:'event', ... }`, then post the final assembled
+ * response as `{ type:'result', ... }`. If the backend replies legacy/monolithic
+ * (or WS fails and we fall back to HTTP) no event frames fire and the caller
+ * simply renders from the single `result` — preserving the existing path.
+ *
+ * A Port (not sendMessage) is required because MV3 service workers can suspend;
+ * an open Port keeps the worker alive for the duration of the stream and gives
+ * us a channel to push N messages for one request.
+ */
+browser.runtime.onConnect.addListener((port) => {
+  if (port.name !== 'mt-translate-stream') return;
+
+  port.onMessage.addListener(async (raw) => {
+    const msg = raw as {
+      action?: string;
+      requestId?: number;
+      base64Images?: string[];
+      targetLanguage?: string;
+    };
+    if (msg?.action !== 'translateStream') return;
+
+    const requestId = msg.requestId;
+    const base64Images = msg.base64Images ?? [];
+    const targetLanguage = msg.targetLanguage ?? 'English';
+    const t0 = Date.now();
+    let streamed = false;
+
+    const safePost = (payload: Record<string, unknown>) => {
+      try {
+        port.postMessage({ requestId, ...payload });
+      } catch (err) {
+        // Port may have disconnected (tab navigated away) — non-fatal.
+        logger.warn('stream port post failed', err);
+      }
+    };
+
+    try {
+      const wsResult = await translateViaWebSocket(
+        base64Images,
+        targetLanguage,
+        (imageIndex, frame) => {
+          streamed = true;
+          safePost({ type: 'event', imageIndex, frame });
+        }
+      );
+
+      if (wsResult.success && wsResult.data) {
+        logger.info(
+          `translateStream done (ws${streamed ? '/streamed' : ''}) in ${Date.now() - t0}ms`
+        );
+        safePost({ type: 'result', data: wsResult.data, streamed });
+        return;
+      }
+      logger.warn('translateStream WS failed, HTTP fallback:', wsResult.error);
+    } catch (wsErr) {
+      logger.warn('translateStream WS error, HTTP fallback:', wsErr);
+    }
+
+    // HTTP fallback — single monolithic result, no incremental events.
+    try {
+      const data = await translateViaHttp(base64Images, targetLanguage);
+      logger.info(`translateStream done (http) in ${Date.now() - t0}ms`);
+      safePost({ type: 'result', data, streamed: false });
+    } catch (error) {
+      logger.error('translateStream failed:', error);
+      safePost({
+        type: 'error',
+        error: error instanceof Error ? error.message : 'Translation failed',
+      });
+    }
+  });
+});
 
 logger.info('Background service worker loaded');
