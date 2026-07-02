@@ -72,6 +72,11 @@ def test_ws_response_contract_matches_http(monkeypatch):
     """_process_image returns the WS contract with TextBox dicts == model_dump()."""
     import app.routers.websocket_upload as ws
 
+    # This test exercises the non-streaming monolithic-reply contract (still the
+    # code path when streaming is off). Streaming is now default-on, so force it
+    # off here; the streaming branch has its own coverage in test_ws_stream.
+    monkeypatch.setattr(ws.settings, "translation_stream_events", False)
+
     tb = _make_textbox()
     inpaint_plate = "data:image/png;base64,AAAA"
 
@@ -105,6 +110,8 @@ def test_ws_empty_blocks_returns_empty_image(monkeypatch):
     """No detected blocks -> process_single_image returns [], WS returns images:[[]]."""
     import app.routers.websocket_upload as ws
 
+    monkeypatch.setattr(ws.settings, "translation_stream_events", False)
+
     async def fake_empty(idx, base64_image, target_language, semaphore, job_id=None):
         return (0, [], None)
 
@@ -119,6 +126,8 @@ def test_ws_empty_blocks_returns_empty_image(monkeypatch):
 def test_ws_invalid_image_returns_error(monkeypatch):
     """Undecodable bytes -> error response (never reaches the pipeline)."""
     import app.routers.websocket_upload as ws
+
+    monkeypatch.setattr(ws.settings, "translation_stream_events", False)
 
     async def boom(*a, **k):  # pragma: no cover - must not be called
         raise AssertionError("pipeline should not run on invalid image")

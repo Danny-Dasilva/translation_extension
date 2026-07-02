@@ -153,10 +153,12 @@ def test_none_image_url_is_plain_string_content():
     assert isinstance(svc.captured[0], str)
 
 
-def test_setting_defaults_off():
+def test_setting_default_on():
+    # Rolled out 2026-07-02: image-context serve is ON by default (validated E2E;
+    # image prefill is ~free via the multimodal prefix cache).
     from app.config import Settings
 
-    assert Settings().translation_serve_image_context is False
+    assert Settings().translation_serve_image_context is True
 
 
 # ---------------------------------------------------------------------------

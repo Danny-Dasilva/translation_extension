@@ -362,12 +362,12 @@ class Settings(BaseSettings):
     # backend/scripts/eval/bench_image_prefix.py). v1 is text-trained but
     # measurably exploits a page image supplied at inference (best POV arm).
     #
-    # OFF pending product sign-off. MUST only be enabled for an IMAGE-CAPABLE
-    # serve (a VL model behind /v1); enabling it against a text-only served model
-    # would send image blocks it cannot consume. The TEXT portion stays
-    # byte-identical to the trained template (no train/serve drift) whether on or
-    # off — proven by tests/unit/test_image_context_serve.py.
-    translation_serve_image_context: bool = False
+    # ON by default — validated E2E and rolled out. MUST only be enabled for an
+    # IMAGE-CAPABLE serve (a VL model behind /v1); enabling it against a
+    # text-only served model would send image blocks it cannot consume. The TEXT
+    # portion stays byte-identical to the trained template (no train/serve
+    # drift) whether on or off — proven by tests/unit/test_image_context_serve.py.
+    translation_serve_image_context: bool = True
 
     # Normalize short Japanese utterances (interpunct/dot/space-separated kana,
     # runaway repeated kana) before translation so the model isn't destabilized.
@@ -445,15 +445,16 @@ class Settings(BaseSettings):
     # "routed-to-AR" are the SAME crop set (no surprises). Config-tunable for ablation.
     ocr_vertical_ar_aspect: float = 1.5
 
-    # PER-BUBBLE STREAM EMISSION (WebSocket path only). When True, the
-    # ws://…/ws/translate/{lang} socket replies with the versioned event-frame
-    # protocol (detections -> per-bubble tl -> revise -> plate -> done|error,
-    # see src/types/stream.ts) instead of the single monolithic JSON response,
-    # so the extension renders each bubble as soon as it is translated. The
-    # legacy monolithic reply stays fully supported and is the fallback: with
-    # this False (default) the WS path is byte-identical to today. The HTTP
+    # PER-BUBBLE STREAM EMISSION (WebSocket path only). When True (the
+    # default — validated E2E and rolled out), the ws://…/ws/translate/{lang}
+    # socket replies with the versioned event-frame protocol (detections ->
+    # per-bubble tl -> revise -> plate -> done|error, see src/types/stream.ts)
+    # instead of the single monolithic JSON response, so the extension renders
+    # each bubble as soon as it is translated. The legacy monolithic reply
+    # stays fully supported and is the fallback: set this to False for the
+    # WS path to be byte-identical to the pre-streaming behavior. The HTTP
     # POST /translate endpoint is ALWAYS monolithic regardless of this flag.
-    translation_stream_events: bool = False
+    translation_stream_events: bool = True
 
     class Config:
         env_file = ".env"
