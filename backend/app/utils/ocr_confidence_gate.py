@@ -410,10 +410,15 @@ def is_implausible_japanese(text: str, ocr_conf: float | None = None) -> bool:
         * Heavy ASCII-letter intrusion in Japanese text (logo/URL garble).
         * Substitution/perplexity garble (FIX P3-3): a char-bigram plausibility
           guard for long high-entropy noise the dup-predicates are blind to.
+        * Adjacent doubled kanji/kana (FIX-2 recalibration): the ``身身`` / ``吐吐``
+          dense-kana failure mode carries FALSELY HIGH confidence (身身わわ@0.92),
+          so the ``DUP_CONF_CEILING`` was letting confidently-wrong dup-garble
+          through. The calib table (650 rows) showed 0 false positives for these
+          two signals, so they are now unconditional like latin-intrusion.
       DUP-ONLY (skipped when ``ocr_conf >= DUP_CONF_CEILING`` — FIX P3-2):
-        * adjacent doubled kanji/kana, whole-phrase immediate repetition, high
-          repeated-bigram ratio — the PARSeq dense-kana failure mode. These also
-          trip a few clean conf-0.9 bubbles, so a high-confidence line is spared.
+        * whole-phrase immediate repetition, high repeated-bigram ratio — these
+          length/bigram signals DO trip a few clean conf-0.9 bubbles
+          (お母さんお母さん@0.93), so a high-confidence line is spared them.
     """
     norm = unicodedata.normalize("NFC", text).strip()
     if not norm:
@@ -426,16 +431,22 @@ def is_implausible_japanese(text: str, ocr_conf: float | None = None) -> bool:
         return True
     if _is_substitution_garble(norm):
         return True
-
-    # Dup-only signals — a high-confidence recognition is very likely correct,
-    # so skip these to avoid false-dropping clean dialogue (FIX P3-2).
-    if ocr_conf is not None and ocr_conf >= DUP_CONF_CEILING:
-        return False
-
+    # FIX-2: adjacent doubled kanji/kana are a hard OCR dup-signature that occurs
+    # even at falsely-high confidence (身身わわ@0.92 — the module's own docstring
+    # example). They are precise (0 false positives on the 650-row calib table),
+    # so unlike the length/bigram dup signals they run UNCONDITIONALLY and the
+    # ``DUP_CONF_CEILING`` no longer exempts them.
     if _adjacent_dup_kanji(norm):
         return True
     if _adjacent_dup_kana(norm):
         return True
+
+    # Dup-only length/bigram signals — a high-confidence recognition is very
+    # likely correct, so skip these to avoid false-dropping clean dialogue whose
+    # two halves legitimately repeat (お母さんお母さん@0.93) — FIX P3-2.
+    if ocr_conf is not None and ocr_conf >= DUP_CONF_CEILING:
+        return False
+
     if _immediate_substring_dup(norm):
         return True
     if _repeated_bigram_garble(norm):
@@ -448,6 +459,42 @@ def is_implausible_japanese(text: str, ocr_conf: float | None = None) -> bool:
 # better translated than dropped. SFX/garble that hallucinates is short.
 _DIALOGUE_MIN_LEN = 12
 
+# --- FIX-1: operating point fit from the 650-row calibration table ---------
+# ``scripts/eval/scorecards/ikenie4/preds_for_gold_v1_fair.jsonl`` pairs each
+# bubble's OCR (``jp``) with its gold transcription (``gold_jp``) and the PARSeq
+# recognition confidence (``ocr_conf``). Scoring correctness as char-similarity
+# to gold >= 0.9 revealed the old 0.65 gate was badly miscalibrated:
+#
+#   * The 0.65-0.80 band is a NOISE TROUGH — only ~40-55% correct vs gold
+#     (0.75-0.80 dips to 28%); correctness keeps climbing through 0.85 (65%) to
+#     0.90 (95%). Keeping mid-band lines feeds the LLM half-garbled OCR that it
+#     "smooths" into confident-wrong captions rendered on the page.
+#   * 11 of 14 sub-0.65 rows were EXACT gold matches — and they were SHORT
+#     SFX / moans / numbers (もみせ, ボン, 濃厚, 56, いいきさ) that the old
+#     length-12 rule silently DROPPED. Short strings are ~98% correct vs gold
+#     across every confidence band (len<5: 98%, even sub-0.65 short: ~71%).
+#
+# So the recalibrated gate: (a) a SHORT-TEXT CARVE-OUT keeps very short strings
+# regardless of confidence (the unconditional structural garble checks above
+# still remove dup/latin/substitution noise first), and (b) a RAISED long-text
+# threshold drops multi-char lines below ~0.80. Simulated over the 650 rows this
+# lifts kept-set precision 85.3% -> 88.6% for a near-zero recall cost of
+# 98.6% -> 98.0% (drops 27 wrong mid-conf lines, recovers 5 correct short SFX;
+# the 11 dropped correct long lines survive as page CONTEXT via
+# is_dialogue_context_candidate).
+#
+# Threshold choice — 0.80 over the higher-precision 0.85 (91.8%/96.7%): the
+# 0.80-0.85 band is 42% correct so 0.85 nets more precision, but it also drops
+# GENUINE 0.80-conf dialogue columns, and losing a middle column of a multi-
+# column balloon worsens THE systemic defect (balloon fragmentation, audit §2).
+# 0.80 preserves balloon integrity while still clearing the 0.65-0.80 trough.
+#
+# Strings shorter than this many chars are exempt from the confidence gate.
+_SHORT_TEXT_MAX_LEN = 5
+# Multi-char lines must clear this confidence to be kept (the precision/balloon-
+# recall knee). Used as a FLOOR: an explicitly-stricter caller threshold wins.
+_LONG_CONF_THRESHOLD = 0.80
+
 
 def is_garbled_low_conf(
     text: str,
@@ -459,23 +506,24 @@ def is_garbled_low_conf(
 ) -> bool:
     """True if this bubble should be DROPPED before translation.
 
-    Empirically (Part13 inspection) PARSeq OCR *recognition* confidence cleanly
-    separates real dialogue (~0.85-0.93) from garbled / stylized SFX scrawl
-    (~0.15-0.62): NO real dialogue line measured below ~0.65, while every
-    sub-0.65 line was a short SFX/garble the LLM then hallucinated a caption
-    for. So:
+    Calibrated on the 650-row conf x sim-to-gold table (see ``_LONG_CONF_THRESHOLD``
+    /``_SHORT_TEXT_MAX_LEN`` above). PARSeq recognition confidence separates real
+    dialogue from garble, but the old 0.65 cut let a 0.65-0.85 noise trough
+    (~40-55% correct) through while silently dropping short-but-correct SFX. So:
 
-      * Confidence >= ``conf_threshold`` -> NEVER drop (conservative; real SFX
-        like ドン at ~0.9 stays and is translated to onomatopoeia).
-      * Confidence < ``conf_threshold`` -> drop, UNLESS the line is long enough
-        and mostly real Japanese to read as genuine dialogue (don't silently
-        lose a hard-but-real line). Garble chars / non-JP always drop.
+      * Structural garble (dup-kanji/kana, latin-intrusion, substitution noise)
+        -> drop at ANY confidence (``is_implausible_japanese``, FIX P1-1/FIX-2).
+      * Confidence >= max(``conf_threshold``, ``_LONG_CONF_THRESHOLD``) -> keep.
+      * SHORT-TEXT CARVE-OUT: a clean string < ``_SHORT_TEXT_MAX_LEN`` chars is
+        kept regardless of confidence (SFX/moans/numbers are ~98% correct vs
+        gold — the old length rule was silently dropping the correct ones).
+      * Any other sub-threshold multi-char line -> drop (the mid-band is
+        unreliable OCR; a dropped genuine line is still passed as page CONTEXT
+        via ``is_dialogue_context_candidate``, never fully lost).
 
-    FIX P1-1: the rule above is blind to garbled OCR carrying FALSELY HIGH
-    confidence (page 070's "..?っく混みますよ" at 0.91). When
-    ``check_plausibility`` is set (default), a *linguistic*-plausibility check
-    runs FIRST and drops such lines regardless of confidence. It is gated so
-    the behavior stays tunable, and is narrow enough to leave real dialogue
+    FIX P1-1: the plausibility check runs FIRST and drops garble regardless of
+    confidence, catching OCR that carries FALSELY HIGH confidence (page 070's
+    "..?っく混みますよ" at 0.91). It stays narrow enough to leave real dialogue
     untouched (validated on 600+ replay lines with zero false drops).
     """
     norm = unicodedata.normalize("NFC", text).strip()
@@ -489,35 +537,50 @@ def is_garbled_low_conf(
         return False
 
     # Plausibility check runs irrespective of confidence — this is the whole
-    # point of P1-1 (catch confidently-wrong OCR). Only real Japanese text is
-    # inspected; obvious garble-char / non-JP cases fall through to the
-    # confidence logic below as before. FIX P3-2: pass the confidence so the
-    # dup-only signals are skipped above the high-confidence ceiling.
+    # point of P1-1/FIX-2 (catch confidently-wrong OCR). It runs BEFORE the
+    # short-text carve-out so structural garble is never rescued by being short
+    # (身身わわ@0.92 is len-4 but still dropped here). FIX P3-2: pass the
+    # confidence so the length/bigram dup signals honour the ceiling.
     if check_plausibility and norm and is_implausible_japanese(norm, ocr_confidence):
         return True
 
-    if ocr_confidence >= conf_threshold:
+    # Confidence gate: multi-char lines need the raised long-text threshold; an
+    # explicitly-stricter caller threshold still wins (used as a floor).
+    long_threshold = max(conf_threshold, _LONG_CONF_THRESHOLD)
+    if ocr_confidence >= long_threshold:
         return False
 
+    # --- below threshold ---
     if not norm:
         # Empty/low-conf -> nothing to translate; safe to drop.
         return True
 
-    # Garble chars / non-Japanese / low JP-ratio at low conf -> always drop.
+    # Garble chars at low conf -> always drop (before the carve-out: a short
+    # ``]]/``-style scrawl must not be kept just for being short).
     if _has_garble_chars(norm):
         return True
+
+    # FIX-1 SHORT-TEXT CARVE-OUT: very short clean strings (SFX / moans / numbers
+    # / interjections) are ~98% correct vs gold at any confidence, and the
+    # structural garble checks above already removed dup/latin/substitution
+    # noise. Keep them rather than silently dropping (the old length-12 rule lost
+    # 11 sub-0.65 gold-exact SFX per the calib table).
+    if len(norm) < _SHORT_TEXT_MAX_LEN:
+        return False
+
+    # Non-Japanese / low JP-ratio at low conf -> drop.
     if not is_japanese_text(norm, min_jp_ratio, katakana_max_len):
         return True
     analysis = analyze_characters(norm)
     if analysis.japanese_ratio < _MIN_JP_RATIO_FOR_LOWCONF:
         return True
 
-    # Low-confidence clean Japanese: drop SHORT SFX-like lines (these are the
-    # garbled recognitions that produce hallucinated captions); keep longer
-    # genuine-dialogue-length lines so a hard-but-real line still translates.
-    if len(norm) < _DIALOGUE_MIN_LEN:
-        return True
-    return False
+    # FIX-1 RAISED LONG-TEXT THRESHOLD: a multi-char clean-Japanese line below the
+    # threshold sits in the 0.65-0.85 noise trough (~40-55% correct vs gold). The
+    # old rule KEPT these (better-to-translate-a-hard-line); recalibration DROPS
+    # them — a confident-wrong caption rendered on the page is worse than an
+    # omission, and the line still survives as page CONTEXT when conf >= 0.65.
+    return True
 
 
 # Speaker / pronoun references. A SHORT dropped line carrying one of these is

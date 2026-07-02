@@ -1,13 +1,26 @@
-"""Unit tests for the OCR-confidence garble gate (FIX 2).
+"""Unit tests for the OCR-confidence garble gate.
 
 Garbled / low-confidence OCR on stylized SFX must NOT reach the LLM (it
 hallucinates non-English captions). The gate drops a bubble only when OCR
-recognition confidence is low AND the text looks garbled. Real dialogue
-(measured OCR conf ~0.9+) must always pass, even when short.
+recognition confidence is low AND the text looks garbled, OR when the text
+carries a hard structural garble-signature at ANY confidence.
+
+Recalibrated on the 650-row conf x sim-to-gold table
+(``scripts/eval/scorecards/ikenie4/preds_for_gold_v1_fair.jsonl``):
+  * short strings (< 5 chars) are ~98% correct vs gold at any confidence -> kept
+    (short-text carve-out; the old length-12 rule silently dropped correct SFX);
+  * multi-char lines need conf >= 0.80 (the 0.65-0.80 band is a ~40-55%-correct
+    noise trough) -> raised long-text threshold;
+  * adjacent doubled kanji/kana (身身わわ@0.92) are dropped unconditionally,
+    no longer exempted by the DUP_CONF_CEILING.
 """
 from __future__ import annotations
 
-from app.utils.ocr_confidence_gate import is_garbled_low_conf
+from app.utils.ocr_confidence_gate import (
+    DUP_CONF_CEILING,
+    is_garbled_low_conf,
+    is_implausible_japanese,
+)
 
 
 # --- must DROP: low confidence AND garbled --------------------------------
@@ -20,7 +33,7 @@ def test_drops_low_conf_bracket_scrawl():
     assert is_garbled_low_conf("]] [[ //", 0.45) is True
 
 
-# --- must KEEP: high confidence even if short -----------------------------
+# --- must KEEP: high confidence -------------------------------------------
 def test_keeps_high_conf_dialogue():
     assert is_garbled_low_conf("イキたいんなら自分で動きなさい!", 0.95) is False
 
@@ -30,23 +43,69 @@ def test_keeps_high_conf_short_sfx():
     assert is_garbled_low_conf("ドン", 0.90) is False
 
 
-def test_drops_short_lowconf_kana_sfx():
-    # OCR conf cleanly separates real dialogue (>=0.85) from garbled short SFX
-    # (<0.65). A short low-conf kana scrawl is dropped (these hallucinate).
-    assert is_garbled_low_conf("よっピ", 0.57) is True
-    assert is_garbled_low_conf("こちにちこち", 0.62) is True
+# --- FIX-2: adjacent-dup garble is caught UNCONDITIONALLY ------------------
+def test_drops_dup_kanji_at_falsely_high_conf():
+    # 身代わり -> 身身わわ misread carrying FALSELY HIGH confidence (0.92 > the
+    # 0.88 DUP_CONF_CEILING). Adjacent doubled kanji is now unconditional, so
+    # this confidently-wrong dup-garble is dropped instead of sailing through.
+    assert 0.92 > DUP_CONF_CEILING
+    assert is_implausible_japanese("身身わわ", 0.92) is True
+    assert is_garbled_low_conf("身身わわ", 0.92) is True
 
 
-def test_keeps_long_lowconf_dialogue():
-    # A long, mostly-Japanese line at low conf is genuine hard dialogue — keep
-    # it (better to translate a hard line than silently lose it).
-    assert is_garbled_low_conf("お母さんの匂いがたぁ〜っぷり染みついたブラ", 0.55) is False
+def test_drops_dup_katakana_at_high_conf():
+    # Doubled non-laughter katakana (ヌヌ) is dup-garble even at high conf.
+    assert is_implausible_japanese("ヌヌー界", 0.91) is True
+
+
+def test_dup_ceiling_still_spares_phrase_repeat_signal():
+    # The length/bigram dup signals still honour the ceiling: a clean whole-phrase
+    # repeat at high conf is collapsed/kept, not dropped.
+    assert is_garbled_low_conf("お母さんお母さん", 0.93) is False
+
+
+# --- FIX-1: short-text carve-out (SFX / moans / numbers now KEPT) ----------
+def test_keeps_short_lowconf_sfx_carveout():
+    # Calib table: sub-0.65 short strings were EXACT gold matches yet silently
+    # dropped by the old rule. A clean short SFX/moan is now kept.
+    assert is_garbled_low_conf("もみせ", 0.42) is False   # len 3, exact-gold SFX
+    assert is_garbled_low_conf("濃厚", 0.60) is False      # len 2
+
+
+def test_keeps_short_lowconf_number():
+    # A short number bubble (OCR '56' @0.61, exact gold) is now kept.
+    assert is_garbled_low_conf("56", 0.61) is False
+
+
+def test_short_carveout_does_not_rescue_garble_chars():
+    # The carve-out never overrides garble-char / structural checks: a short
+    # bracket scrawl at low conf still drops.
+    assert is_garbled_low_conf("]]/", 0.40) is True
+
+
+# --- FIX-1: raised long-text threshold (mid-conf long lines now DROP) ------
+def test_drops_long_lowconf_dialogue():
+    # A long, clean-Japanese line at mid confidence sits in the 0.65-0.80 noise
+    # trough (~40-55% correct vs gold). Recalibration DROPS it (the old rule kept
+    # it); it survives downstream as page CONTEXT, not a confident-wrong render.
+    assert is_garbled_low_conf("お母さんの匂いがたぁ〜っぷり染みついたブラ", 0.70) is True
+
+
+def test_drops_long_lowconf_dialogue_just_below_threshold():
+    # Just under the 0.80 knee -> still dropped.
+    assert is_garbled_low_conf("昨日あんな事をしていたなんて信じられない", 0.78) is True
+
+
+def test_keeps_long_dialogue_above_threshold():
+    # At/above the 0.80 knee a clean long line is kept (a genuine 0.80-conf
+    # balloon column must survive so multi-column balloons stay intact).
+    assert is_garbled_low_conf("昨日あんな事をしていたなんて信じられない", 0.80) is False
 
 
 # --- threshold boundary ----------------------------------------------------
 def test_above_threshold_never_dropped_even_if_weird():
-    # Above the conf gate, we never drop regardless of text quality.
-    assert is_garbled_low_conf("]]]///", 0.80) is False
+    # Well above the (raised) conf gate we never drop regardless of text quality.
+    assert is_garbled_low_conf("]]]///", 0.90) is False
 
 
 def test_low_conf_low_jp_ratio_dropped():

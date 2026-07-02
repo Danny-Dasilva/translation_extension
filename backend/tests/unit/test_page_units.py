@@ -104,14 +104,16 @@ def test_kept_confs_threaded_real_confidence():
     # The #-fix: real per-bubble OCR confidence must reach kept_confs (not None).
     blocks = _column(2)
     texts = ["これは本物の台詞です", "もうひとつの台詞"]
-    confs = [0.91, 0.77]
+    # Both confs above the recalibrated 0.85 long-text gate so the threading check
+    # (real per-bubble conf reaching kept_confs) is not confounded by a drop.
+    confs = [0.91, 0.88]
     units = build_page_translation_units(
         blocks, texts, confs, None, _settings(),
         is_japanese_fn=_is_jp,
         is_leave_intact_fn=_never_leave_intact,
         should_skip_as_english_fn=_never_skip_english,
     )
-    assert units.kept_confs == [0.91, 0.77]
+    assert units.kept_confs == [0.91, 0.88]
 
 
 # --- #3 decouple drop-from-render vs drop-from-context ------------------------
@@ -145,10 +147,13 @@ def test_dropped_dialogue_stays_in_context_not_rendered():
 
 
 def test_pure_sfx_drop_excluded_from_context():
-    # A short low-conf katakana-ish SFX scrawl is dropped AND excluded from
+    # A low-conf multi-char katakana SFX scrawl is dropped AND excluded from
     # context (not dialogue), but is real JP ink -> erase-only.
+    # NOTE: the OCR-gate short-text carve-out now KEEPS very short (< 5 char) SFX
+    # like "ドカ" (SFX/moans/numbers are ~98% correct vs gold), so this pins the
+    # still-dropped case: a longer low-conf SFX scrawl above the carve-out length.
     blocks = _column(2)
-    texts = ["ちゃんと聞いて欲しいんだ", "ドカ"]
+    texts = ["ちゃんと聞いて欲しいんだ", "バキュンゴバッ"]
     confs = [0.90, 0.30]
     units = build_page_translation_units(
         blocks, texts, confs, None, _settings(),

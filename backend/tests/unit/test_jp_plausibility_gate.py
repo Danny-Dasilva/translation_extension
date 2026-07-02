@@ -111,11 +111,15 @@ def test_dup_garble_dropped_below_conf_ceiling():
     assert is_garbled_low_conf("身身わわ", 0.80) is True
 
 
-def test_dup_garble_kept_at_or_above_conf_ceiling():
-    # FIX P3-2: at/above the 0.88 ceiling the dup-ONLY signals are skipped — a
-    # high-confidence recognition is trusted (避けるのは false-drop of clean
-    # dialogue, which the task says is worse). 身身わわ at exactly 0.88 is kept.
-    assert is_garbled_low_conf("身身わわ", 0.88) is False
+def test_dup_garble_dropped_even_above_conf_ceiling():
+    # FIX-2 recalibration (supersedes the old P3-2 exemption): adjacent doubled
+    # kanji/kana is a hard OCR dup-signature that carries FALSELY HIGH confidence
+    # (身身わわ@0.92 mistranslated the plot line), and it has 0 false positives on
+    # the 650-row calib table. It now fires UNCONDITIONALLY, so a dup garble at or
+    # above the 0.88 ceiling is DROPPED (the ceiling only spares the length/bigram
+    # dup signals, which do trip a few clean high-conf bubbles).
+    assert is_garbled_low_conf("身身わわ", 0.88) is True
+    assert is_garbled_low_conf("身身わわ", 0.92) is True
 
 
 def test_clean_pp_repeat_collapses_not_dropped():

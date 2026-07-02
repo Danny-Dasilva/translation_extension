@@ -24,9 +24,11 @@ def test_high_conf_dup_not_flagged():
     assert is_implausible_japanese("お母さんお母さん", DUP_CONF_CEILING) is False
 
 
-def test_high_conf_adjacent_dup_kanji_not_flagged():
-    # 止止 trips _adjacent_dup_kanji, but a clean conf-0.90 bubble is spared.
-    assert is_implausible_japanese("止止まらない頃", 0.90) is False
+def test_high_conf_adjacent_dup_kanji_flagged_fix2():
+    # FIX-2 recalibration: adjacent doubled kanji (止止) is now UNCONDITIONAL, so
+    # it is flagged even at conf 0.90 (>= the 0.88 ceiling). The ceiling only
+    # spares the length/bigram dup signals (see test_high_conf_dup_not_flagged).
+    assert is_implausible_japanese("止止まらない頃", 0.90) is True
 
 
 def test_low_conf_dup_still_flagged():
