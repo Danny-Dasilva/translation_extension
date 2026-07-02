@@ -196,14 +196,40 @@ def main() -> int:
     completion_only = bool(cfg["train"].get("completion_only_loss", True))
 
     # CHECK 2: real 4-bit load of the bf16 base ------------------------------------
+    # HARD FINDING (2026-07-02, empirically proven on the 5090 box; see report):
+    #   bitsandbytes NF4 CANNOT quantize this MoE's experts. Qwen3VLMoeTextExperts
+    #   stores each layer's experts as FUSED 3-D nn.Parameters (`gate_up_proj`
+    #   [128,1536,2048] + `down_proj` [128,2048,768]) — NOT nn.Linear. transformers'
+    #   `replace_with_bnb_linear` only swaps `type(module) is nn.Linear` for
+    #   Linear4bit, and `param_needs_quantization` requires a Linear4bit module. So
+    #   the 28.99B expert params (=54.0 GB bf16) stay BF16; only the ~1.5B attn/router
+    #   Linears (308 modules) get NF4'd. Resident base ≈ 57-59 GB → does NOT fit the
+    #   31.35 GB 5090 (nor a 40/48 GB cloud card). The load OOMs while materializing
+    #   the bf16 expert shards in transformers.core_model_loading (`tensor.to`).
+    #   => 32 GB QLoRA is IMPOSSIBLE for this arch on this stack. Needs an ≥80 GB GPU
+    #   (bf16 experts) OR a build that 4-bit-quantizes fused MoE experts. device_map
+    #   below is left all-on-GPU so this check fails FAST + LOUD rather than CPU-
+    #   offloading the experts (unusably slow, and trips a bnb/accelerate meta-tensor
+    #   bug). We catch the OOM and emit a clean NO-GO.
     logger.info("CHECK 2: loading {} in 4-bit (bnb NF4)...", args.base)
-    model, processor = FastVisionModel.from_pretrained(
-        args.base,
-        max_seq_length=int(args.max_seq_length),
-        dtype=torch.bfloat16,
-        load_in_4bit=True,          # QLoRA — NF4, NOT the AWQ serve packing
-        use_gradient_checkpointing="unsloth",
-    )
+    try:
+        model, processor = FastVisionModel.from_pretrained(
+            args.base,
+            max_seq_length=int(args.max_seq_length),
+            dtype=torch.bfloat16,
+            load_in_4bit=True,          # QLoRA — NF4, NOT the AWQ serve packing
+            use_gradient_checkpointing="unsloth",
+            device_map={"": 0},         # all-on-GPU (see finding above): fails fast.
+        )
+    except torch.cuda.OutOfMemoryError as e:  # noqa: BLE001
+        logger.error("CHECK 2 FAIL (OOM): the abliterated 30B-A3B does NOT fit in "
+                     "4-bit on this GPU — its fused MoE experts (54 GB bf16) are NOT "
+                     "bnb-quantizable, so ~57-59 GB is required. Needs ≥80 GB VRAM "
+                     "or fused-expert 4-bit support. {}", e)
+        results["loaded_4bit"] = False
+        results["oom"] = str(e)
+        failures.append("oom_4bit_load")
+        return _verdict(results, failures)
     _cap_image_tokens(processor, args.max_pixels, args.min_pixels)
     logger.info("CHECK 2 PASS: base loaded. model_type={}",
                 getattr(model.config, "model_type", "?"))

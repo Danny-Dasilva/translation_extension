@@ -344,6 +344,14 @@ def main() -> int:
     base = cfg["model"]["name_or_path"]
     max_seq = int(cfg["model"]["max_seq_length"])
     logger.info("loading multimodal base: {} (max_seq={})", base, max_seq)
+    # NOTE (30B-A3B v2 caveat): this loader is validated for the 8B dense base.
+    # It will NOT fit the abliterated Qwen3-VL-30B-A3B MoE (qwen3vl_30b_v2.yaml) on
+    # a <80 GB GPU: bitsandbytes cannot 4-bit-quantize its fused MoE experts
+    # (Qwen3VLMoeTextExperts.{gate_up_proj,down_proj} are 3-D nn.Parameters, not
+    # nn.Linear), so ~54 GB of experts stay bf16 and load_in_4bit OOMs at ~30 GB
+    # while materializing bf16 expert shards. Proven 2026-07-02 via validate_30b_g0.
+    # Do NOT launch the 30B run on 32 GB — use an ≥80 GB card (bf16 experts) or a
+    # stack with fused-expert 4-bit support. The 8B path below is unaffected.
     model, processor = FastVisionModel.from_pretrained(
         base,
         max_seq_length=max_seq,        # VERIFY-ON-BOX: some builds ignore this; ok.
