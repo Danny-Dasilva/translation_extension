@@ -98,6 +98,14 @@ class Settings(BaseSettings):
     translation_backend: str = "vllm-openai"
     vllm_base_url: str = "http://127.0.0.1:8000/v1"
     vllm_model_name: str = "v10it"
+    # Max concurrent in-flight requests to the vLLM chat endpoint. This gates
+    # every VLLMOpenAITranslationService._chat() call via an asyncio.Semaphore.
+    # The service is a module-level singleton shared across ALL concurrently
+    # processed pages (up to max_parallel_images pages x ~N bubbles/page each
+    # fan out into individual _chat calls), so a low value here bottlenecks
+    # translate_ms independent of vLLM's own batching capacity. Raise with the
+    # server's max concurrent sequences in mind.
+    translation_client_concurrency: int = 32
 
     # Translation model (transformers backend)
     hymt_transformers_model_dir: str = "app/weights/hymt15-2bit"

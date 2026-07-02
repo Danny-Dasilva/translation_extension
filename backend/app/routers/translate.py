@@ -85,6 +85,7 @@ if _translation_backend == "vllm-openai":
     translation_service = VLLMOpenAITranslationService(
         base_url=settings.vllm_base_url,
         model_name=settings.vllm_model_name,
+        concurrency=settings.translation_client_concurrency,
     )
 elif _translation_backend == "transformers":
     logger.info("Using transformers (Hy-MT1.5) translation backend")
