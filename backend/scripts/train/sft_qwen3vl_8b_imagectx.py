@@ -597,12 +597,39 @@ def main() -> int:
 
         trainer_cls = _BucketedSFTTrainer
 
+    # completion-only loss for the "messages" format is owned entirely by the
+    # collator — trl's masking path is bypassed here (skip_prepare_dataset +
+    # _is_vlm), so the YAML completion_only_loss knob is otherwise inert. Wire it
+    # to train_on_responses_only with the model's ChatML delimiters (verified
+    # against the rendered chat template).
+    _completion_only = bool(cfg["train"].get("completion_only_loss", True))
+    data_collator = UnslothVisionDataCollator(
+        model, processor,
+        train_on_responses_only=_completion_only,
+        instruction_part="<|im_start|>user\n" if _completion_only else None,
+        response_part="<|im_start|>assistant\n" if _completion_only else None,
+    )
+    if _completion_only:
+        _n = min(4, len(train_ds_clean))
+        _probe = data_collator(
+            [{"messages": train_ds_clean[i]["messages"]} for i in range(_n)])
+        _pl = _probe["labels"]
+        _masked = (_pl == -100).float().mean().item()
+        _kept = int((_pl != -100).sum().item())
+        logger.info(
+            "completion-only masking probe ({} rows): {:.1%} masked, "
+            "{} target tokens kept", _n, _masked, _kept)
+        assert _masked > 0.4 and _kept > 0, (
+            "completion-only masking wrong (masked={:.1%}, kept={}); "
+            "instruction/response parts mismatch chat template".format(
+                _masked, _kept))
+
     trainer = trainer_cls(
         model=model,
         processing_class=processor,            # VERIFY-ON-BOX: trl 0.23 uses
                                                #   processing_class; older trl used
                                                #   tokenizer=. unsloth accepts both.
-        data_collator=UnslothVisionDataCollator(model, processor),
+        data_collator=data_collator,
         train_dataset=train_ds_clean,
         eval_dataset=eval_ds_clean if in_training_eval else None,
         args=sft_args,
