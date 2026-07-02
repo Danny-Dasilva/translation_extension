@@ -886,8 +886,15 @@ async def process_single_image(
         # `j` is the render index (1:1 kept list). We post-edit with the RAW
         # per-bubble JP here (effective_jp needs the dedup/fused passes that have
         # not run yet) and rely on the `revise` pass to correct any that change.
-        async def _on_marked_result(j: int, raw_text: str) -> None:
-            jp = ocr_texts[j] if 0 <= j < len(ocr_texts) else ""
+        async def _on_marked_result(
+            j: int, raw_text: str, jp_override: Optional[str] = None
+        ) -> None:
+            # ``jp_override`` carries the FUSED JP for merge-path leads so the
+            # over-expansion gate sees the JP the EN actually covers (the revise
+            # pass would fix it anyway, but a streamed "..." flash is avoidable).
+            jp = jp_override if jp_override is not None else (
+                ocr_texts[j] if 0 <= j < len(ocr_texts) else ""
+            )
             conf = kept_ocr_confs[j] if 0 <= j < len(kept_ocr_confs) else None
             en = postedit_one(raw_text, jp, ocr_conf=conf)
             emitted_tl[j] = en
@@ -1155,12 +1162,35 @@ async def _run_translation(
         else:
             ctx_lines = page_context_lines
             ctx_targets = target_positions
+        # STREAM on the merge path: map each merged-request ordinal ``j`` back to
+        # its LEAD kept-bubble index (bubble_resplit holds one (req_idx, is_lead)
+        # per kept bubble) and post-edit against the FUSED JP the EN covers.
+        # Continuation members stay silent here — the revise pass blanks them.
+        _stream_cb = on_marked_result
+        if is_merge and on_marked_result is not None:
+            _lead_for_req = {
+                req_idx: kept_i
+                for kept_i, (req_idx, is_lead) in enumerate(merge_req.bubble_resplit)
+                if is_lead
+            }
+
+            async def _merged_on_result(j: int, raw_text: str) -> None:
+                kept_i = _lead_for_req.get(j)
+                if kept_i is None:
+                    return
+                merged_jp = (
+                    merge_req.merged_page_lines[ctx_targets[j]]
+                    if 0 <= j < len(ctx_targets)
+                    else None
+                )
+                await on_marked_result(kept_i, raw_text, merged_jp)
+
+            _stream_cb = _merged_on_result
         try:
             marked = await translation_service.translate_page_context_marked(
                 ctx_lines, ctx_targets, target_language,
                 page_image_data_url=page_image_data_url,
-                # Per-bubble tl only on the non-merge path (ordinal == render idx).
-                on_result=None if is_merge else on_marked_result,
+                on_result=_stream_cb,
             )
             if merge_req is not None and len(merge_req.merged_page_lines) > 1:
                 marked = apply_resplit(marked, merge_req.bubble_resplit)
