@@ -4,6 +4,7 @@ import base64
 import logging
 import time
 import uuid
+from typing import Optional
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 import numpy as np
@@ -17,6 +18,7 @@ from app.routers.translate import (
     process_single_image,
     _gpu_semaphore,
 )
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/ws", tags=["websocket"])
@@ -52,10 +54,12 @@ async def websocket_translate(websocket: WebSocket):
             logger.info(f"[WS:{client_id}] Received {len(image_bytes)} bytes")
 
             # Process image through translation pipeline
-            result = await _process_image(image_bytes, "English", client_id)
+            result = await _process_image(image_bytes, "English", client_id, websocket)
 
-            # Send JSON response
-            await websocket.send_json(result)
+            # Send JSON response. In STREAM mode `_process_image` already sent the
+            # event frames (incl. the terminal done/error) and returns None.
+            if result is not None:
+                await websocket.send_json(result)
 
     except WebSocketDisconnect:
         logger.info(f"WebSocket client disconnected: {client_id}")
@@ -95,8 +99,9 @@ async def websocket_translate_with_language(websocket: WebSocket, target_languag
 
             logger.info(f"[WS:{client_id}] Received {len(image_bytes)} bytes")
 
-            result = await _process_image(image_bytes, target_language, client_id)
-            await websocket.send_json(result)
+            result = await _process_image(image_bytes, target_language, client_id, websocket)
+            if result is not None:
+                await websocket.send_json(result)
 
     except WebSocketDisconnect:
         logger.info(f"WebSocket client disconnected: {client_id}")
@@ -116,10 +121,22 @@ async def websocket_translate_with_language(websocket: WebSocket, target_languag
 async def _process_image(
     image_bytes: bytes,
     target_language: str,
-    client_id: str
-) -> dict:
+    client_id: str,
+    websocket: Optional[WebSocket] = None,
+) -> Optional[dict]:
     """
     Process a binary image through the CANONICAL HTTP translation pipeline.
+
+    STREAM MODE (settings.translation_stream_events True): each server->client
+    event frame (detections/tl/revise/plate + terminal done/error, see
+    src/types/stream.ts) is sent via `websocket.send_json` as
+    `process_single_image` produces it, and this returns None (the `done` frame
+    IS the terminal — no monolithic reply follows). The frontend assembles the
+    legacy shape from the frames. There is NO client opt-in beyond the flag: the
+    extension just connects; whether the socket streams is a pure server setting.
+
+    LEGACY MODE (flag False, the default): unchanged — returns the single
+    monolithic dict below and the caller sends it as one JSON message.
 
     This delegates to `process_single_image` (the same function the HTTP
     /translate endpoint uses) so the WS path produces byte-identical output:
@@ -138,12 +155,21 @@ async def _process_image(
     session_id = str(uuid.uuid4())[:8]
     processing_start = time.time()
     frame_size = len(image_bytes)
+    stream = bool(settings.translation_stream_events)
 
     try:
         # Validate decodability up-front so malformed frames return a clean
         # error instead of surfacing as a pipeline exception. cv2 here mirrors
         # the decode the pipeline does internally (PNG/JPEG/WebP auto-detect).
         if cv2.imdecode(np.frombuffer(image_bytes, np.uint8), cv2.IMREAD_UNCHANGED) is None:
+            if stream:
+                # Terminal error frame (no monolithic reply follows).
+                await websocket.send_json({
+                    "v": 1, "type": "error", "session_id": session_id,
+                    "image_index": 0,
+                    "error": "Invalid image data - could not decode",
+                })
+                return None
             return {
                 "success": False,
                 "error": "Invalid image data - could not decode",
@@ -155,6 +181,22 @@ async def _process_image(
         # data URLs in `base64Images`, so build the same `data:image/...;base64,`
         # form here for parity.
         base64_image = "data:image/png;base64," + base64.b64encode(image_bytes).decode("ascii")
+
+        if stream:
+            # STREAM MODE: process_single_image emits every event frame (incl. the
+            # terminal done/error) through this callback. reuse session_id per image.
+            async def _on_event(frame: dict) -> None:
+                await websocket.send_json(frame)
+
+            await process_single_image(
+                0, base64_image, target_language, _gpu_semaphore, job_id=None,
+                on_event=_on_event, session_id=session_id, image_index=0,
+            )
+            total_time = (time.time() - processing_start) * 1000
+            logger.info(
+                f"[WS:{client_id}] {frame_size} bytes -> streamed, TOTAL={total_time:.1f}ms"
+            )
+            return None
 
         # Single-image WS request: idx=0, share the HTTP GPU semaphore, no
         # progress job (WS streams its own debug block instead).
@@ -195,6 +237,18 @@ async def _process_image(
 
     except Exception as e:
         logger.error(f"[WS:{client_id}] Processing error: {e}", exc_info=True)
+        if stream:
+            # process_single_image already emits its own terminal error frame for
+            # in-pipeline failures; this covers failures OUTSIDE it (e.g. the
+            # base64 encode). Best-effort — a dead socket must not re-raise here.
+            try:
+                await websocket.send_json({
+                    "v": 1, "type": "error", "session_id": session_id,
+                    "image_index": 0, "error": str(e),
+                })
+            except Exception:
+                pass
+            return None
         return {
             "success": False,
             "error": str(e),

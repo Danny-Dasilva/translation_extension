@@ -77,7 +77,8 @@ def _patch_pipeline(monkeypatch, ocr_results, translations):
     monkeypatch.setattr(tr, "bubble_detector", None, raising=False)
 
     async def _fake_translation(
-        texts, target_language, page_context_lines=None, target_positions=None, merge_req=None
+        texts, target_language, page_context_lines=None, target_positions=None,
+        merge_req=None, page_image_data_url=None, on_marked_result=None
     ):
         # Map each kept source line to its scripted translation (by source text).
         return [translations[t] for t in texts]

@@ -454,6 +454,14 @@ _PARITY_JP_POOL = [
 ]
 
 
+# v1 (Qwen3-VL-8B text-SFT) was trained on RAW builder output: the trained
+# template carries NO short-utterance normalization. The SERVE default must
+# therefore keep normalize OFF or prod diverges from the certified template on
+# every normalizable line — a silent train/serve skew. verify_builder_parity
+# asserts the LIVE default equals this assumption and fails the build otherwise.
+TRAIN_ASSUMES_SHORT_UTTERANCE_NORMALIZE = False
+
+
 def verify_builder_parity(n_cases: int = 200, seed: int = SEED) -> dict:
     """Assert the TRAIN builders byte-match the SERVE builders.
 
@@ -462,6 +470,12 @@ def verify_builder_parity(n_cases: int = 200, seed: int = SEED) -> dict:
     serve builder applies short-utterance normalization + an optional cast anchor
     at call time; both are DISABLED here so the comparison is a pure format check
     (the trained template itself carries no normalization).
+
+    It ALSO checks the LIVE serve contract: the imported ``settings``
+    short-utterance-normalize default (what prod actually serves with) MUST equal
+    ``TRAIN_ASSUMES_SHORT_UTTERANCE_NORMALIZE`` (False — v1 trained on raw builder
+    output). ``serve_contract_ok`` is False when they diverge; ``build_mix`` fails
+    the build on that so a config flip cannot silently ship a train/serve skew.
     """
     info: dict = {
         "serve_available": _HAVE_SERVE,
@@ -470,14 +484,28 @@ def verify_builder_parity(n_cases: int = 200, seed: int = SEED) -> dict:
         "compared": 0,
         "mismatches": 0,
         "examples": [],
+        "train_assumes_short_utterance_normalize": TRAIN_ASSUMES_SHORT_UTTERANCE_NORMALIZE,
     }
     if not _HAVE_SERVE:
         info["note"] = "serve module unavailable; parity asserted via identical builders"
+        # No serve module -> cannot read the live default; the contract is vacuously
+        # satisfied (nothing serves this template from here).
+        info["live_short_utterance_normalize_default"] = None
+        info["serve_contract_ok"] = True
         # Instructions fall back to the train constants, so they match by identity.
         return info
 
     # Disable serve-side normalize + cast so the comparison is format-pure.
     from app.config import settings  # local import
+    # LIVE serve contract check: read the default BEFORE we patch it, so this is
+    # exactly what a serving process would use.
+    live_default = bool(
+        getattr(settings, "short_utterance_normalize_enabled", True)
+    )
+    info["live_short_utterance_normalize_default"] = live_default
+    info["serve_contract_ok"] = (
+        live_default == TRAIN_ASSUMES_SHORT_UTTERANCE_NORMALIZE
+    )
     saved = {
         "short_utterance_normalize_enabled": getattr(
             settings, "short_utterance_normalize_enabled", True),
@@ -715,6 +743,16 @@ def build_mix(
     random.Random(seed).shuffle(rows)
 
     parity = verify_builder_parity(n_cases=300, seed=seed)
+    if not parity.get("serve_contract_ok", True):
+        raise ValueError(
+            "SERVE CONTRACT BROKEN: settings.short_utterance_normalize_enabled="
+            f"{parity.get('live_short_utterance_normalize_default')!r} but v1 was "
+            "trained on RAW builder output (assumes "
+            f"{TRAIN_ASSUMES_SHORT_UTTERANCE_NORMALIZE!r}). Serving with normalize "
+            "ON diverges from the certified template on every normalizable line. "
+            "Set short_utterance_normalize_enabled=False (or override the env) "
+            "before building the SFT set."
+        )
     stats = compose_stats(
         rows, per_source_before, refusal_dropped, nsfw_cap_info, parity,
         extra={"seed": seed, "v11_parquet": str(v11_parquet),
@@ -792,7 +830,18 @@ def _inspect(args) -> int:
     print("\n=== INSPECT: prompt-format parity (train builder == serve builder) ===")
     parity = verify_builder_parity(n_cases=500, seed=args.seed)
     print(json.dumps(parity, ensure_ascii=False, indent=2)[:800])
-    ok = parity["mismatches"] == 0 and parity["instr_page_match"] and parity["instr_plain_match"]
+    ok = (
+        parity["mismatches"] == 0
+        and parity["instr_page_match"]
+        and parity["instr_plain_match"]
+        and parity.get("serve_contract_ok", True)
+    )
+    if not parity.get("serve_contract_ok", True):
+        print(
+            "  SERVE CONTRACT: FAIL — short_utterance_normalize_enabled default="
+            f"{parity.get('live_short_utterance_normalize_default')!r} != train "
+            f"assumption {TRAIN_ASSUMES_SHORT_UTTERANCE_NORMALIZE!r}"
+        )
     print(f"\n  BYTE-MATCH v11 serve prompt: {'PASS' if ok else 'FAIL'}")
     return 0 if ok else 1
 

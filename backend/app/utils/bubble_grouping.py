@@ -63,8 +63,10 @@ heuristics); no model/service dependency, so they unit-test in isolation.
 """
 from __future__ import annotations
 
+import logging
 import unicodedata
-from typing import Callable, Dict, List, Optional, Sequence
+from dataclasses import dataclass, field
+from typing import Awaitable, Callable, Dict, List, Optional, Sequence
 
 from app.utils.sentence_merge import (
     MergeGroup,
@@ -72,6 +74,8 @@ from app.utils.sentence_merge import (
     has_dangling_connective,
     is_bare_sentence_final,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _norm(text: Optional[str]) -> str:
@@ -567,6 +571,153 @@ def _block_area(block: Dict) -> float:
     return w * h
 
 
+def _en_token_overlap(a: Optional[str], b: Optional[str]) -> float:
+    """Jaccard token overlap of two normalized ENs (0.0-1.0).
+
+    Cheap divergence proxy — no external dep. Word-set intersection over union
+    on :func:`_norm_en` tokens. Used by :func:`en_near_duplicate` to tell the
+    TRUE dedup case (the model reconstructed the same utterance on each
+    column-fragment => high overlap) from a genuinely DISTINCT sibling line
+    (low overlap => its content must be preserved, not blanked).
+    """
+    na, nb = _norm_en(a), _norm_en(b)
+    if not na or not nb:
+        return 0.0
+    ta, tb = set(na.split()), set(nb.split())
+    if not ta or not tb:
+        return 0.0
+    inter = len(ta & tb)
+    union = len(ta | tb)
+    return inter / union if union else 0.0
+
+
+def en_near_duplicate(
+    a: Optional[str], b: Optional[str], *, min_overlap: float = 0.6
+) -> bool:
+    """True when two ENs are near-duplicates (the TRUE in-balloon dup case).
+
+    Near-duplicate == the surface strings are equal, one contains the other
+    (mirrors :func:`dedup_adjacent_identical`'s substring test), OR their token
+    overlap (:func:`_en_token_overlap`) is at least ``min_overlap``. Anything
+    below that is a MEANINGFULLY DIVERGENT sibling: distinct content the balloon
+    must keep (via the fused-balloon retranslate), not silently drop.
+
+    An empty side is treated as a near-duplicate (nothing to preserve).
+    """
+    na, nb = _norm_en(a), _norm_en(b)
+    if not na or not nb:
+        return True
+    if na == nb or na in nb or nb in na:
+        return True
+    return _en_token_overlap(a, b) >= min_overlap
+
+
+@dataclass
+class FusedBalloonGroup:
+    """One multi-block balloon whose blanked siblings DIVERGE from the winner.
+
+    ``winner`` is the kept-list index that renders the fused EN (largest-area
+    block — same choice :func:`dedup_by_bubble` keeps). ``members`` are ALL the
+    balloon's non-empty kept-list indices in READING ORDER (ascending index ==
+    page reading order), used to build the fused JP. ``blanked`` are the sibling
+    indices (members minus winner) that stay blank after the fused EN lands on
+    the winner.
+    """
+
+    winner: int
+    members: List[int]
+    blanked: List[int]
+
+
+@dataclass
+class BubbleDedupPlan:
+    """Result of :func:`plan_bubble_dedup`.
+
+    ``deduped`` is the 1:1 translations list AFTER blanking all-but-winner per
+    balloon — byte-identical to the legacy :func:`dedup_by_bubble` output.
+    ``retranslate`` lists the balloons whose siblings meaningfully DIVERGE from
+    the winner (distinct content, not near-duplicates); the caller issues ONE
+    fused marked call per group to preserve their content. When
+    ``translation_balloon_fused_retranslate`` is off (or no OCR text was
+    threaded) the caller simply ignores ``retranslate`` and behavior == legacy.
+
+    ``effective_jp`` (populated by :func:`apply_fused_balloon_retranslate`) maps a
+    winner's kept-list index to the FUSED JP its rewritten EN now covers, so the
+    caller's post-edit over-expansion gate compares the fused EN against the fused
+    JP (not the winner's short single fragment — which would false-positive and
+    blank a faithful translation). ``retranslate_errors`` counts fused calls that
+    raised (each logged) so callers can surface the failure count.
+    """
+
+    deduped: List[Optional[str]] = field(default_factory=list)
+    retranslate: List[FusedBalloonGroup] = field(default_factory=list)
+    effective_jp: Dict[int, str] = field(default_factory=dict)
+    retranslate_errors: int = 0
+
+
+def plan_bubble_dedup(
+    translations: Sequence[Optional[str]],
+    blocks: Sequence[Dict],
+    bubbles: Optional[Sequence[Dict]],
+    *,
+    near_duplicate: Optional[Callable[[Optional[str], Optional[str]], bool]] = None,
+) -> BubbleDedupPlan:
+    """Plan the "1 balloon = 1 string" dedup AND flag divergent balloons.
+
+    Same bucketing / winner selection as :func:`dedup_by_bubble` (see its
+    docstring). Additionally, for each multi-block balloon it classifies the
+    blanked siblings: when EVERY sibling is a near-duplicate of the winner
+    (``near_duplicate``, default :func:`en_near_duplicate`) the balloon is a true
+    duplication and only ``deduped`` is affected. When ANY sibling meaningfully
+    DIVERGES, the balloon is added to ``retranslate`` so the caller can fuse the
+    members' JP and retranslate as one unit (content preservation) — the
+    root-cause fix for the multi-column-balloon content drop.
+
+    Pure planner: no model / OCR dependency. The fused retranslate itself is a
+    caller-side pass (:func:`apply_fused_balloon_retranslate`) with the translator
+    injected, so this module never imports the translator.
+    """
+    check = near_duplicate or en_near_duplicate
+    out: List[Optional[str]] = list(translations)
+    plan = BubbleDedupPlan(deduped=out)
+    if not bubbles:
+        return plan
+    n = min(len(out), len(blocks))
+    buckets: Dict[int, List[int]] = {}
+    for i in range(n):
+        bid = bubble_id_of(blocks[i], bubbles)
+        if bid is None:
+            continue
+        buckets.setdefault(bid, []).append(i)
+    for positions in buckets.values():
+        nonempty = [
+            p for p in positions if out[p] is not None and str(out[p]).strip()
+        ]
+        if len(nonempty) <= 1:
+            continue
+        # Winner: largest-area block (the bubble renderer), then longest EN, then
+        # earliest reading-order position. ``-p`` makes ``max`` prefer the
+        # smaller index on a full tie.
+        winner = max(
+            nonempty,
+            key=lambda p: (_block_area(blocks[p]), len(_norm_en(out[p])), -p),
+        )
+        # Classify BEFORE blanking (need the siblings' EN to compare).
+        siblings = [p for p in nonempty if p != winner]
+        diverges = any(not check(out[winner], out[p]) for p in siblings)
+        if diverges:
+            plan.retranslate.append(
+                FusedBalloonGroup(
+                    winner=winner,
+                    members=sorted(nonempty),  # ascending index == reading order
+                    blanked=sorted(siblings),
+                )
+            )
+        for p in siblings:
+            out[p] = ""
+    return plan
+
+
 def dedup_by_bubble(
     translations: Sequence[Optional[str]],
     blocks: Sequence[Dict],
@@ -594,31 +745,112 @@ def dedup_by_bubble(
     Blocks whose center falls in NO detected bubble (SFX over art) keep
     ``bubble_id`` ``None`` and are left untouched. Returns a NEW list 1:1 with
     ``translations``; a no-op copy when no bubbles were detected.
+
+    NOTE: this blanks divergent siblings unconditionally (the legacy contract).
+    When their content must be PRESERVED, the caller uses :func:`plan_bubble_dedup`
+    + :func:`apply_fused_balloon_retranslate` instead (gated by
+    ``translation_balloon_fused_retranslate``). This function is kept as the
+    thin, dependency-free path (and for callers/tests that only want the blank).
+    """
+    return plan_bubble_dedup(translations, blocks, bubbles).deduped
+
+
+async def apply_fused_balloon_retranslate(
+    translations: Sequence[Optional[str]],
+    kept_texts: Sequence[str],
+    plan: "BubbleDedupPlan",
+    page_context_lines: Sequence[str],
+    target_positions: Sequence[int],
+    marked_translate: Callable[
+        [List[str], List[int], str], Awaitable[List[str]]
+    ],
+    *,
+    target_language: str = "English",
+) -> List[Optional[str]]:
+    """Preserve divergent balloons' content via ONE fused marked call each.
+
+    For every balloon in ``plan.retranslate`` the members' OCR JP is fused (joined
+    in reading order — mirrors :class:`~app.utils.sentence_merge.MergeGroup`'s
+    ``merged_text``) into a SINGLE line that REPLACES the members in an otherwise
+    unchanged copy of ``page_context_lines`` (the lead member's page slot holds
+    the fused JP, the other member slots are dropped — the same re-segmentation
+    :func:`build_merged_translation_request` performs). ``marked_translate`` is
+    the injected page-context translator (``translate_page_context_marked``), so
+    the call goes through the SAME ``build_v11_context_prompt`` template as every
+    other call — no new prompt. The returned fused EN lands on the winner block;
+    the siblings stay blank (they are intentionally-blank continuations, the
+    sentence_merge contract).
+
+    ``translations`` is the ALREADY-deduped list (``plan.deduped``); this returns
+    a NEW list 1:1 with it, with each divergent balloon's winner overwritten by
+    the fused EN. Cost is bounded: one marked call per divergent balloon.
+
+    SIDE EFFECT: for every winner actually overwritten with a fused EN this records
+    ``plan.effective_jp[winner] = fused_jp`` so the caller's post-edit over-expansion
+    gate sees the FUSED JP the EN now covers (using the winner's short single
+    fragment JP would false-positive and blank the faithful fused translation —
+    silently re-introducing the very content drop this pass exists to fix).
     """
     out: List[Optional[str]] = list(translations)
-    if not bubbles:
+    if not plan.retranslate:
         return out
-    n = min(len(out), len(blocks))
-    buckets: Dict[int, List[int]] = {}
-    for i in range(n):
-        bid = bubble_id_of(blocks[i], bubbles)
-        if bid is None:
+    n_ctx = len(page_context_lines)
+    for group in plan.retranslate:
+        # Page positions of the members (target_positions maps kept-idx -> page
+        # position in page_context_lines). Guard against any misalignment.
+        try:
+            member_page_pos = sorted(target_positions[k] for k in group.members)
+        except (IndexError, TypeError):
             continue
-        buckets.setdefault(bid, []).append(i)
-    for positions in buckets.values():
-        nonempty = [
-            p for p in positions if out[p] is not None and str(out[p]).strip()
-        ]
-        if len(nonempty) <= 1:
+        if not member_page_pos or any(p >= n_ctx for p in member_page_pos):
             continue
-        # Winner: largest-area block (the bubble renderer), then longest EN, then
-        # earliest reading-order position. ``-p`` makes ``max`` prefer the
-        # smaller index on a full tie.
-        winner = max(
-            nonempty,
-            key=lambda p: (_block_area(blocks[p]), len(_norm_en(out[p])), -p),
+        fused_jp = "".join(
+            _norm_en_source(kept_texts[k])
+            for k in group.members
+            if k < len(kept_texts)
         )
-        for p in nonempty:
-            if p != winner:
+        if not fused_jp.strip():
+            continue
+        lead_pp = member_page_pos[0]
+        drop = set(member_page_pos[1:])
+        merged_ctx: List[str] = []
+        fused_target: Optional[int] = None
+        for pp in range(n_ctx):
+            if pp in drop:
+                continue
+            if pp == lead_pp:
+                fused_target = len(merged_ctx)
+                merged_ctx.append(fused_jp)
+            else:
+                line = page_context_lines[pp]
+                merged_ctx.append(line if line is not None else "")
+        if fused_target is None:
+            continue
+        try:
+            marked = await marked_translate(
+                merged_ctx, [fused_target], target_language
+            )
+        except Exception as exc:
+            # Retranslate is a best-effort content-recovery pass; on failure keep
+            # the deduped (winner-only) output rather than crash the page. Never
+            # swallow silently: log the original exception + traceback and count
+            # it so callers can surface the failure rate.
+            plan.retranslate_errors += 1
+            logger.warning(
+                "fused-balloon retranslate failed for winner %d (members=%s): %s",
+                group.winner, group.members, exc, exc_info=True,
+            )
+            continue
+        if marked and marked[0] and str(marked[0]).strip():
+            out[group.winner] = marked[0]
+            # Record the EFFECTIVE JP the winner's rewritten EN now covers so the
+            # caller's post-edit over-expansion gate compares against the fused JP.
+            plan.effective_jp[group.winner] = fused_jp
+            for p in group.blanked:
                 out[p] = ""
     return out
+
+
+def _norm_en_source(text: Optional[str]) -> str:
+    """NFC-normalize + strip a JP source line (mirrors sentence_merge._norm)."""
+    return unicodedata.normalize("NFC", text or "").strip()

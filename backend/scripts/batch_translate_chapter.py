@@ -64,10 +64,13 @@ from app.utils.page_units import (  # noqa: E402
     apply_resplit,
     build_merged_translation_request,
     build_page_translation_units,
+    combined_effective_jp,
 )
 from app.utils.bubble_grouping import (  # noqa: E402
+    apply_fused_balloon_retranslate,
     dedup_adjacent_identical,
     dedup_by_bubble,
+    plan_bubble_dedup,
     select_backfill_targets,
 )
 
@@ -727,24 +730,19 @@ class ChapterPipeline:
                         f"{n_recovered}/{len(backfill_idx)} bubble(s)"
                     )
 
-            # Post-translation glossaries (register/names/SFX) — shared with the
-            # API router so both paths render identical corrected text.
-            if translations:
-                from app.services.translation_postedit import (
-                    apply_postedit_glossaries,
-                )
-                # kept_confs is aligned 1:1 with kept_texts (built at filter
-                # time) — thread it so low-OCR-conf bubbles don't get an
-                # invented proper name.
-                translations = apply_postedit_glossaries(
-                    translations, kept_texts, ocr_confs=kept_confs
-                )
             # IN-BALLOON DE-DUP ("1 balloon = 1 string"). When a speech-bubble
             # detector ran, the bubble-keyed dedup (P2.3) collapses all-but-one EN
             # per DETECTED balloon — independent of adjacency/orientation/length/
             # string-equality — which SUPERSEDES the narrow adjacent-identical dedup
             # (P2.2) for the in-balloon case. dedup_adjacent_identical stays the
-            # no-bubble-detector fallback. Mirrors the API router (translate.py).
+            # no-bubble-detector fallback.
+            #
+            # ORDER PARITY WITH THE API ROUTER: dedup + fused-balloon retranslate run
+            # BEFORE the glossary chain, so the fused retranslate's wider EN is what
+            # the glossaries (and their over-expansion gate, fed the fused JP) see.
+            # The batch path previously ran glossaries FIRST, so fused output skipped
+            # the entire glossary chain — the bug this reorder fixes.
+            dedup_plan = None
             if (
                 getattr(settings, "translation_bubble_dedup", True)
                 and translations
@@ -752,10 +750,39 @@ class ChapterPipeline:
                 and len(translations) == len(kept_blocks)
             ):
                 before = sum(1 for t in translations if t and str(t).strip())
-                translations = dedup_by_bubble(translations, kept_blocks, bubbles)
+                dedup_plan = plan_bubble_dedup(translations, kept_blocks, bubbles)
+                translations = dedup_plan.deduped
                 after = sum(1 for t in translations if t and str(t).strip())
                 if before != after:
                     stats["bubble_deduped"] = before - after
+                # FUSED-BALLOON RETRANSLATE (parity with the API router): a
+                # multi-column balloon whose blanked siblings DIVERGE from the
+                # winner (distinct content, not a dup) gets ONE extra marked call
+                # on its FUSED JP so the content is preserved, not dropped.
+                if (
+                    getattr(
+                        settings, "translation_balloon_fused_retranslate", True
+                    )
+                    and dedup_plan.retranslate
+                    and page_context_lines
+                    and len(target_positions) == len(kept_blocks)
+                    and hasattr(
+                        self.translator, "translate_page_context_marked"
+                    )
+                ):
+                    translations = await apply_fused_balloon_retranslate(
+                        translations,
+                        kept_texts,
+                        dedup_plan,
+                        page_context_lines,
+                        target_positions,
+                        self.translator.translate_page_context_marked,
+                    )
+                    recovered = sum(
+                        1 for t in translations if t and str(t).strip()
+                    )
+                    if recovered != after:
+                        stats["fused_retranslated"] = len(dedup_plan.retranslate)
             # P2.2 ADJACENT IDENTICAL-EN DE-DUP: collapse adjacent same-balloon
             # bubbles that render the SAME English (a duplication P1 missed) —
             # full EN on the lead bubble, continuation blanked.
@@ -769,6 +796,30 @@ class ChapterPipeline:
                 after = sum(1 for t in translations if t and str(t).strip())
                 if before != after:
                     stats["adjacent_deduped"] = before - after
+
+            # Post-translation glossaries (register/names/SFX) — shared with the
+            # API router so both paths render identical corrected text. Runs LAST
+            # (after dedup + fused retranslate) so the fused output flows through the
+            # ENTIRE glossary chain. The over-expansion gate is fed the EFFECTIVE JP
+            # (fused-balloon winner / sentence-merge lead cover more JP than their own
+            # single OCR fragment) so a faithful fused/merged EN is not blanked.
+            if translations:
+                from app.services.translation_postedit import (
+                    apply_postedit_glossaries,
+                )
+                effective_jp = combined_effective_jp(
+                    dedup_plan, units.merge_plan, target_positions
+                )
+                jp_for_postedit = [
+                    effective_jp.get(i, kept_texts[i]) if i < len(kept_texts) else None
+                    for i in range(len(translations))
+                ]
+                # kept_confs is aligned 1:1 with kept_texts (built at filter
+                # time) — thread it so low-OCR-conf bubbles don't get an
+                # invented proper name.
+                translations = apply_postedit_glossaries(
+                    translations, jp_for_postedit, ocr_confs=kept_confs
+                )
             stats["translate_ms"] = (time.time() - t0) * 1000
         else:
             stats["translate_ms"] = 0.0

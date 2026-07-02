@@ -26,11 +26,16 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import asyncio
+
 from app.utils.bubble_grouping import (
+    apply_fused_balloon_retranslate,
     bubble_id_of,
     dedup_adjacent_identical,
     dedup_by_bubble,
+    en_near_duplicate,
     group_columns_into_bubbles,
+    plan_bubble_dedup,
     select_backfill_targets,
 )
 from app.utils.page_units import (
@@ -494,6 +499,135 @@ def test_dedup_by_bubble_ignores_blocks_outside_any_bubble():
         [BUB_A, BUB_B],
     )
     assert out == ["dialogue line here", "dramatic sfx boom"]
+
+
+# --- P0 (2026-07-01): FUSED-BALLOON RETRANSLATE (content-drop fix) -------------
+#
+# dedup_by_bubble blanks all-but-winner per balloon. For a DUP balloon (same
+# utterance reconstructed on each fragment) that is correct. For a DIVERGENT
+# balloon (multi-column balloon holding DISTINCT lines) blanking silently DROPS
+# the sibling content — the fused-balloon retranslate re-issues ONE marked call
+# on the balloon's FUSED JP so the content is preserved.
+
+
+class _RecordingTranslator:
+    """Fake translate_page_context_marked: records calls, returns a fixed EN."""
+
+    def __init__(self, fused_en: str = "We're calmly having a family breakfast — no!"):
+        self.calls: list = []
+        self.fused_en = fused_en
+
+    async def __call__(self, page_lines, target_indices, target_language="English"):
+        self.calls.append((list(page_lines), list(target_indices), target_language))
+        # translate_page_context_marked returns one EN per marked target.
+        return [self.fused_en for _ in target_indices]
+
+
+def test_en_near_duplicate_classifies_dup_vs_divergent():
+    # Substring / equality / high token-overlap == near-duplicate (the dup case).
+    assert en_near_duplicate("buy more tomorrow", "I'll buy more tomorrow")
+    assert en_near_duplicate("Hello there", "hello there.")
+    # Genuinely distinct content == NOT a near-duplicate (must be preserved).
+    assert not en_near_duplicate(
+        "We're calmly having a family breakfast", "No...!!"
+    )
+
+
+def test_plan_bubble_dedup_matches_legacy_deduped_output():
+    # plan.deduped is byte-identical to the legacy dedup_by_bubble blanking.
+    trans = ["buy more", "I just ran out, I'll buy more tomorrow"]
+    plan = plan_bubble_dedup(trans, [COL2, COL3], [BUB_A, BUB_B])
+    legacy = dedup_by_bubble(trans, [COL2, COL3], [BUB_A, BUB_B])
+    assert plan.deduped == legacy == ["", "I just ran out, I'll buy more tomorrow"]
+
+
+def test_plan_flags_divergent_balloon_but_not_near_dup():
+    # Divergent siblings -> a retranslate group (winner = largest-area COL3).
+    divergent = plan_bubble_dedup(
+        ["No...!!", "We're calmly having a family breakfast"],
+        [COL2, COL3],
+        [BUB_A, BUB_B],
+    )
+    assert len(divergent.retranslate) == 1
+    grp = divergent.retranslate[0]
+    assert grp.winner == 1              # COL3 is larger -> renders the balloon
+    assert grp.members == [0, 1]        # both members, reading order
+    assert grp.blanked == [0]
+    # Near-duplicate siblings -> NO retranslate group (true dup case).
+    dup = plan_bubble_dedup(
+        ["buy more tomorrow", "I'll buy more tomorrow"],
+        [COL2, COL3],
+        [BUB_A, BUB_B],
+    )
+    assert dup.retranslate == []
+
+
+def test_fused_retranslate_calls_once_winner_gets_fused_en_siblings_blank():
+    # page context: two kept lines (the balloon's two columns), reading order.
+    page_context_lines = ["違う…!!", "平然と家族で朝ごはんを"]
+    target_positions = [0, 1]  # kept-idx -> page position
+    kept_texts = ["違う…!!", "平然と家族で朝ごはんを"]
+    plan = plan_bubble_dedup(
+        ["No...!!", "We're calmly having a family breakfast"],
+        [COL2, COL3],
+        [BUB_A, BUB_B],
+    )
+    fake = _RecordingTranslator()
+    out = asyncio.run(
+        apply_fused_balloon_retranslate(
+            plan.deduped,
+            kept_texts,
+            plan,
+            page_context_lines,
+            target_positions,
+            fake,
+        )
+    )
+    # Exactly ONE extra marked call for the one divergent balloon.
+    assert len(fake.calls) == 1
+    ctx_lines, tgt_idx, lang = fake.calls[0]
+    # Members fused into ONE line (reading order, no separator) replacing them.
+    assert ctx_lines == ["違う…!!平然と家族で朝ごはんを"]
+    assert tgt_idx == [1] or tgt_idx == [0]  # single fused target
+    assert len(tgt_idx) == 1
+    # Winner (COL3, idx 1) carries the fused EN; sibling blanked.
+    assert out[1] == fake.fused_en
+    assert out[0] == ""
+
+
+def test_fused_retranslate_noop_when_no_divergent_groups():
+    # Near-dup balloon => plan.retranslate empty => translator never called and
+    # the deduped output is returned unchanged (setting-OFF behavior parity).
+    plan = plan_bubble_dedup(
+        ["buy more tomorrow", "I'll buy more tomorrow"],
+        [COL2, COL3],
+        [BUB_A, BUB_B],
+    )
+    fake = _RecordingTranslator()
+    out = asyncio.run(
+        apply_fused_balloon_retranslate(
+            plan.deduped,
+            ["明日買いに", "明日買いに来る"],
+            plan,
+            ["明日買いに", "明日買いに来る"],
+            [0, 1],
+            fake,
+        )
+    )
+    assert fake.calls == []
+    assert out == plan.deduped == ["", "I'll buy more tomorrow"]
+
+
+def test_setting_off_equals_legacy_blank_for_divergent_balloon():
+    # When translation_balloon_fused_retranslate is OFF the caller simply does
+    # NOT run apply_fused_balloon_retranslate, so a divergent balloon keeps the
+    # legacy blank (winner-only). This pins that plan.deduped alone == old drop.
+    plan = plan_bubble_dedup(
+        ["No...!!", "We're calmly having a family breakfast"],
+        [COL2, COL3],
+        [BUB_A, BUB_B],
+    )
+    assert plan.deduped == ["", "We're calmly having a family breakfast"]
 
 
 # --- membership helper ---------------------------------------------------------

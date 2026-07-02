@@ -6,7 +6,16 @@ import logging
 import time
 import uuid
 from fastapi import APIRouter, HTTPException, status
-from typing import List, Optional, Tuple
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
+
+# Server->client streaming event-frame protocol version (mirrors
+# src/types/stream.ts STREAM_PROTOCOL_VERSION). Bump on breaking changes.
+STREAM_PROTOCOL_VERSION = 1
+
+# Async callback the WS path passes to process_single_image to receive each
+# server->client event frame (detections/tl/revise/plate/done/error). None =>
+# monolithic mode (zero behavioral change, no frames emitted).
+OnEvent = Callable[[Dict[str, Any]], Awaitable[None]]
 
 import cv2
 import numpy as np
@@ -29,10 +38,13 @@ from app.utils.page_units import (
     apply_resplit,
     build_merged_translation_request,
     build_page_translation_units,
+    combined_effective_jp,
 )
 from app.utils.bubble_grouping import (
+    apply_fused_balloon_retranslate,
     dedup_adjacent_identical,
     dedup_by_bubble,
+    plan_bubble_dedup,
     select_backfill_targets,
 )
 from app.services.lama_inpaint_service import is_leave_intact_label
@@ -47,6 +59,7 @@ from app.utils.orphan_lines import (
     reading_order_sort,
 )
 from app.utils.zindex_utils import assign_smart_zindex
+from app.utils.image_data_url import ndarray_to_data_url
 from app.utils.progress_bus import bus as progress_bus
 from app.config import settings
 
@@ -122,6 +135,25 @@ if settings.enable_bubble_fit:
         bubble_detector = None
 
 logger.info("Local AI pipeline ready")
+
+
+def _detect_box_font_colors(image_np: np.ndarray, block: dict) -> Tuple[str, str]:
+    """Content-aware (font_color, stroke_color) for one block.
+
+    Samples the block's region from the source page and picks dark-on-light vs
+    light-on-dark so text on a black bubble renders white (and vice versa).
+    Shared by the final TextBox assembly AND the streaming ``detections`` frame
+    so the seed colors emitted early MATCH the colors on the final box. Failures
+    fall back to the fixed black-on-white default (never fatal)."""
+    try:
+        cy0 = max(0, int(block['minY'])); cy1 = min(image_np.shape[0], int(block['maxY']))
+        cx0 = max(0, int(block['minX'])); cx1 = min(image_np.shape[1], int(block['maxX']))
+        sample = image_np[cy0:cy1, cx0:cx1]
+        if sample.size:
+            return detect_font_colors(sample)
+    except Exception:
+        pass
+    return "#000000", "#FFFFFF"
 
 
 def _encode_png_base64(image_rgb: np.ndarray) -> str:
@@ -288,6 +320,10 @@ async def process_single_image(
     target_language: str,
     semaphore: asyncio.Semaphore,
     job_id: Optional[str] = None,
+    *,
+    on_event: Optional[OnEvent] = None,
+    session_id: Optional[str] = None,
+    image_index: int = 0,
 ) -> Tuple[int, List[TextBox], Optional[str]]:
     """
     Process a single image through the translation pipeline.
@@ -309,6 +345,49 @@ async def process_single_image(
     """
     inpainted_b64: Optional[str] = None
     bubbles: List[dict] = []
+    # IMAGE-CONTEXT serve path (gated by settings.translation_serve_image_context,
+    # default OFF): the page image is encoded ONCE per request into this data URL,
+    # reused by the opportunistic warm call and every real marked translate call.
+    page_image_data_url: Optional[str] = None
+    # Keep a reference to the fire-and-forget warm task so it isn't GC'd mid-flight.
+    warm_task: Optional["asyncio.Task"] = None
+
+    # --- Per-bubble streaming (WS path) --------------------------------------
+    # ``on_event`` None => monolithic mode: NO frames, byte-identical behavior.
+    # When set we emit detections -> tl -> revise -> plate -> done|error frames.
+    streaming = on_event is not None
+    if session_id is None:
+        session_id = uuid.uuid4().hex[:8]
+    # Serialize sends: tl frames (fired from translate_page_context_marked's
+    # as-completed gather) and the plate frame (fired from its own subtask) can
+    # await on_event concurrently; a lock guarantees non-interleaved send_json.
+    _emit_lock = asyncio.Lock()
+    # What we sent as ``tl`` per render index — the revise pass diffs against this.
+    emitted_tl: Dict[int, str] = {}
+
+    async def _safe_emit(frame: Dict[str, Any]) -> None:
+        """Best-effort emit one frame. A dead socket must never crash the
+        pipeline (repo rule: surface errors in logs, don't swallow silently —
+        we log the original)."""
+        if on_event is None:
+            return
+        try:
+            async with _emit_lock:
+                await on_event(frame)
+        except Exception as exc:  # noqa: BLE001 — client disconnect is non-fatal
+            logger.warning(f"Image {idx + 1}: stream emit failed ({exc!r})")
+
+    def _frame(**fields: Any) -> Dict[str, Any]:
+        return {"v": STREAM_PROTOCOL_VERSION, "session_id": session_id,
+                "image_index": image_index, **fields}
+
+    async def _emit_done(debug: Optional[Dict[str, Any]] = None) -> None:
+        if not streaming:
+            return
+        f = _frame(type="done")
+        if debug:
+            f["debug"] = debug
+        await _safe_emit(f)
     try:
         image_start = time.time()
         logger.info(f"Processing image {idx + 1}")
@@ -323,6 +402,32 @@ async def process_single_image(
             # Step 1: Decode image
             image_np = decode_base64_to_numpy(base64_image)
             logger.debug(f"Image {idx + 1} decoded: {image_np.shape}")
+
+            # IMAGE-CONTEXT serve path: encode the page ONCE (downscale + JPEG in
+            # a worker thread) and fire an opportunistic warm call BEFORE/parallel
+            # with detect, so vLLM prefills the shared image+instruction prefix's
+            # KV while detection/OCR run — the page's N real marked calls then
+            # reuse it. Encode-once: the same data URL is threaded into the
+            # translation calls below. Fully OFF by default => zero change.
+            if (
+                settings.translation_serve_image_context
+                and hasattr(translation_service, "translate_page_context_marked")
+            ):
+                try:
+                    page_image_data_url = await asyncio.to_thread(
+                        ndarray_to_data_url, image_np
+                    )
+                    if hasattr(translation_service, "warm_page_image"):
+                        # Fire-and-forget: warm_page_image swallows its own errors.
+                        warm_task = asyncio.create_task(
+                            translation_service.warm_page_image(page_image_data_url)
+                        )
+                except Exception as exc:  # noqa: BLE001 — best-effort priming
+                    logger.warning(
+                        f"Image {idx + 1}: image-context encode/warm failed "
+                        f"({exc!r}); continuing text-only"
+                    )
+                    page_image_data_url = None
 
             # Step 2: Detect text blocks (CTD) and speech bubbles (YOLOv10n)
             # CONCURRENTLY. CTD's session.run and YOLO's predict both offload to
@@ -363,6 +468,9 @@ async def process_single_image(
             if not blocks:
                 logger.warning(f"No text blocks detected in image {idx + 1}")
                 await emit("done", 5, 5, note="no_blocks")
+                if streaming:
+                    await _safe_emit(_frame(type="detections", boxes=[]))
+                    await _emit_done()
                 return (idx, [], None)
 
             # Step 3: Crop block regions
@@ -501,6 +609,10 @@ async def process_single_image(
             # Cross-bubble sentence-merge request (#2). None unless the shared
             # helper found dangling continuations to fuse; set by each branch.
             page_merge_req = None
+            # The raw SentenceMergePlan (groups + merged_text) behind page_merge_req,
+            # captured so the post-edit over-expansion gate can see a merge LEAD's
+            # effective (merged) JP rather than its short single fragment.
+            merge_plan = None
             if settings.use_pipeline_overlap and len(crops) > 1:
                 # PIPELINE OVERLAP with mini-batching: OCR crops in batches of 3.
                 # OCR stays on the GPU inside the semaphore; the SHARED filter /
@@ -568,12 +680,16 @@ async def process_single_image(
                 if not kept_indices:
                     logger.warning(f"Image {idx + 1}: All text regions filtered as non-Japanese")
                     await emit("done", 5, 5, note="all_filtered")
+                    if streaming:
+                        await _safe_emit(_frame(type="detections", boxes=[]))
+                        await _emit_done()
                     return (idx, [], None)
 
                 ocr_texts = list(units.kept_texts)
                 page_context_lines = list(units.page_context_lines)
                 target_positions = list(units.target_positions)
                 page_merge_req = build_merged_translation_request(units)
+                merge_plan = units.merge_plan
                 blocks = list(units.kept_blocks)
                 crops = [crops[i] for i in kept_indices]
                 all_text_regions = [all_text_regions[i] for i in kept_indices]
@@ -665,11 +781,15 @@ async def process_single_image(
                 if not units.kept_indices:
                     logger.warning(f"Image {idx + 1}: All text regions filtered as non-Japanese")
                     await emit("done", 5, 5, note="all_filtered")
+                    if streaming:
+                        await _safe_emit(_frame(type="detections", boxes=[]))
+                        await _emit_done()
                     return (idx, [], None)
 
                 page_context_lines = list(units.page_context_lines)
                 target_positions = list(units.target_positions)
                 page_merge_req = build_merged_translation_request(units)
+                merge_plan = units.merge_plan
                 ocr_texts = list(units.kept_texts)
                 blocks = list(units.kept_blocks)
                 crops = [crops[i] for i in units.kept_indices]
@@ -706,6 +826,75 @@ async def process_single_image(
         # hold the GPU slot. all_text_regions/blocks/crops/fit_rects were all built
         # and filtered inside the semaphore block above and remain in scope here.
 
+        # STREAM: emit `detections` FIRST — geometry + typeset SEED data that is
+        # final PRE-translation. fontColor/fontStrokeColor reuse the SAME helper
+        # (_detect_box_font_colors) as the final TextBox so they MATCH; zIndex is
+        # geometry-only so we run the SAME assign_smart_zindex to match. fontHeightPx
+        # is only computed post-translation (depends on the EN string length), so
+        # it is OMITTED here (optional in the contract; frontend re-fits from
+        # geometry). textRegions/bubbleRect/confidence mirror the final box.
+        if streaming:
+            det_boxes: List[Dict[str, Any]] = []
+            for i, (block, text_regions, fit_rect) in enumerate(
+                zip(blocks, all_text_regions, fit_rects)
+            ):
+                fc, sc = _detect_box_font_colors(image_np, block)
+                det_boxes.append({
+                    "index": i,
+                    "minX": int(block['minX']),
+                    "minY": int(block['minY']),
+                    "maxX": int(block['maxX']),
+                    "maxY": int(block['maxY']),
+                    "originalLanguage": "ja",
+                    "fontColor": fc,
+                    "fontStrokeColor": sc,
+                    "textRegions": [TextRegion(**r).model_dump() for r in text_regions],
+                    "bubbleRect": (
+                        TextRegion(
+                            minX=int(fit_rect["minX"]),
+                            minY=int(fit_rect["minY"]),
+                            maxX=int(fit_rect["maxX"]),
+                            maxY=int(fit_rect["maxY"]),
+                        ).model_dump()
+                        if fit_rect else None
+                    ),
+                    "confidence": float(block.get('confidence', 0.0)),
+                })
+            # zIndex matches the final assembly (geometry-only, same order/areas).
+            assign_smart_zindex(det_boxes, use_dict=True)
+            await _safe_emit(_frame(type="detections", boxes=det_boxes))
+
+        # STREAM: run the inpaint-await + `plate` emit in its own subtask so the
+        # plate can arrive AS SOON as inpaint completes (before or during the tl
+        # frames) — but it never delays `done` (we await it before assembly, as
+        # the monolithic path already does at line ~"await _await_inpaint_task").
+        plate_task: Optional["asyncio.Task"] = None
+        if streaming and inpaint_task is not None:
+            _pending_inpaint = inpaint_task
+            inpaint_task = None
+
+            async def _emit_plate() -> Optional[str]:
+                b64 = await _await_inpaint_task(idx, _pending_inpaint)
+                if b64:
+                    await _safe_emit(_frame(type="plate", data=b64))
+                return b64
+
+            plate_task = asyncio.create_task(_emit_plate())
+
+        # STREAM: per-bubble `tl`. The whole-page marked path fires this callback
+        # as EACH bubble's translation completes (as-completed, order-independent);
+        # `j` is the render index (1:1 kept list). We post-edit with the RAW
+        # per-bubble JP here (effective_jp needs the dedup/fused passes that have
+        # not run yet) and rely on the `revise` pass to correct any that change.
+        async def _on_marked_result(j: int, raw_text: str) -> None:
+            jp = ocr_texts[j] if 0 <= j < len(ocr_texts) else ""
+            conf = kept_ocr_confs[j] if 0 <= j < len(kept_ocr_confs) else None
+            en = postedit_one(raw_text, jp, ocr_conf=conf)
+            emitted_tl[j] = en
+            await _safe_emit(_frame(
+                type="tl", index=j, translatedText=en, ocrText=jp
+            ))
+
         # Translation (batched page-level [N] protocol, or parallel/sequential fallback)
         await emit("translate", 3, 5, note=f"{len(ocr_texts)} bubbles")
         translate_start = time.time()
@@ -715,6 +904,8 @@ async def process_single_image(
             page_context_lines=page_context_lines,
             target_positions=target_positions,
             merge_req=page_merge_req,
+            page_image_data_url=page_image_data_url,
+            on_marked_result=_on_marked_result if streaming else None,
         )
         translate_time = time.time() - translate_start
         logger.info(f"Image {idx + 1}: Translation completed in {translate_time*1000:.1f}ms ({len(ocr_texts)} texts)")
@@ -736,17 +927,45 @@ async def process_single_image(
         # which SUPERSEDES the narrow adjacent-identical dedup (P2.2) for the
         # in-balloon case. dedup_adjacent_identical stays the no-bubble-detector
         # fallback.
+        dedup_plan = None
         if (
             getattr(settings, "translation_bubble_dedup", True)
             and bubbles
             and len(translations) == len(blocks)
         ):
-            translations = dedup_by_bubble(translations, blocks, bubbles)
+            dedup_plan = plan_bubble_dedup(translations, blocks, bubbles)
+            translations = dedup_plan.deduped
+            # FUSED-BALLOON RETRANSLATE: when a multi-column balloon's blanked
+            # siblings DIVERGE from the winner (distinct content, not a dup),
+            # re-issue ONE marked call on the balloon's FUSED JP so the content is
+            # preserved instead of silently dropped. Gated; injected translator so
+            # the dedup module stays translator-free. Mirrors the batch path.
+            if (
+                getattr(settings, "translation_balloon_fused_retranslate", True)
+                and dedup_plan.retranslate
+                and page_context_lines
+                and len(target_positions) == len(blocks)
+                and hasattr(translation_service, "translate_page_context_marked")
+            ):
+                translations = await apply_fused_balloon_retranslate(
+                    translations,
+                    ocr_texts,
+                    dedup_plan,
+                    page_context_lines,
+                    target_positions,
+                    translation_service.translate_page_context_marked,
+                    target_language=target_language,
+                )
         elif getattr(settings, "translation_adjacent_dedup", False) and len(translations) == len(blocks):
             translations = dedup_adjacent_identical(translations, blocks)
 
         # Await the overlapped inpaint (if still running) after translation.
-        if inpaint_task is not None:
+        # In stream mode the inpaint-await + `plate` emit live in plate_task
+        # (started above); awaiting it here yields the same inpainted_b64 and
+        # guarantees the plate frame precedes `done`.
+        if plate_task is not None:
+            inpainted_b64 = await plate_task
+        elif inpaint_task is not None:
             inpainted_b64 = await _await_inpaint_task(idx, inpaint_task)
 
         # Calculate per-crop timing (distribute evenly)
@@ -761,14 +980,20 @@ async def process_single_image(
         # diverged (e.g. an OCR sub-path that didn't populate it).
         if len(kept_ocr_confs) != len(ocr_texts):
             kept_ocr_confs = [None] * len(ocr_texts)
+        # EFFECTIVE JP for the post-edit over-expansion gate: a fused-balloon winner
+        # or a sentence-merge lead renders EN that covers MORE JP than its own single
+        # OCR fragment, so the gate must compare against that fused/merged JP (else a
+        # faithful line trips is_over_expanded and is blanked to "...").
+        effective_jp = combined_effective_jp(dedup_plan, merge_plan, target_positions)
         text_boxes = []
-        for block, ocr_text, translated_text, text_regions, fit_rect, ocr_conf in zip(
+        for i, (block, ocr_text, translated_text, text_regions, fit_rect, ocr_conf) in enumerate(zip(
             blocks, ocr_texts, translations, all_text_regions, fit_rects, kept_ocr_confs
-        ):
+        )):
             # Post-translation glossaries (pure post-edit; v11 prompt untouched).
             # Shared with the batch pipeline via translation_postedit.
             # ocr_conf (when available) suppresses low-confidence name invention.
-            translated_text = postedit_one(translated_text, ocr_text, ocr_conf=ocr_conf)
+            jp_for_postedit = effective_jp.get(i, ocr_text)
+            translated_text = postedit_one(translated_text, jp_for_postedit, ocr_conf=ocr_conf)
 
             # Font sizing target: the translation is typeset to the bubble
             # INTERIOR when one was matched (wide, horizontal) — not the tight
@@ -790,17 +1015,10 @@ async def process_single_image(
             # Content-aware font colors: sample the bubble/block background from
             # the source page and pick dark-on-light vs light-on-dark so text on
             # a black bubble renders white (and vice versa) instead of a fixed
-            # black/white default that vanishes on inverted balloons.
-            try:
-                cy0 = max(0, int(block['minY'])); cy1 = min(image_np.shape[0], int(block['maxY']))
-                cx0 = max(0, int(block['minX'])); cx1 = min(image_np.shape[1], int(block['maxX']))
-                sample = image_np[cy0:cy1, cx0:cx1]
-                if sample.size:
-                    font_color, stroke_color = detect_font_colors(sample)
-                else:
-                    font_color, stroke_color = "#000000", "#FFFFFF"
-            except Exception:
-                font_color, stroke_color = "#000000", "#FFFFFF"
+            # black/white default that vanishes on inverted balloons. Shared with
+            # the streaming detections frame via _detect_box_font_colors so the
+            # early-emitted seed colors MATCH the final box.
+            font_color, stroke_color = _detect_box_font_colors(image_np, block)
 
             text_box = TextBox(
                 ocrText=ocr_text,
@@ -846,12 +1064,40 @@ async def process_single_image(
             )
 
         await emit("done", 5, 5)
+
+        # STREAM: `revise` pass. DIFF each box's FINAL translatedText (after the
+        # backfill -> dedup/fused-retranslate -> glossary post-edit passes) against
+        # what we already sent as `tl`. Emit a revise for every index whose final
+        # text differs — INCLUDING blanked ones (empty string is allowed) and any
+        # index that never got a tl (merge continuations / non-marked fallback
+        # paths), so the frontend always converges to the final rendered text.
+        if streaming:
+            _MISSING = object()
+            for i, tb in enumerate(text_boxes):
+                final_text = tb.translatedText
+                if emitted_tl.get(i, _MISSING) != final_text:
+                    await _safe_emit(_frame(
+                        type="revise", index=i, translatedText=final_text
+                    ))
+            await _emit_done(debug={
+                "timing": {
+                    "detect_ms": round(detect_time * 1000, 2),
+                    "ocr_ms": round(ocr_time * 1000, 2),
+                    "translate_ms": round(translate_time * 1000, 2),
+                },
+                "total_ms": round(image_time * 1000, 2),
+            })
         return (idx, text_boxes, inpainted_b64)
 
     except Exception as e:
         logger.error(f"Error processing image {idx + 1}: {e}", exc_info=True)
         if job_id:
             await progress_bus.finish(job_id, status="error")
+        # STREAM: terminal `error` frame. Per repo error rules the original
+        # exception is already logged above (exc_info) unmodified; the frame
+        # surfaces str(e) to the client so it can stop waiting.
+        if streaming:
+            await _safe_emit(_frame(type="error", error=str(e)))
         return (idx, [], None)
 
 
@@ -861,9 +1107,18 @@ async def _run_translation(
     page_context_lines: Optional[List[str]] = None,
     target_positions: Optional[List[int]] = None,
     merge_req=None,
+    page_image_data_url: Optional[str] = None,
+    on_marked_result=None,
 ) -> List[str]:
     """Dispatch to batched page-level translation when enabled + worthwhile,
     falling back to the legacy per-bubble parallel/sequential paths.
+
+    ``on_marked_result`` (optional, streaming) is forwarded to
+    ``translate_page_context_marked`` as its ``on_result`` callback ONLY on the
+    NON-merge whole-page path — there the marked-call ordinal ``j`` equals the
+    render index (1:1 kept list). On the MERGE path the ordinal indexes fused
+    units (re-split afterwards), so per-bubble ``tl`` is intentionally NOT fired
+    there and those bubbles converge via the later ``revise`` diff instead.
 
     ``texts`` are the KEPT lines (1:1 with the render). ``page_context_lines`` is
     the WHOLE page's dialogue (kept + dropped-dialogue) in reading order and
@@ -893,7 +1148,8 @@ async def _run_translation(
     ):
         # #2 CROSS-BUBBLE MERGE: translate the MERGED page (one unit per fused
         # sentence) and re-split the English back to member bubbles.
-        if merge_req is not None and len(merge_req.merged_page_lines) > 1:
+        is_merge = merge_req is not None and len(merge_req.merged_page_lines) > 1
+        if is_merge:
             ctx_lines = merge_req.merged_page_lines
             ctx_targets = merge_req.merged_target_positions
         else:
@@ -901,7 +1157,10 @@ async def _run_translation(
             ctx_targets = target_positions
         try:
             marked = await translation_service.translate_page_context_marked(
-                ctx_lines, ctx_targets, target_language
+                ctx_lines, ctx_targets, target_language,
+                page_image_data_url=page_image_data_url,
+                # Per-bubble tl only on the non-merge path (ordinal == render idx).
+                on_result=None if is_merge else on_marked_result,
             )
             if merge_req is not None and len(merge_req.merged_page_lines) > 1:
                 marked = apply_resplit(marked, merge_req.bubble_resplit)

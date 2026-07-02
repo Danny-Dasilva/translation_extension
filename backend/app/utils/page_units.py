@@ -192,6 +192,46 @@ def apply_resplit(
     return out
 
 
+def combined_effective_jp(
+    dedup_plan: Any,
+    merge_plan: Optional[SentenceMergePlan],
+    target_positions: Sequence[int],
+) -> Dict[int, str]:
+    """kept-index -> the EFFECTIVE JP a kept bubble's rendered EN actually covers.
+
+    Two independent re-segmentation passes make a kept bubble's EN span MORE JP
+    than its own single OCR fragment. The post-edit over-expansion gate
+    (``translation_postedit.gate_over_expansion``) compares EN word count against
+    a budget derived from the JP source; fed the SHORT single fragment it
+    false-positives on a faithful fused/merged EN and blanks it to ``...`` —
+    silently re-introducing the content drop these passes exist to fix. This maps
+    each affected kept bubble to the JP its EN really covers so the gate sees it:
+
+      * SENTENCE-MERGE lead (``merge_plan``): a cross-bubble sentence's lead bubble
+        renders the whole group's EN; its effective JP is the group ``merged_text``.
+      * FUSED-BALLOON winner (``dedup_plan.effective_jp``, populated by
+        :func:`~app.utils.bubble_grouping.apply_fused_balloon_retranslate`): the
+        winner's EN covers the balloon's fused JP.
+
+    Fused wins on the rare overlap (it is the later, wider rewrite). Both key
+    spaces are the caller's kept-list index; ``target_positions`` maps kept-index
+    to page position for the merge lookup.
+    """
+    eff: Dict[int, str] = {}
+    if merge_plan is not None:
+        for k, pp in enumerate(target_positions):
+            g_idx = merge_plan.position_to_group.get(pp)
+            if g_idx is None:
+                continue
+            g = merge_plan.groups[g_idx]
+            if g.is_merged and pp == g.lead_position:
+                eff[k] = g.merged_text
+    if dedup_plan is not None:
+        for k, jp in getattr(dedup_plan, "effective_jp", {}).items():
+            eff[k] = jp
+    return eff
+
+
 def build_page_translation_units(
     blocks: Sequence[Dict],
     ocr_texts: Sequence[str],

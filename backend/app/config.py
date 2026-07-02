@@ -315,6 +315,26 @@ class Settings(BaseSettings):
     # largest-area block) — supersedes the narrow adjacent dedup for the in-balloon
     # case. See app.utils.bubble_grouping.dedup_by_bubble.
     translation_bubble_dedup: bool = True
+
+    # P0 content-drop fix (2026-07-01): FUSED-BALLOON RETRANSLATE. dedup_by_bubble
+    # enforces "1 balloon = 1 string" — within a detected balloon it keeps ONE
+    # non-empty EN (largest-area winner) and BLANKS the rest, independent of
+    # string equality. That is correct for the DUP case (the model reconstructed
+    # the same utterance on each column-fragment), but when a multi-column balloon
+    # holds DISTINCT lines (e.g. 平然と家族で朝ごはんを + 違う…!!) each fragment was
+    # translated separately, so the winner's EN covers ONLY its own line and the
+    # blanked siblings' content is silently DROPPED from the page — the same
+    # merge->translate->resplit content-loss class documented on
+    # translation_bubble_grouping above. When True, a balloon whose blanked
+    # siblings MEANINGFULLY DIVERGE from the winner (not near-duplicates) triggers
+    # ONE extra marked-line call on the balloon's FUSED JP (member OCR joined in
+    # reading order, page context otherwise unchanged, SAME build_v11_context_prompt
+    # path); the fused EN lands on the winner and the siblings stay blank (the
+    # sentence_merge contract). Near-duplicate siblings keep the plain blank
+    # (no extra call). When False, behavior == current (blank divergent siblings).
+    # Cost is bounded: one call per multi-block balloon with divergent ENs.
+    # See app.utils.bubble_grouping.plan_bubble_dedup / apply_fused_balloon_retranslate.
+    translation_balloon_fused_retranslate: bool = True
     # Backfill safeguard: a merge-continuation is recovered standalone when its
     # lead's EN is shorter than this fraction of the fused-group JP length (i.e.
     # the lead was truncated and did NOT carry the whole sentence).
@@ -334,9 +354,30 @@ class Settings(BaseSettings):
     # Override via env TRANSLATION_CAST_ANCHOR=true|false.
     translation_cast_anchor: bool = False
 
+    # IMAGE-CONTEXT SERVE PATH (v1 Qwen3-VL-8B text-SFT). When True, each v11
+    # page-context marked call is sent as a MULTIMODAL message — the page image
+    # block FIRST, then the BYTE-IDENTICAL build_v11_context_prompt text — and a
+    # one-shot warm call pre-warms the shared image+instruction prefix so the
+    # image KV is prefilled once per page (multimodal prefix caching, verified by
+    # backend/scripts/eval/bench_image_prefix.py). v1 is text-trained but
+    # measurably exploits a page image supplied at inference (best POV arm).
+    #
+    # OFF pending product sign-off. MUST only be enabled for an IMAGE-CAPABLE
+    # serve (a VL model behind /v1); enabling it against a text-only served model
+    # would send image blocks it cannot consume. The TEXT portion stays
+    # byte-identical to the trained template (no train/serve drift) whether on or
+    # off — proven by tests/unit/test_image_context_serve.py.
+    translation_serve_image_context: bool = False
+
     # Normalize short Japanese utterances (interpunct/dot/space-separated kana,
     # runaway repeated kana) before translation so the model isn't destabilized.
-    short_utterance_normalize_enabled: bool = True
+    #
+    # v1 (Qwen3-VL-8B text-SFT) was trained on RAW builder output — normalize-on
+    # diverges on 571/29,467 training rows; the eval/build harnesses already force
+    # this False, so defaulting it False makes prod match the certified serve
+    # contract (the byte-exact trained template). Do not flip back without
+    # re-certifying builder parity (build_textsft_refusalstripped.verify_builder_parity).
+    short_utterance_normalize_enabled: bool = False
 
     # Per-bubble translation generation budget. Manga lines are short, but
     # longer context-aware lines (page-level numbered-block translation, multi-
@@ -403,6 +444,16 @@ class Settings(BaseSettings):
     # existing _maybe_rotate_vertical threshold so "rotated-for-vertical" and
     # "routed-to-AR" are the SAME crop set (no surprises). Config-tunable for ablation.
     ocr_vertical_ar_aspect: float = 1.5
+
+    # PER-BUBBLE STREAM EMISSION (WebSocket path only). When True, the
+    # ws://…/ws/translate/{lang} socket replies with the versioned event-frame
+    # protocol (detections -> per-bubble tl -> revise -> plate -> done|error,
+    # see src/types/stream.ts) instead of the single monolithic JSON response,
+    # so the extension renders each bubble as soon as it is translated. The
+    # legacy monolithic reply stays fully supported and is the fallback: with
+    # this False (default) the WS path is byte-identical to today. The HTTP
+    # POST /translate endpoint is ALWAYS monolithic regardless of this flag.
+    translation_stream_events: bool = False
 
     class Config:
         env_file = ".env"

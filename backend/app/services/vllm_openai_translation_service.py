@@ -15,7 +15,7 @@ import logging
 import math
 import os
 import time
-from typing import List
+from typing import List, Tuple
 
 import httpx
 
@@ -307,6 +307,35 @@ def build_v11_context_prompt(lines: List[str], k_idx: int) -> str:
     )
 
 
+# --------------------------------------------------------------------------- #
+# IMAGE-CONTEXT serve path (v1 Qwen3-VL-8B text-SFT) — gated by
+# settings.translation_serve_image_context (default OFF, see app/config.py).
+# --------------------------------------------------------------------------- #
+# v1 is text-trained but measurably exploits a page image supplied at INFERENCE
+# (best POV arm). The validated wire shape (backend/scripts/eval/pov_probe.py +
+# bench_image_prefix.py) is a single OpenAI chat user message whose `content` is
+# a two-block list: the IMAGE block FIRST, then the TEXT block carrying the EXACT
+# build_v11_context_prompt output. Image FIRST is deliberate — it puts the
+# (expensive) image tokens at the HEAD of the byte-identical prefix every marked
+# call on a page shares, so vLLM multimodal prefix caching pays the image KV
+# once per page (verified in bench_image_prefix.build_messages / the /metrics
+# reuse probe). The text block is byte-for-byte the trained template (no
+# train/serve drift) — this helper never mutates it.
+def build_image_text_content(image_data_url: str, text: str) -> List[dict]:
+    """Multimodal chat `content`: image block FIRST, then the verbatim text.
+
+    ``image_data_url`` is a ``data:image/...;base64,...`` URL (downscaled +
+    JPEG-encoded by the caller). ``text`` is passed through UNCHANGED — for a
+    real marked call it is ``build_v11_context_prompt(...)``; for the warm call
+    it is the shared prefix (``V11_PAGE_INSTR``). Image-first == the image KV
+    sits in the shared, cacheable prefix (see module note above).
+    """
+    return [
+        {"type": "image_url", "image_url": {"url": image_data_url}},
+        {"type": "text", "text": text},
+    ]
+
+
 def build_v11_plain_prompt(jp: str) -> str:
     """PLAIN single-line user message (no page context).
 
@@ -567,8 +596,42 @@ class VLLMOpenAITranslationService:
             page_lines, list(range(len(page_lines))), target_language
         )
 
+    async def warm_page_image(self, image_data_url: str) -> None:
+        """Opportunistically pre-warm a page's shared image+instruction prefix.
+
+        Fires ONE tiny chat call whose content is byte-identical to the head of
+        every real marked call on this page — the image block FIRST, then the
+        shared instruction ``V11_PAGE_INSTR`` (the exact opening of
+        ``build_v11_context_prompt``). Under vLLM multimodal prefix caching this
+        prefills the image KV (the expensive part) so the page's N real marked
+        calls reuse it instead of each re-prefilling the image.
+
+        ``max_tokens=1`` (we discard the output — this is a cache primer, not a
+        translation) and greedy (temperature 0). It is OPPORTUNISTIC: any error
+        is logged and swallowed, never raised, so a warm miss can only cost the
+        cache benefit, never fail the request. The warm text is the LONGEST
+        prefix safely shared with the real calls WITHOUT the actual page: it
+        stops at ``V11_PAGE_INSTR`` and deliberately fabricates NO ``Page:``
+        block (the real page/target lines are the only bytes that diverge).
+        """
+        if not image_data_url:
+            return
+        content = build_image_text_content(image_data_url, V11_PAGE_INSTR)
+        try:
+            await self._chat(
+                [{"role": "user", "content": content}],
+                max_tokens=1,
+                temperature=0.0,
+            )
+        except Exception as e:  # noqa: BLE001 — cache warming is best-effort
+            logger.warning(f"vLLM warm_page_image failed (non-fatal): {e!r}")
+
     async def _translate_one_marked(
-        self, page_lines: List[str], k_idx: int, target_language: str
+        self,
+        page_lines: List[str],
+        k_idx: int,
+        target_language: str,
+        page_image_data_url: str | None = None,
     ) -> str:
         """Translate ONE marked line (``k_idx``) of a fully-specified page.
 
@@ -608,7 +671,17 @@ class VLLMOpenAITranslationService:
         # used for both the source-aware cap and the over-expansion check.
         call_src = body if had_warai else src
         prompt = build_v11_context_prompt(lines_for_prompt, k_idx)
-        msg = [{"role": "user", "content": prompt}]
+        # IMAGE-CONTEXT path (gated upstream by translation_serve_image_context):
+        # when a page image URL is threaded through, send a multimodal [image,
+        # text] content list; the TEXT block is the UNCHANGED prompt above, so
+        # the served text stays byte-identical to the trained template. Default
+        # None => plain string content == exact prior behavior.
+        content: str | List[dict] = (
+            build_image_text_content(page_image_data_url, prompt)
+            if page_image_data_url
+            else prompt
+        )
+        msg = [{"role": "user", "content": content}]
         # FIX #1: source-length-aware cap (flat translate_max_tokens is the ceiling).
         max_tokens = source_aware_max_tokens(call_src, settings.translate_max_tokens)
         try:
@@ -635,6 +708,8 @@ class VLLMOpenAITranslationService:
         page_lines: List[str],
         target_indices: List[int],
         target_language: str = "English",
+        page_image_data_url: str | None = None,
+        on_result=None,
     ) -> List[str]:
         """v11 page-context translation over a WIDER context than the targets.
 
@@ -654,17 +729,31 @@ class VLLMOpenAITranslationService:
         Returns a list aligned 1:1 with ``target_indices`` (same order). Empty
         target lines map to "". The shared full-page prefix is byte-identical
         across calls, so vLLM prefix-caching amortizes it.
+
+        ``on_result`` (optional) is an async callback ``on_result(j, text)`` that
+        fires as EACH marked call completes (as-completed, NOT in target order),
+        where ``j`` is the 0-based ordinal into ``target_indices`` (i.e. the
+        caller's render index for a 1:1 kept list) and ``text`` is that line's
+        raw translation. It enables per-bubble streaming; the returned list is
+        unchanged (still aligned 1:1 with ``target_indices``, in order).
         """
         if not target_indices:
             return []
         page_lines = [t if t is not None else "" for t in page_lines]
-        results = await asyncio.gather(
-            *(
-                self._translate_one_marked(page_lines, k, target_language)
-                for k in target_indices
+
+        async def _one(j: int, k: int) -> Tuple[int, str]:
+            text = await self._translate_one_marked(
+                page_lines, k, target_language, page_image_data_url
             )
+            if on_result is not None:
+                await on_result(j, text)
+            return j, text
+
+        pairs = await asyncio.gather(
+            *(_one(j, k) for j, k in enumerate(target_indices))
         )
-        return list(results)
+        pairs.sort(key=lambda p: p[0])
+        return [text for _j, text in pairs]
 
     async def translate_numbered_block(
         self, texts: List[str], target_language: str = "English"
