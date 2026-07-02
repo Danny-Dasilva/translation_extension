@@ -1,0 +1,66 @@
+# v2 TEXT-ONLY TRAIN — abliterated Qwen3-VL-8B + POV-contrastive mix.
+# Pivot from the 30B (blocked: bnb can't quantize its fused MoE experts, needs 80GB —
+# see 2026-07-02_v2-30b-a3b-training-plan.md + commit 3a0ad57). This trains the PROVEN
+# 8B base (v1 recipe, fits the 5090 at bf16 ~16GB) on the v2 mix that adds 24.9k
+# POV-contrastive rows to attack the measured pronoun/POV ceiling.
+# Identical to qwen3vl_8b_textsft_v1.yaml EXCEPT data.train_path + output.dir.
+# RUN (dedicated venv, from backend/):
+#   /home/danny/venvs/qwen3vl_30b/bin/python scripts/train/sft_qwen3vl_8b_imagectx.py \
+#     --config training/configs/qwen3vl_8b_v2_pov.yaml
+model:
+  name_or_path: huihui-ai/Huihui-Qwen3-VL-8B-Instruct-abliterated
+  dtype: bfloat16
+  max_seq_length: 2048
+  load_in_4bit: false                      # bf16 full LoRA (v1 recipe; fits 32GB at ~16GB)
+  full_finetuning: false
+  max_pixels: 1048576
+  min_pixels: 200704
+
+lora:
+  r: 16
+  alpha: 32
+  dropout: 0.0
+  bias: none
+  finetune_vision_layers: false          # TEXT-ONLY (validated v1: language_model=504, vision=0)
+  finetune_language_layers: true
+  finetune_attention_modules: true
+  finetune_mlp_modules: true
+  target_modules_regex_hint: '(language_model\.layers\.\d+\.(self_attn|mlp)\.)'
+
+data:
+  train_path: /home/danny/ship_v2/data_v2_30b_messages.jsonl   # 86,137 rows incl. 24.9k POV-contrastive
+  image_root: /home/danny/ship_v2
+  eval_size: 64
+  bucket_by_modality: false
+
+train:
+  num_train_epochs: 1
+  per_device_train_batch_size: 1
+  gradient_accumulation_steps: 16         # eff batch 16 (matches v1)
+  learning_rate: 2.0e-4
+  lr_scheduler_type: cosine
+  warmup_ratio: 0.03
+  max_grad_norm: 1.0
+  weight_decay: 0.01
+  bf16: true
+  optim: adamw_8bit
+  packing: false
+  completion_only_loss: true
+  logging_steps: 20
+  save_steps_pct: 0.25                     # checkpoints for thermal-fault --resume
+  eval_steps_pct: 0.25
+  save_total_limit: 2
+  seed: 42
+  dataloader_num_workers: 4
+  report_to: none
+  in_training_eval: false                  # sm_120 in-training-eval SIGSEGVs
+  resume_from_checkpoint: null
+
+output:
+  dir: /home/danny/ship_v2_8b/out
+  log_file: /home/danny/ship_v2_8b/out/training.log
+
+dry_run:
+  enable: false
+  fraction: 1.0
+  max_steps: 0
