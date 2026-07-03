@@ -429,6 +429,23 @@ class ChapterPipeline:
                 print(f"  [{image_path.name}] bubble detect failed ({exc})")
         stats["num_bubbles"] = len(bubbles)
 
+        # --- DETECTION-TIME balloon-column fusion (opt-in, default off) ---
+        # Fuse the side-by-side columns of one balloon into ONE block BEFORE OCR
+        # so OCR sees one crop and translation one JP string per balloon. Same
+        # gated, membership-guarded fusion as the production router; no-op unless
+        # the flag is on AND the YOLO bubble detector ran. Kept in parity so the
+        # 3-way omission audit (.bench/audit_3way_p1.py) exercises the real path.
+        if settings.detection_time_balloon_grouping and bubbles:
+            from app.services.ctd_service import ComicTextDetectorService
+            _n_pre_fuse = len(blocks)
+            blocks = ComicTextDetectorService.fuse_balloon_columns(blocks, bubbles)
+            if len(blocks) != _n_pre_fuse:
+                print(
+                    f"  [{image_path.name}] balloon-column fusion "
+                    f"{_n_pre_fuse} -> {len(blocks)} blocks"
+                )
+            stats["num_blocks"] = len(blocks)
+
         # --- OCR (with per-block recognition confidence for the garble gate) ---
         t0 = time.time()
         if text_lines:

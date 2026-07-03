@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import cv2
 import numpy as np
@@ -13,6 +13,16 @@ import onnxruntime as ort
 
 from app.config import settings
 from app.utils.ctd_utils import ERASE_SEG_THRESHOLD
+# Pure geometry helpers reused for DETECTION-TIME balloon-column fusion. These are
+# the SAME guarded predicates the pre-translation `bubble_grouping` grouper uses
+# (column adjacency, glyph-width similarity, Y-overlap, RTL direction, panel-area
+# guard, YOLO-bubble membership) — reused here so fusion happens before OCR.
+from app.utils.bubble_grouping import (
+    _adjacent_columns,
+    _bubble_implausibly_large,
+    bubble_id_of,
+)
+from app.utils.orphan_lines import reading_order_sort
 
 logger = logging.getLogger(__name__)
 
@@ -813,6 +823,121 @@ class ComicTextDetectorService:
         # Manga reading order: right-to-left, then top-to-bottom.
         blocks.sort(key=lambda b: (-b["minX"], b["minY"]))
         return blocks
+
+    @staticmethod
+    def _union_block_from_members(members: Sequence[Dict]) -> Dict:
+        """Union bbox of the fused column blocks (int coords, max confidence)."""
+        return {
+            "minX": int(min(float(m["minX"]) for m in members)),
+            "minY": int(min(float(m["minY"]) for m in members)),
+            "maxX": int(max(float(m["maxX"]) for m in members)),
+            "maxY": int(max(float(m["maxY"]) for m in members)),
+            "confidence": max(float(m.get("confidence", 0.9)) for m in members),
+        }
+
+    @staticmethod
+    def fuse_balloon_columns(
+        blocks: List[Dict],
+        bubbles: Optional[Sequence[Dict]],
+        *,
+        max_span: int = 6,
+        glyph_mult: float = 1.8,
+        y_overlap_min: float = 0.50,
+        width_ratio: float = 2.2,
+        bubble_area_mult: float = 8.0,
+    ) -> List[Dict]:
+        """DETECTION-TIME balloon-column fusion (BEFORE OCR).
+
+        CTD emits one block per text COLUMN, so a multi-column vertical speech
+        balloon arrives downstream as N independent OCR/translation units — the
+        page-context model then reconstructs the sentence on EACH column
+        (duplication) or folds it onto one and BLANKS the siblings (omission),
+        and every fragment gets its own render box. This fuses the side-by-side
+        columns of ONE balloon into a SINGLE block *here*, so OCR sees one crop
+        and translation sees one JP string per balloon.
+
+        Unlike the pre-translation ``bubble_grouping`` re-segmentation (disabled
+        after the 2026-06-29 regression) there is NO merge->translate->resplit
+        roundtrip to lose text on — the fused balloon is one unit end-to-end, so
+        the failure that killed that attempt (resplit blanking continuations of a
+        correctly-grouped long balloon) cannot occur here.
+
+        Membership-gated and conservative (fusing two DISTINCT balloons is worse
+        than leaving a split):
+          * two blocks fuse only when they share a YOLO parent bubble — different
+            or no parent NEVER fuse. Requires ``bubbles`` (the input is returned
+            unchanged when the bubble detector did not run),
+          * they must pass the SAME tight same-balloon column-adjacency geometry
+            the pre-translation grouper uses (``_adjacent_columns``: X within
+            ``glyph_mult`` glyph-widths, near-equal glyph width so a fat SFX is
+            not absorbed as a column, ``y_overlap_min`` Y-overlap, RTL
+            left-stepping direction),
+          * the shared bubble must not be panel-sized relative to the fragments
+            (``_bubble_implausibly_large``) — a panel does not authorise fusing
+            everything inside it,
+          * only STRICTLY reading-order-adjacent columns fuse, runs capped at
+            ``max_span``.
+
+        Blocks are compared in column-major RTL reading order
+        (``reading_order_sort``) so the columns of one balloon are consecutive,
+        and each pairwise test is between two ORIGINAL single columns (the
+        glyph-width guard is only meaningful column-vs-column). Returns a NEW
+        block list: a fused run becomes one union block (max member confidence);
+        untouched blocks are the same dict objects. Non-mutating.
+        """
+        if not bubbles or len(blocks) < 2:
+            return list(blocks)
+
+        ordered = reading_order_sort(blocks)
+        n = len(ordered)
+        bids = [bubble_id_of(b, bubbles) for b in ordered]
+
+        def _can_fuse(j: int, k: int) -> bool:
+            ba, bb = bids[j], bids[k]
+            # Different or absent parent bubble => never fuse.
+            if ba is None or bb is None or ba != bb:
+                return False
+            a, b = ordered[j], ordered[k]
+            # A panel-sized container is not a balloon; it must not authorise
+            # fusing its contents.
+            if _bubble_implausibly_large(
+                bubbles[ba], a, b, area_mult=bubble_area_mult
+            ):
+                return False
+            # Same tight same-balloon column geometry as the grouper.
+            return _adjacent_columns(
+                a, b,
+                glyph_mult=glyph_mult,
+                y_overlap_min=y_overlap_min,
+                directional=True,
+                max_width_ratio=width_ratio,
+            )
+
+        used = [False] * n
+        fused: List[Dict] = []
+        for i in range(n):
+            if used[i]:
+                continue
+            members = [i]
+            j = i
+            # Greedy contiguous run; each step compares the last-added ORIGINAL
+            # single column with the next single column.
+            while len(members) < max_span and j + 1 < n and not used[j + 1]:
+                if not _can_fuse(j, j + 1):
+                    break
+                members.append(j + 1)
+                j += 1
+            for m in members:
+                used[m] = True
+            if len(members) == 1:
+                fused.append(ordered[i])
+            else:
+                fused.append(
+                    ComicTextDetectorService._union_block_from_members(
+                        [ordered[m] for m in members]
+                    )
+                )
+        return fused
 
     def crop_regions(
         self,
