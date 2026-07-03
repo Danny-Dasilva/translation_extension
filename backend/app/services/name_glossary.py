@@ -188,6 +188,118 @@ for _lock in NAME_LOCKS:
     _COMPILED_LOCKS.append((_lock.canonical, _lock.jp_kana, _pats))
 
 
+# --------------------------------------------------------------------------- #
+# 2e. PER-TITLE CAST REGISTER (item 5) — the single source of truth that
+#     UNIFIES the prompt-side cast anchor with the output-side NAME_LOCKS.
+# --------------------------------------------------------------------------- #
+# The v11 pronoun/gender ceiling is informational, not a model weakness: JP is
+# pro-drop, so one bubble underdetermines gender while the referent's gender is
+# a CHAPTER-level fact. A cast register SUPPLIES that missing input as an in-body
+# prompt anchor (see 2026-07-03_pov_cast_register_design.md). One record per
+# character carries everything BOTH consumers need:
+#   * prompt anchor  -> render "canonical_en (role, pronoun)" clauses
+#   * NAME_LOCKS      -> jp_kana + aliases force one canonical EN spelling
+#
+# PRECISION OVER RECALL: a wrong gender poisons every bubble for that character,
+# so a clause is emitted ONLY for members with a verified `pronoun`. A member
+# with pronoun=None (gender unknown / ambiguous honorifics) still carries its
+# kana + aliases for output repair, but is NEVER asserted in the prompt.
+@dataclass(frozen=True)
+class CastMember:
+    """One character record in a per-title cast register.
+
+    ``canonical_en`` is the verified EN spelling (None for an unnamed role such
+    as "the son"). ``role`` is a short, human-verified label ("the mother").
+    ``pronoun`` is the anchor that fixes the pronoun_gender bucket ("she/her");
+    a member with ``pronoun=None`` is never asserted in the prompt. ``jp_kana``
+    + ``aliases`` feed output-side name repair (the same data as ``NameLock``).
+    """
+
+    canonical_en: str | None
+    role: str | None
+    pronoun: str | None
+    gender: str | None = None
+    jp_kana: str | None = None
+    aliases: tuple[str, ...] = ()
+
+
+def _cast_clause(m: CastMember) -> Optional[str]:
+    """Render ONE cast member as a "Name (role, pronoun)" clause, or None.
+
+    Returns None when the member has no verified pronoun (never assert a guess)
+    or has neither a name nor a role to anchor.
+    """
+    if m.pronoun is None:
+        return None
+    if m.canonical_en:
+        if m.role:
+            return f"{m.canonical_en} ({m.role}, {m.pronoun})"
+        return f"{m.canonical_en} ({m.pronoun})"
+    if m.role:
+        return f"{m.role} ({m.pronoun})"
+    return None
+
+
+def render_cast_body(members: "tuple[CastMember, ...] | list[CastMember]") -> str:
+    """Render a cast register to the BODY of the ``Cast:`` anchor line.
+
+    Only members with a verified pronoun contribute a clause; clauses are joined
+    with "; " in register order. The result is the string passed to
+    ``build_cast_anchor_line(cast=...)`` (which prefixes "Cast: " and flattens
+    newlines). An empty/all-unknown register renders to "" — the caller then
+    injects NOTHING (byte-identical to the trained template).
+    """
+    return "; ".join(c for m in members if (c := _cast_clause(m)))
+
+
+def render_cast_anchor(
+    members: "tuple[CastMember, ...] | list[CastMember] | None",
+) -> Optional[str]:
+    """Register -> cast-anchor body string, or None when nothing is assertable.
+
+    ``None`` is the byte-safe signal: the prompt builder leaves the flag-on
+    default (or, with the flag off, injects nothing at all).
+    """
+    if not members:
+        return None
+    body = render_cast_body(members)
+    return body or None
+
+
+# >>> HAND-AUTHORED IKENIE NO HAHA MANIFEST <<<
+# Reconstructed from the existing DEFAULT_CAST_ANCHOR + NAME_LOCKS content so the
+# two hand-maintained tables collapse into ONE register. Only ユリエ->"Yurie" is
+# a confirmed name; the son/tormentor roles are the conservative roles already
+# shipped in DEFAULT_CAST_ANCHOR. あゆむ (Ayumu) carries its NAME_LOCKS aliases
+# for OUTPUT repair but has NO verified pronoun, so it is deliberately absent
+# from the rendered anchor (precision over recall). By construction:
+#     render_cast_body(IKENIE_CAST) == DEFAULT_CAST_ANCHOR  (byte-identical)
+IKENIE_CAST: tuple[CastMember, ...] = (
+    CastMember(
+        canonical_en="Yurie",
+        role="the mother",
+        pronoun="she/her",
+        gender="female",
+        jp_kana="ユリエ",
+        aliases=("Julie", "Lucia", "Yulie", "Yurié", "Yuri"),
+    ),
+    CastMember(canonical_en=None, role="the son", pronoun="he/him", gender="male"),
+    CastMember(
+        canonical_en=None, role="the tormentor", pronoun="he/him", gender="male"
+    ),
+    # あゆむ (Ayumu): kana + aliases retained for NAME_LOCKS-style output repair;
+    # gender/pronoun unknown -> intentionally NOT asserted in the prompt anchor.
+    CastMember(
+        canonical_en="Ayumu",
+        role=None,
+        pronoun=None,
+        gender=None,
+        jp_kana="あゆむ",
+        aliases=("Ayuuuummm", "Ayumumu", "Aymu", "Ayu"),
+    ),
+)
+
+
 SOURCE_CONDITIONED: tuple[SourceConditionedFix, ...] = (
     # 愛菜 (Aina, a little girl) once mistranslated as "the milk" / "milk".
     # Only correct when 愛菜 is actually in the source bubble.

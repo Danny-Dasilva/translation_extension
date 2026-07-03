@@ -294,3 +294,68 @@ class TestLowConfidenceNoInvention:
         # Omitting ocr_conf keeps backward-compatible behaviour (identity here).
         en = "Some ordinary sentence."
         assert canonicalize_names(en) == en
+
+
+# --------------------------------------------------------------------------- #
+# Cast register (item 5): unifies the prompt anchor + output NAME_LOCKS.
+# --------------------------------------------------------------------------- #
+class TestCastRegister:
+    def test_ikenie_manifest_reproduces_default_anchor_byte_for_byte(self):
+        # The hand-authored manifest MUST render to the exact static anchor the
+        # scaffold ships today — proving the register subsumes DEFAULT_CAST_ANCHOR
+        # without changing the served bytes.
+        from app.services.name_glossary import IKENIE_CAST, render_cast_body
+        from app.services.vllm_openai_translation_service import DEFAULT_CAST_ANCHOR
+
+        assert render_cast_body(IKENIE_CAST) == DEFAULT_CAST_ANCHOR
+
+    def test_member_without_pronoun_is_not_asserted(self):
+        # Precision over recall: Ayumu (gender unknown) carries kana+aliases but
+        # is never emitted as a prompt clause.
+        from app.services.name_glossary import IKENIE_CAST, render_cast_body
+
+        body = render_cast_body(IKENIE_CAST)
+        assert "Ayumu" not in body
+        # ...yet Ayumu is still present in the register for output-side repair.
+        assert any(m.canonical_en == "Ayumu" for m in IKENIE_CAST)
+        ayumu = next(m for m in IKENIE_CAST if m.canonical_en == "Ayumu")
+        assert ayumu.jp_kana == "あゆむ"
+        assert "Ayu" in ayumu.aliases
+
+    def test_named_and_role_only_clause_shapes(self):
+        from app.services.name_glossary import CastMember, render_cast_body
+
+        named = CastMember(canonical_en="Yurie", role="the mother", pronoun="she/her")
+        role_only = CastMember(canonical_en=None, role="the son", pronoun="he/him")
+        assert render_cast_body([named]) == "Yurie (the mother, she/her)"
+        assert render_cast_body([role_only]) == "the son (he/him)"
+        assert (
+            render_cast_body([named, role_only])
+            == "Yurie (the mother, she/her); the son (he/him)"
+        )
+
+    def test_named_without_role_drops_role_parens(self):
+        from app.services.name_glossary import CastMember, render_cast_body
+
+        m = CastMember(canonical_en="Yurie", role=None, pronoun="she/her")
+        assert render_cast_body([m]) == "Yurie (she/her)"
+
+    def test_empty_or_all_unknown_register_renders_empty(self):
+        from app.services.name_glossary import (
+            CastMember,
+            render_cast_anchor,
+            render_cast_body,
+        )
+
+        assert render_cast_body([]) == ""
+        assert render_cast_anchor([]) is None
+        assert render_cast_anchor(None) is None
+        unknown = CastMember(canonical_en="Ayumu", role=None, pronoun=None)
+        assert render_cast_body([unknown]) == ""
+        assert render_cast_anchor([unknown]) is None
+
+    def test_render_cast_anchor_returns_body_for_known_cast(self):
+        from app.services.name_glossary import IKENIE_CAST, render_cast_anchor
+        from app.services.vllm_openai_translation_service import DEFAULT_CAST_ANCHOR
+
+        assert render_cast_anchor(IKENIE_CAST) == DEFAULT_CAST_ANCHOR
