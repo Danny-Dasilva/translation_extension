@@ -173,10 +173,40 @@ def build_cast_anchor_line(cast: str | None = None) -> str:
 
     `cast` defaults to DEFAULT_CAST_ANCHOR. Any embedded newlines are flattened
     to spaces so the result is guaranteed to be ONE line (it must not introduce
-    extra structure into the numbered "Page:" block).
+    extra structure into the numbered "Page:" block). Pass a per-title cast
+    register rendered via ``name_glossary.render_cast_anchor`` to override the
+    static default with dynamic, verified pronoun/role anchors.
     """
     body = (cast if cast is not None else DEFAULT_CAST_ANCHOR).replace("\n", " ").strip()
     return f"Cast: {body}"
+
+
+# --------------------------------------------------------------------------- #
+# NARRATION-CAPTION 3rd-person directive (item 5) — OPTIONAL serve-time lever
+# --------------------------------------------------------------------------- #
+# A single IN-BODY directive line inserted BETWEEN the "Page:" block and the
+# "Translate line {k}:" directive, ONLY when the marked line is a NARRATION
+# caption AND settings.translation_render_narration_3rd_person is True (default
+# False). Narration boxes are a narrator's aside, not a character speaking, so
+# they should not inherit the dialogue path's first/second-person pressure.
+#
+# WHY in-body and NEVER a `system` message: identical train/serve-safety
+# rationale as the cast anchor above (~95% chrF++-collapse risk class on this
+# format-sensitive path). Default OFF / non-narration line => byte-identical to
+# the trained template (proven by tests/unit/test_narration_prompt.py).
+NARRATION_3RD_PERSON_DIRECTIVE = (
+    "Note: the marked line is a narration caption (not spoken dialogue); "
+    "render it in the third person."
+)
+
+
+def build_narration_directive_line() -> str:
+    """Return the single in-body narration-conditioning directive line.
+
+    Newlines are flattened so the result is guaranteed to be ONE line (it must
+    not introduce extra structure into the numbered "Page:" block).
+    """
+    return NARRATION_3RD_PERSON_DIRECTIVE.replace("\n", " ").strip()
 
 
 import re as _nre  # noqa: E402  (local alias for short-utterance normalize)
@@ -279,13 +309,26 @@ def append_haha(en: str) -> str:
     return f"{s}, haha"
 
 
-def build_v11_context_prompt(lines: List[str], k_idx: int) -> str:
+def build_v11_context_prompt(
+    lines: List[str],
+    k_idx: int,
+    cast: str | None = None,
+    is_narration: bool = False,
+) -> str:
     """CONTEXT-AUGMENTED single-line user message (page translation).
 
     Mirrors build_v11_dataset.build_context_prompt(PAGE_INSTR, lines, k_idx):
         {PAGE_INSTR}\n\nPage:\n1. {jp1}\n...\nN. {jpN}\n\nTranslate line {k}: {jpk}
     `lines` is the full ordered page (reading order); k_idx is the 0-based
     target line. k in the prompt is 1-based.
+
+    ``cast`` (item 4/5): optional per-title cast-register body (see
+    ``name_glossary.render_cast_anchor``). When the cast-anchor flag is on and
+    ``cast`` is provided it overrides the static DEFAULT_CAST_ANCHOR; ``None``
+    keeps today's flag-on default. ``is_narration`` (item 5): when the marked
+    line is a narration caption AND the narration flag is on, a single in-body
+    third-person directive is inserted. BOTH levers are default-off / no-arg =>
+    the prompt is BYTE-IDENTICAL to the trained template.
     """
     numbered = "\n".join(f"{i + 1}. {ln}" for i, ln in enumerate(lines))
     k = k_idx + 1
@@ -298,11 +341,20 @@ def build_v11_context_prompt(lines: List[str], k_idx: int) -> str:
     # NEVER a system message (collapse-risk class on this format-sensitive path).
     cast_block = ""
     if getattr(settings, "translation_cast_anchor", False):
-        cast_block = f"{build_cast_anchor_line()}\n\n"
+        cast_block = f"{build_cast_anchor_line(cast)}\n\n"
+    # OPTIONAL narration 3rd-person directive (item 5): a single in-body line
+    # AFTER the Page: block, only for a narration-caption marked line. Default
+    # OFF / non-narration => byte-identical. NEVER a system message.
+    narration_block = ""
+    if is_narration and getattr(
+        settings, "translation_render_narration_3rd_person", False
+    ):
+        narration_block = f"{build_narration_directive_line()}\n\n"
     return (
         f"{V11_PAGE_INSTR}\n\n"
         f"{cast_block}"
         f"Page:\n{numbered}\n\n"
+        f"{narration_block}"
         f"Translate line {k}: {target}"
     )
 
@@ -554,7 +606,11 @@ class VLLMOpenAITranslationService:
         )
 
     async def translate_page_context(
-        self, texts: List[str], target_language: str = "English"
+        self,
+        texts: List[str],
+        target_language: str = "English",
+        cast: str | None = None,
+        narration_indices: "set[int] | frozenset[int] | None" = None,
     ) -> List[str]:
         """v11 CONTEXT-AUGMENTED page translation: N marked-line calls.
 
@@ -593,7 +649,11 @@ class VLLMOpenAITranslationService:
             return []
         page_lines = [t if t is not None else "" for t in texts]
         return await self.translate_page_context_marked(
-            page_lines, list(range(len(page_lines))), target_language
+            page_lines,
+            list(range(len(page_lines))),
+            target_language,
+            cast=cast,
+            narration_indices=narration_indices,
         )
 
     async def warm_page_image(self, image_data_url: str) -> None:
@@ -632,6 +692,8 @@ class VLLMOpenAITranslationService:
         k_idx: int,
         target_language: str,
         page_image_data_url: str | None = None,
+        cast: str | None = None,
+        is_narration: bool = False,
     ) -> str:
         """Translate ONE marked line (``k_idx``) of a fully-specified page.
 
@@ -641,6 +703,10 @@ class VLLMOpenAITranslationService:
         ``build_v11_context_prompt`` so the served prompt matches the v11 LoRA's
         training template exactly. Pre-LLM SFX-glossary and net-slang 笑 gates
         run on the MARKED line only (context lines stay verbatim).
+
+        ``cast`` / ``is_narration`` are the optional serve-time conditioning
+        levers threaded into ``build_v11_context_prompt``; both default to the
+        byte-identical trained template (see that function's docstring).
         """
         src = page_lines[k_idx]
         if not src.strip():
@@ -670,7 +736,9 @@ class VLLMOpenAITranslationService:
         # The effective JP for the marked line (笑-stripped body when applicable);
         # used for both the source-aware cap and the over-expansion check.
         call_src = body if had_warai else src
-        prompt = build_v11_context_prompt(lines_for_prompt, k_idx)
+        prompt = build_v11_context_prompt(
+            lines_for_prompt, k_idx, cast=cast, is_narration=is_narration
+        )
         # IMAGE-CONTEXT path (gated upstream by translation_serve_image_context):
         # when a page image URL is threaded through, send a multimodal [image,
         # text] content list; the TEXT block is the UNCHANGED prompt above, so
@@ -710,6 +778,8 @@ class VLLMOpenAITranslationService:
         target_language: str = "English",
         page_image_data_url: str | None = None,
         on_result=None,
+        cast: str | None = None,
+        narration_indices: "set[int] | frozenset[int] | None" = None,
     ) -> List[str]:
         """v11 page-context translation over a WIDER context than the targets.
 
@@ -736,14 +806,27 @@ class VLLMOpenAITranslationService:
         caller's render index for a 1:1 kept list) and ``text`` is that line's
         raw translation. It enables per-bubble streaming; the returned list is
         unchanged (still aligned 1:1 with ``target_indices``, in order).
+
+        ``cast`` is the optional per-title cast-register body threaded into every
+        marked call's prompt (see ``build_v11_context_prompt``). ``narration_indices``
+        is an optional set of 0-based ``page_lines`` positions that are NARRATION
+        captions; a marked target in that set gets the 3rd-person directive (only
+        when its flag is on). Both default to None => byte-identical trained
+        template.
         """
         if not target_indices:
             return []
         page_lines = [t if t is not None else "" for t in page_lines]
+        _narration = narration_indices or frozenset()
 
         async def _one(j: int, k: int) -> Tuple[int, str]:
             text = await self._translate_one_marked(
-                page_lines, k, target_language, page_image_data_url
+                page_lines,
+                k,
+                target_language,
+                page_image_data_url,
+                cast=cast,
+                is_narration=k in _narration,
             )
             if on_result is not None:
                 await on_result(j, text)

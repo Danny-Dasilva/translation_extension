@@ -180,3 +180,62 @@ def test_plain_prompt_unaffected_by_cast_flag():
     off = build_v11_plain_prompt("おかえり")
     assert on == off
     assert "Cast:" not in on
+
+
+# ---------------------------------------------------------------------------
+# Threaded per-title cast register (item 5): dynamic cast overrides the static
+# default; empty/absent register stays byte-identical.
+# ---------------------------------------------------------------------------
+
+def test_flag_off_byte_identical_even_with_dynamic_cast():
+    # The byte-identity invariant is unconditional on the flag-OFF path: a
+    # dynamic cast supplied while the flag is off changes NOTHING.
+    settings.translation_cast_anchor = False
+    got = build_v11_context_prompt(PAGE, 1, cast="Someone (the hero, they/them)")
+    assert got == GOLDEN_FLAG_OFF
+
+
+def test_flag_on_none_cast_uses_static_default():
+    # Threading defaults to None => today's flag-on behaviour (DEFAULT anchor).
+    settings.translation_cast_anchor = True
+    got_default = build_v11_context_prompt(PAGE, 1)
+    got_none = build_v11_context_prompt(PAGE, 1, cast=None)
+    assert got_default == got_none
+    assert f"Cast: {DEFAULT_CAST_ANCHOR}" in got_none
+
+
+def test_flag_on_dynamic_cast_overrides_default_anchor():
+    settings.translation_cast_anchor = True
+    dynamic = "Aki (the sister, she/her); Ren (the brother, he/him)"
+    got = build_v11_context_prompt(PAGE, 1, cast=dynamic)
+    assert f"Cast: {dynamic}" in got
+    # It REPLACES, not appends to, the static default.
+    assert DEFAULT_CAST_ANCHOR not in got
+    # Exactly one Cast line, still before the Page block.
+    assert got.count("Cast:") == 1
+    assert got.index("\n\nCast:") < got.index("\n\nPage:")
+
+
+def test_flag_on_ikenie_manifest_matches_static_default_bytes():
+    # The hand-authored Ikenie manifest rendered through the register produces
+    # the SAME served prompt as the static default anchor (the register is a
+    # drop-in unification, not a behaviour change for this title).
+    from app.services.name_glossary import IKENIE_CAST, render_cast_anchor
+
+    settings.translation_cast_anchor = True
+    manifest_prompt = build_v11_context_prompt(
+        PAGE, 1, cast=render_cast_anchor(IKENIE_CAST)
+    )
+    default_prompt = build_v11_context_prompt(PAGE, 1)
+    assert manifest_prompt == default_prompt
+
+
+def test_flag_on_empty_register_falls_back_to_default():
+    # render_cast_anchor([]) is None => the builder keeps the flag-on default
+    # rather than emitting an empty "Cast: " line.
+    from app.services.name_glossary import render_cast_anchor
+
+    settings.translation_cast_anchor = True
+    got = build_v11_context_prompt(PAGE, 1, cast=render_cast_anchor([]))
+    assert f"Cast: {DEFAULT_CAST_ANCHOR}" in got
+    assert "Cast: \n" not in got

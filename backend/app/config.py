@@ -354,6 +354,27 @@ class Settings(BaseSettings):
     # Override via env TRANSLATION_CAST_ANCHOR=true|false.
     translation_cast_anchor: bool = False
 
+    # A/B FLAG (item 5): NARRATION-CAPTION 3rd-person conditioning for the v11
+    # page-context prompt. Manga carries two box kinds: spoken dialogue bubbles
+    # and NARRATION captions (rectangular boxes — a narrator's aside, not a
+    # character speaking). The caption-vs-dialogue box kind is detected upstream
+    # but discarded before the prompt is built, so narration is translated with
+    # the same speaker/pronoun pressure as dialogue and often comes out in an
+    # inappropriate first/second person. When True AND the marked line is a
+    # narration caption, build_v11_context_prompt inserts ONE in-body directive
+    # line (BETWEEN the "Page:" block and the "Translate line" directive) asking
+    # for a third-person render. Default FALSE => the served prompt is
+    # BYTE-IDENTICAL to the trained v11 template (proven by
+    # tests/unit/test_narration_prompt.py); the directive is opt-in AND only
+    # fires for lines the caller marks as narration.
+    #
+    # CRITICAL: like the cast anchor, this is an IN-BODY context line, NEVER a
+    # `system` message — a system message on this format-sensitive page-context
+    # path is the ~95% chrF++-collapse risk class (see MEMORY.md
+    # chat-template-mismatch). Override via env
+    # TRANSLATION_RENDER_NARRATION_3RD_PERSON=true|false.
+    translation_render_narration_3rd_person: bool = False
+
     # IMAGE-CONTEXT SERVE PATH (v1 Qwen3-VL-8B text-SFT). When True, each v11
     # page-context marked call is sent as a MULTIMODAL message — the page image
     # block FIRST, then the BYTE-IDENTICAL build_v11_context_prompt text — and a
