@@ -292,6 +292,24 @@ class Settings(BaseSettings):
     # -> NO train/serve risk. See app.utils.bubble_grouping.
     translation_bubble_grouping: bool = False  # DISABLED. Rework #2 (membership column-adjacency+RTL+glyph-width+panel guards) FAILED validation 2026-06-29: Ikenie4 regen corrected-omissions 14(off)->50(on), naive 86->277. Root cause is now DEEPER than membership over-merge: even a CORRECTLY-grouped long multi-column balloon loses text in the merge->translate->resplit roundtrip (the model consolidates the fused JP onto the lead, resplit blanks the continuations without redistributing — e.g. p113 6-column plea truncated). Needs a resplit/redistribution fix or a span cap before re-enable. P2 backfill+dedup stay on.
 
+    # DETECTION-TIME BALLOON-COLUMN FUSION (pre-OCR re-segmentation). The
+    # systemic-defect fix all four pipeline-audit lenses converged on. CTD emits
+    # one block per text COLUMN, so a multi-column vertical balloon arrives as N
+    # independent OCR/translation units (the model duplicates or blanks siblings).
+    # When True, the side-by-side columns of ONE balloon are fused into a SINGLE
+    # block *before* crop/OCR (see ComicTextDetectorService.fuse_balloon_columns),
+    # so OCR sees ONE crop and translation sees ONE JP string per balloon. This is
+    # DISTINCT from (and cleaner than) the disabled `translation_bubble_grouping`
+    # above: there is NO merge->translate->resplit roundtrip to lose text on (the
+    # exact failure that killed the 2026-06-29 attempt, which retrofitted grouping
+    # onto already-split OCR) — the fused balloon is one unit end-to-end. Fusion
+    # is membership-gated + guarded (same YOLO parent bubble ONLY, tight
+    # column-adjacency geometry reused from app.utils.bubble_grouping, panel-area
+    # guard, span cap), so different balloons / wide SFX / panel containers never
+    # fuse. Requires the YOLO bubble detector (no bubbles => no fusion). Default
+    # OFF: safe opt-in pending GPU regen + 3-way omission audit.
+    detection_time_balloon_grouping: bool = False
+
     # SAFETY NET 1 (P2.1): EMPTY-BUBBLE BACKFILL. After the marked page-context
     # output is parsed, any KEPT high-OCR-confidence non-empty JP bubble that
     # ended up with an EMPTY translation (the model folded its sentence onto a

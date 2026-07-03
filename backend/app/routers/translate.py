@@ -24,6 +24,7 @@ from PIL import Image
 from app.models.request import TranslateRequest
 from app.models.response import TranslateResponse, TextBox, TextRegion
 from app.services.detector_factory import create_detector
+from app.services.ctd_service import ComicTextDetectorService
 from app.services.manga_ocr_service import MangaOCRService
 from app.services.parseq_ocr_service import ParseqOCRService
 from app.utils.image_processing import (
@@ -472,6 +473,21 @@ async def process_single_image(
                     await _safe_emit(_frame(type="detections", boxes=[]))
                     await _emit_done()
                 return (idx, [], None)
+
+            # DETECTION-TIME balloon-column fusion (opt-in, default off). Fuse the
+            # side-by-side columns of one speech balloon into ONE block BEFORE
+            # cropping so OCR sees one crop and translation one JP string per
+            # balloon — avoiding the per-column duplication/omission the model
+            # otherwise produces. Membership-gated on the YOLO bubbles; no-op when
+            # the bubble detector did not run. See ComicTextDetectorService.
+            if settings.detection_time_balloon_grouping and bubbles:
+                _n_pre_fuse = len(blocks)
+                blocks = ComicTextDetectorService.fuse_balloon_columns(blocks, bubbles)
+                if len(blocks) != _n_pre_fuse:
+                    logger.info(
+                        f"Image {idx + 1}: detection-time balloon-column fusion "
+                        f"{_n_pre_fuse} -> {len(blocks)} blocks"
+                    )
 
             # Step 3: Crop block regions
             crops = detector_service.crop_regions(image_np, blocks)
