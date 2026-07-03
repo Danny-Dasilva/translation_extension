@@ -28,8 +28,21 @@ OVER_BROAD_AREA_FRAC: float = 0.30
 
 # Proportional padding for detected line rects (detector line bboxes routinely
 # clip ascenders/descenders and the first/last glyph).
+#
+# ``LINE_PAD_RATIO`` is the CROSS-axis pad (perpendicular to the reading
+# direction) — it catches stroke anti-aliasing / ascenders that spill out the
+# *side* of a tight line bbox.
+#
+# ``TAIL_PAD_RATIO`` is the END-OF-LINE pad, applied ALONG the reading axis
+# (top/bottom of a vertical column, left/right of a horizontal line). Detector
+# line bboxes frequently clip — or entirely drop — the FIRST/LAST glyph of a
+# column (e.g. the p005 "に" at the tail of a vertical column), which then
+# survives un-erased onto the page. One glyph ≈ the line's short side, so the
+# two ends of the long axis are padded by ~a full glyph (symmetrically), not by
+# the much smaller cross pad. (audit §4.5)
 LINE_PAD_RATIO: float = 0.25
 LINE_PAD_MIN: int = 6
+TAIL_PAD_RATIO: float = 1.0
 
 # Final dilation pad, proportional to glyph short-side: ``max(6, 0.25*short)``.
 # A fixed ~4-5 px pad is too small for large fonts, leaving stroke halos that
@@ -114,9 +127,10 @@ def build_inpaint_mask(
 
       * every detected ``text_lines`` bbox (padded) — the detector found strokes
         there, so it is text and must be erased whether or not its OCR was kept;
-      * every kept ``blocks`` bbox — re-rendered dialogue, SOLID-filled (now ALL
-        kept blocks, not only bubble-matched ones; fills are median/NS so the
-        downstream clamp + the over-broad guard protect art);
+      * every kept ``blocks`` bbox — re-rendered dialogue, SOLID-filled ONLY
+        when the block matched a speech bubble (``fit_rects[bi] is not None``)
+        so the rectangle lands inside the balloon, not on artwork (audit §4.4).
+        Un-bubbled kept blocks rely on their tight seg ink (below) instead;
       * ``erase_blocks`` (gate-dropped real JP) — UNCHANGED: their tight detector
         ink is retained via the seg-mask clip; a full-bbox fill is used only for
         SMALL erase blocks when no detector mask is available (avoids painting
@@ -135,8 +149,9 @@ def build_inpaint_mask(
         dilation) so the human-reference-kept labels are never erased even though
         the detector also found their text lines.
 
-    ``fit_rects`` is retained for signature compatibility (callers pass the
-    bubble match); it no longer gates the fills.
+    ``fit_rects`` (per-block bubble match, index-aligned with ``blocks``) gates
+    the step-(2) solid block fill: only bubble-matched blocks are solid-filled;
+    ``None`` entries / a ``None`` list fall back to tight line + seg ink.
     """
     erase_blocks = erase_blocks or []
     leave_intact_blocks = leave_intact_blocks or []
@@ -170,24 +185,55 @@ def build_inpaint_mask(
         lw, lh = x1 - x0, y1 - y0
         if lw * lh > over_broad_area:  # over-broad clamp (art guard)
             continue
-        short_sides.append(min(lw, lh))
-        pad = max(LINE_PAD_MIN, int(LINE_PAD_RATIO * min(lw, lh)))
-        px0 = max(0, x0 - pad); py0 = max(0, y0 - pad)
-        px1 = min(w, x1 + pad); py1 = min(h, y1 + pad)
+        short = min(lw, lh)
+        short_sides.append(short)
+        # Asymmetric-by-axis padding: a small CROSS pad (perpendicular to the
+        # reading direction) for stroke spill, and a full-glyph TAIL pad along
+        # the reading axis so an end-of-column glyph the detector bbox clipped
+        # (p005 "に", audit §4.5) is still covered — SYMMETRICALLY on both ends
+        # of that axis. Applied to the long axis: vertical column -> top/bottom,
+        # horizontal line -> left/right.
+        cross_pad = max(LINE_PAD_MIN, int(LINE_PAD_RATIO * short))
+        tail_pad = max(LINE_PAD_MIN, int(TAIL_PAD_RATIO * short))
+        if lh >= lw:  # vertical column: reading axis is vertical
+            px0 = max(0, x0 - cross_pad); px1 = min(w, x1 + cross_pad)
+            py0 = max(0, y0 - tail_pad); py1 = min(h, y1 + tail_pad)
+        else:  # horizontal line: reading axis is horizontal
+            px0 = max(0, x0 - tail_pad); px1 = min(w, x1 + tail_pad)
+            py0 = max(0, y0 - cross_pad); py1 = min(h, y1 + cross_pad)
         cv2.rectangle(mask, (px0, py0), (px1, py1), 255, thickness=-1)
         cv2.rectangle(detected_area, (px0, py0), (px1, py1), 255, thickness=-1)
 
-    # (2) Every KEPT block -> solid fill (re-rendered dialogue). fix #3: ALL kept
-    #     blocks, not only bubble-matched ones. The over-broad clamp drops any
-    #     pathologically large block so a runaway detection never paints art.
-    for b in blocks:
+    # (2) KEPT block -> solid bbox fill (re-rendered dialogue), BUBBLE-GATED.
+    #     A block is solid-filled ONLY when it matched a speech bubble
+    #     (``fit_rects[bi] is not None``): the rectangle then lands INSIDE the
+    #     balloon interior, never on bare artwork. Un-bubbled kept blocks (SFX /
+    #     narration over art) are added to ``detected_area`` only — their TIGHT
+    #     detector seg ink is still erased for recall by step (4), without
+    #     painting a rectangular scar over the art.
+    #
+    #     REGRESSION FIX (audit §4.4): 22fd106 dropped this gate ("ALL kept
+    #     blocks, not only bubble-matched ones") and scarred artwork with
+    #     rectangles; the gate is restored here. Line-level recall (step 1) and
+    #     seg-ink recall (step 4) still catch dropped/residual JP over art.
+    #     When no bubble detector is available (``fit_rects`` None) NO block is
+    #     solid-filled — everything falls back to tight line rects + seg ink,
+    #     the historically safe behaviour. The over-broad clamp still drops any
+    #     pathologically large block first.
+    for bi, b in enumerate(blocks):
         x0, y0, x1, y1 = _clip(b)
         if x1 <= x0 or y1 <= y0:
             continue
         if (x1 - x0) * (y1 - y0) > over_broad_area:  # over-broad clamp (art guard)
             continue
         cv2.rectangle(detected_area, (x0, y0), (x1, y1), 255, thickness=-1)
-        cv2.rectangle(mask, (x0, y0), (x1, y1), 255, thickness=-1)
+        in_bubble = (
+            fit_rects is not None
+            and bi < len(fit_rects)
+            and fit_rects[bi] is not None
+        )
+        if in_bubble:
+            cv2.rectangle(mask, (x0, y0), (x1, y1), 255, thickness=-1)
 
     # (3) erase-only (dropped-but-real-JP) blocks — UNCHANGED behaviour: extend
     #     the seg-clip area so their TIGHT detector ink is retained, but do NOT
