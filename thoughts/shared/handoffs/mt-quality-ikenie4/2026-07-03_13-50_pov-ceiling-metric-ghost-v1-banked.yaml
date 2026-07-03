@@ -1,0 +1,234 @@
+---
+session: mt-quality-ikenie4
+date: 2026-07-03
+status: complete
+outcome: V1_BANKED_POV_CEILING_WAS_A_METRIC_GHOST
+---
+
+goal: >
+  Continue the v2 push to break the gendered-pronoun / POV "ceiling" in the JP->EN
+  manga translator. Resume from the 2026-07-02 gate-pass handoff (v1 8B SFT shipped,
+  streaming + image-context serve live). Explore + fund next-gen model/data approaches.
+
+now: >
+  THE HEADLINE: the "POV ceiling" that drove this entire v2 effort was a MEASUREMENT
+  ARTIFACT. A corrected two-axis probe (scripts/eval/pov_probe_v2.py, committed) shows
+  v1's genuine he<->she gender-inversion rate = 0/67 on a curated gender-obligatory
+  subset. The old probe conflated person-choice (pro-drop -> "I/you") with gender,
+  carried a 79% she-class-prior, and counted laughter/blob/misalignment artifacts.
+  Both v2 experiments this session failed because they were fixing a phantom.
+  DECISION: bank v1 as the ship model (it resolves gender correctly). Stop the POV
+  chase. Redirect to REAL quality levers (below).
+
+test: >
+  cd backend && .venv/bin/python -m pytest tests/unit/ -q   # 756 pass, 2 PRE-EXISTING
+  fails (test_logging_async request_id, test_unify_schema register tags).
+  Corrected POV eval: python3 -m scripts.eval.pov_probe_v2 --dump --json
+
+banked_wins_this_session:
+  - "OOTB myth corrected: prod is FINE-TUNED (v11fix8 Gemma-4 -> v1 Qwen3-VL-8B-ablit+SFT), +10.10 chrF++ over old prod (CI95 [+7.7,+12.9] p=0). Audit doc: thoughts/shared/research/... (this session's agents)."
+  - "Streaming + image-context serve SHIPPED: translation_stream_events + translation_serve_image_context flipped default True (commit 620e536); frontend build + 27 protocol tests green; first-text 252-645ms perceived. OUTSTANDING: live in-browser test on real reader sites (needs interactive session)."
+  - "OCR conf-gate recalibrated from the 650-row labeled table (commit 4ac7cf7): long-text floor 0.65->0.80 + short-text carve-out + unconditional dup-kanji/kana (catches 身身わわ@0.92). 156 gate tests pass."
+  - "Corrected POV eval tool (commit, pov_probe_v2.py) — retires the broken scorer; this is the durable artifact that stops future ghost-chasing."
+
+why_the_dead_ends_dont_work:
+  - option: "30B-A3B QLoRA (was the funded v2 base)"
+    verdict: "IMPOSSIBLE on <=48GB GPUs — not just tight, architecturally blocked."
+    why: >
+      bitsandbytes NF4 cannot quantize Qwen3VLMoeTextExperts' FUSED 3-D nn.Parameter
+      experts (gate_up_proj/down_proj). transformers 5.12 replace_with_bnb_linear only
+      swaps nn.Linear->Linear4bit, so 0/60 experts quantize; 28.99B expert params stay
+      bf16 = 54GB; base loads ~57-59GB, OOMs at ~32% on the 32GB 5090. device_map=
+      sequential+cpu-offload avoids the OOM (21GB peak) but only by CPU-offloading the
+      bf16 experts -> unusably slow + a bnb meta-tensor bug. Corrects the earlier
+      'static G0 green' (that confirmed LoRA can TARGET experts, missed that the frozen
+      base experts can't be QUANTIZED). Needs A100/H100-80GB. Commit 3a0ad57; G0 in
+      validate_30b_g0.py now emits a clean NO-GO. Plan: thoughts/shared/plans/2026-07-02_v2-30b-a3b-training-plan.md.
+  - option: "Text-only POV-contrastive SFT (v2-8B, 24.9k mined POV rows)"
+    verdict: "TRAINED (2.4h, loss 3.24->1.03) then DON'T-PROMOTE — regressed both axes."
+    why: >
+      Fair eval: chrF++ -3.08 vs v1 (CI95 [-4.85,-1.53] p=0 SIG) AND POV did not move
+      (v2 <= v1 everywhere; v2+image COLLAPSED to 0% Furube). Applied preference
+      pressure with NO new gender evidence -> the model guesses more confidently, not
+      more correctly, plus a fluency tax. The mined rows were also wrong-distribution
+      (clean named LN/VN prose vs nameless manga captions). Adapter + scorecards kept
+      (box ~/ship_v2_8b/out/final; scripts/eval/scorecards/ikenie4/*v2_fair*). Memory:
+      feedback_pov_contrastive_sft_regressed.
+  - option: "Image-as-context LoRA (page image at train + inference; PBP-VIS-NUM)"
+    verdict: "TRAINED both arms (image-on + image-off control) then DON'T-PROMOTE."
+    why: >
+      Clean two-arm control (image value = image-on - image-off) on held-out Furube:
+      image value = +2.4pt POV but he<->she inversions FIXED = 0 (the decisive
+      criterion). 21 evasion->pronoun gains vs 14 regressions (net +7/294, noisy). A
+      manga panel rarely encodes a THIRD-PERSON referent's gender, so the image can't
+      supply what's missing. Vision LoRA DID attach (vision_tower=216) and mixed
+      image/text batches work -- the method is sound, the SIGNAL isn't there. Memory:
+      feedback_image_context_poc_result. Adapters: box ~/merged_image{on,off} (17GB
+      each -- USER: OK to delete to reclaim 34GB).
+  - option: "ALL of the above (the meta-reason)"
+    verdict: "They chased a failure that doesn't exist."
+    why: >
+      pov_probe_v2 proved v1's real he<->she inversion rate = 0. The 'ceiling' = person/
+      register conflation (v1 renders monologue 'I' on 67.8% of 3rd-person NARRATION
+      captions -- a rendering-style choice, not a gender error) + a 79% she-prior + ~24
+      junk rows. No model/data/method lever can improve a metric measuring the wrong
+      thing. Memory: feedback_pov_metric_is_broken.
+
+ten_potential_next_steps:
+  - id: 1
+    title: "Fully ship v1 (close the rollout loop)"
+    roi: HIGH
+    effort: LOW
+    detail: >
+      Flags are default-on; do the OUTSTANDING live in-browser test on real reader
+      sites (prefetch hit-rate instrumentation), then consider it shipped. This is the
+      banked +10.10-chrF win -- finish landing it.
+  - id: 2
+    title: "THE systemic balloon-fragmentation defect (detection-time grouping)"
+    roi: HIGHEST
+    effort: HIGH
+    detail: >
+      The REAL #1 quality bug all four pipeline-audit lenses converged on (synthesis
+      2026-07-02 sec2). CTD emits one block per text COLUMN, so multi-column balloons
+      get duplicated/blanked downstream. Fix = fuse side-by-side columns at DETECTION
+      time (ctd_service.py:692-745 + bubble_grouping.py:114-156 geometry) so OCR sees
+      one crop. Prior 06-29 attempt failed by retrofitting onto already-split OCR;
+      detection-time is the correct fix. Validate via .bench/audit_3way_p1.py.
+      Memory: project_p1_bubble_grouping_resplit.
+  - id: 3
+    title: "Retire the broken POV scorer; promote pov_probe_v2 into the cert gate"
+    roi: MED
+    effort: LOW
+    detail: >
+      pov_probe.py's gendered_rate is misleading (person/gender conflation). Swap the
+      two-axis pov_probe_v2 into any gate/scorecard that used it, and build the
+      one-command run_cert_gate.sh aggregating the 6 signals (still outstanding from
+      the 07-02 handoff).
+  - id: 4
+    title: "Axis-B narration register (the ONE real residual)"
+    roi: MED
+    effort: MED
+    detail: >
+      v1 renders 1st/2nd person on 67.8% of 3rd-person narration captions. It's a
+      rendering-style preference, not a bug -- but if 3rd-person narration is desired,
+      feed the caption-vs-dialogue BOX-TYPE flag (currently discarded upstream) into
+      the prompt so narration renders in 3rd person. Product decision first: is this
+      even wrong? Many readers prefer the monologue voice.
+  - id: 5
+    title: "Cast manifest for NAME/consistency (not gender)"
+    roi: MED
+    effort: MED
+    detail: >
+      The build_cast_anchor_line(cast=...) seam already exists (empty=byte-identical,
+      golden-test-guarded). Hand-author an Ikenie manifest, flip translation_cast_anchor,
+      A/B. Value is NAME canonicalization + multi-character consistency across a
+      chapter -- a real quality win independent of the (solved) gender question.
+      Design: thoughts/shared/research/2026-07-03_pov_cast_register_design.md.
+  - id: 6
+    title: "Dense-32B-abliterated zero-shot for GENERAL quality (not POV)"
+    roi: MED
+    effort: LOW
+    detail: >
+      Qwen3-VL-32B-Dense-abliterated now exists (dense -> sidesteps the fused-MoE bnb
+      blocker; QLoRA-trainable on the 5090). Zero-shot it through chrF/adequacy (NOT
+      the dead POV motivation) -- does more active capacity lift OVERALL translation
+      quality? One-line base swap into the existing scaffold. Options:
+      thoughts/shared/research/2026-07-03_pov_model_compute_options.md.
+  - id: 7
+    title: "Inpaint/typeset visual fixes (solid-rect erase + tail-glyph)"
+    roi: MED
+    effort: MED
+    detail: >
+      From the audit sec4: solid-rect erase paints rectangular scars over art
+      (ctd_utils.py:183, regression from 22fd106) -> restore bubble-gating for the
+      solid-fill tier; mask tail-glyph clipping (asymmetric end-of-column padding).
+      Visual quality is 'ROUGH' per the Furube human eval -- higher user-visible ROI
+      than more MT tuning.
+  - id: 8
+    title: "Independent detection-recall gold set"
+    roi: MED
+    effort: MED
+    detail: >
+      Detection recall is currently UNMEASURABLE -- gold bboxes are seeded from our own
+      detector (IoU==1.0 for all 650 rows), so a CTD false-negative is invisible. Build
+      a small independently-boxed recall set before ANY detector change (incl. step 2).
+      Audit sec5.
+  - id: 9
+    title: "Corpus alignment backlog (4x data for free)"
+    roi: MED
+    effort: MED
+    detail: >
+      34,274 strict JP/EN pairs have BOTH sides on disk but are absent from the 375k
+      export -- an alignment backlog ~4x the current corpus, needing NO downloading.
+      Also filter the 11% hamming=0 art-only pollution. General-quality data lever
+      (NOT POV). Corpus audit sec10; missing_en_pairs.md on disk.
+  - id: 10
+    title: "Frontier-teacher distillation for general quality"
+    roi: LOW-MED
+    effort: HIGH
+    detail: >
+      A frontier VLM (sees the page) labels POV-hard/quality-hard rows -> distill into
+      the 8B. ToS-gated to the SFW Manga109 slice, ~$65-215. Now reframed: NOT for the
+      (solved) gender problem, but for register/adequacy on hard pages. Lowest priority
+      given the cost + that the cheap levers (2,5,7) aren't exhausted.
+
+blockers: []
+
+questions:
+  - "Is the Axis-B narration-register 'I/you vs she/he' even a defect to fix, or the preferred reader voice? (product call, gates step 4)"
+  - "Delete box ~/merged_image{on,off} (34GB) + ~/merged_v1-era scratch to reclaim disk? (needs explicit OK)"
+  - "Priority: land step 2 (balloon defect, the real #1 quality bug) next, or consolidate/ship v1 (step 1) first?"
+
+decisions:
+  - bank_v1: "v1 (Qwen3-VL-8B-ablit + text-SFT LoRA, box ~/ship_v1/merged_v1, served :8001) is the ship model. It resolves gender correctly (0/67 real inversions). No further POV-targeted training."
+  - pov_metric: "pov_probe.py gendered_rate is DEPRECATED (broken). Use pov_probe_v2.py two-axis scoring. Retire the old number from gates/handoffs."
+  - v2_base: "30B-A3B is dead on owned hardware (fused-MoE bnb blocker). If a bigger base is pursued, it's the DENSE-32B-ablit (QLoRA-trainable on the 5090), and for GENERAL quality, not POV."
+  - drop_pov_training: "No more text-POV-contrastive SFT, no image-context Phase-2. Both proven to target a phantom."
+
+findings:
+  - pov_metric_ghost: "0/67 real he<->she inversions in v1. 3 opposing-pronoun flags across 105 rows are ALL false positives (1 multi-referent where v1 is correct; 2 pro-drop no-cue). The 'ceiling' = person/register + 79% class-prior + artifacts. pov_probe_v2.py."
+  - moe_quant_blocker: "bnb NF4 can't quantize fused MoE nn.Parameter experts (only nn.Linear). Any MoE VLM QLoRA on <=48GB is dead this way; dense models are fine."
+  - image_signal_absent: "Image-as-context can't fix 3rd-person referent gender because the panel doesn't encode it. Vision LoRA attaches fine (216 modules); the signal, not the method, is missing."
+  - serve_merged_for_vision: "vLLM LoRA can silently drop vision-tower modules; serve MERGED weights for any image-context model. Also merged-preprocessor size.longest_edge defaulted to 16777216 vs training 1048576 (2x res -> degenerate repetition)."
+
+worked:
+  - "Parallel research fan-out (4 disjoint-angle agents) surfaced the metric-ghost finding that 6 prior turns of training had missed -- the DATA/EVAL-diagnosis agent was the load-bearing one."
+  - "Two-arm control (image-on vs image-off) + format-match verification made the negative results TRUSTWORTHY instead of confounded. The eval agent rebuilt an in-format harness rather than trusting the mismatched pov_probe."
+  - "Dry-run/inspect gates before every multi-hour run (vision-LoRA attach check, mixed-batch collator, VRAM) caught issues cheaply; G0 caught the 30B blocker before a wasted 6-12h."
+
+failed:
+  - "Two sub-agents returned corrupted/garbage output (0 tool uses, injection-style text) -- re-verified those tasks by driving directly. Don't trust an agent result with 0 tool_uses."
+  - "6+ turns chasing the POV ceiling before questioning the metric. LESSON: when repeated well-run experiments all fail the SAME way, suspect the measurement before the method."
+
+next:
+  - "Pick from the 10 above. Recommended order: (1) ship v1 + (3) retire broken scorer [cheap cleanup], then (2) balloon-fragmentation defect [the real #1 quality bug]."
+  - "USER decisions pending: Axis-B product call; disk cleanup OK; step-2-vs-step-1 priority."
+
+files:
+  created:
+    - backend/scripts/eval/pov_probe_v2.py
+    - backend/training/configs/qwen3vl_8b_v2_pov.yaml
+    - backend/training/configs/qwen3vl_8b_imagectx_poc.yaml (ran)
+    - backend/training/configs/qwen3vl_8b_imagectx_poc_imageoff.yaml (ran)
+    - backend/scripts/data/v13ship/build_v2_messages.py
+    - backend/scripts/train/validate_30b_g0.py
+    - thoughts/shared/research/2026-07-03_pov_methods_external.md
+    - thoughts/shared/research/2026-07-03_pov_data_eval_diagnosis.md
+    - thoughts/shared/research/2026-07-03_pov_model_compute_options.md
+    - thoughts/shared/research/2026-07-03_pov_cast_register_design.md
+  modified:
+    - backend/app/config.py (stream + image-context defaults True)
+    - backend/app/utils/ocr_confidence_gate.py (recalibration)
+    - backend/scripts/data/compose_training_mix.py (v2 spec)
+  commits:
+    - "620e536 feat(serve): default-on streaming + image-context"
+    - "4ac7cf7 fix(ocr): recalibrate conf-gate from labeled table"
+    - "d8db35a feat(data): POV-contrastive miner + v2 mix spec"
+    - "f493316 / fabbdc4 feat(train): 30B plan + config + converter"
+    - "3a0ad57 fix(train): G0 diagnoses fused-MoE-expert blocker"
+    - "<this> feat(train): v2 8B POV-SFT config; feat(eval): corrected two-axis POV probe"
+  box_artifacts:
+    - "box:~/ship_v2_8b/out/final (v2-8B POV-SFT adapter, DON'T-PROMOTE)"
+    - "box:~/merged_image{on,off} (17GB each -- deletable)"
+    - "box:/home/danny/venvs/qwen3vl_30b (dedicated train venv, transformers 5.12)"
+    - "box:8001 serving v1 (RESTORED)"
