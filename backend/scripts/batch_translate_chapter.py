@@ -421,12 +421,14 @@ class ChapterPipeline:
         stats["num_blocks"] = len(blocks)
 
         # --- bubble detection (typeset to bubble interior) ---
+        t0 = time.time()
         bubbles = []
         if self.bubble_detector is not None:
             try:
                 bubbles = await self.bubble_detector.detect_bubbles(image_np)
             except Exception as exc:
                 print(f"  [{image_path.name}] bubble detect failed ({exc})")
+        stats["yolo_ms"] = (time.time() - t0) * 1000
         stats["num_bubbles"] = len(bubbles)
 
         # --- DETECTION-TIME balloon-column fusion (opt-in, default off) ---
@@ -462,6 +464,7 @@ class ChapterPipeline:
         stats["ocr_ms"] = (time.time() - t0) * 1000
 
         # --- Orphan-line recovery (same wiring as the production router) ---
+        t0 = time.time()
         if settings.orphan_line_recovery and text_lines:
             orphans = find_orphan_lines(blocks, text_lines)
             if orphans:
@@ -507,6 +510,7 @@ class ChapterPipeline:
                     )
                 stats["orphan_blocks_added"] = added
                 stats["orphan_blocks_merged"] = merged
+        stats["orphan_ocr_ms"] = (time.time() - t0) * 1000
 
         # --- COLUMN-MAJOR RTL reading order over the FULL merged block list ---
         # The v11 page-context model was trained with the page's bubbles in
@@ -552,6 +556,7 @@ class ChapterPipeline:
                     f"(conf={conf:.2f}) {t[:24]!r} — garbled, not sent to LLM"
                 )
 
+        t0 = time.time()
         units = build_page_translation_units(
             blocks,
             ocr_texts,
@@ -564,6 +569,7 @@ class ChapterPipeline:
             on_drop=_on_drop,
             bubbles=bubbles,
         )
+        stats["jp_filter_ms"] = (time.time() - t0) * 1000
         kept_blocks = list(units.kept_blocks)
         kept_texts = list(units.kept_texts)
         kept_confs = [c if c is not None else 1.0 for c in units.kept_confs]
@@ -592,6 +598,7 @@ class ChapterPipeline:
         # made the eval render strictly worse than prod: gate-dropped real-JP SFX
         # was not erased, kept blocks were not bubble-fit, and editorial labels
         # were not protected once ALL detected text ink is erased.
+        t0 = time.time()
         inpaint_fit_rects = (
             match_blocks_to_bubbles(kept_blocks, bubbles) if bubbles else None
         )
@@ -604,6 +611,7 @@ class ChapterPipeline:
             fit_rects=list(inpaint_fit_rects) if inpaint_fit_rects is not None else None,
             leave_intact_blocks=list(units.leave_intact_blocks),
         )
+        stats["mask_ms"] = (time.time() - t0) * 1000
 
         # --- LaMa inpaint ---
         inpainted: Optional[np.ndarray] = None
@@ -842,6 +850,7 @@ class ChapterPipeline:
             stats["translate_ms"] = 0.0
 
         # --- final composite ---
+        t0 = time.time()
         fit_rects = (
             match_blocks_to_bubbles(kept_blocks, bubbles) if bubbles else None
         )
@@ -851,12 +860,15 @@ class ChapterPipeline:
             list(translations),
             fit_rects=list(fit_rects) if fit_rects is not None else None,
         )
+        stats["compose_ms"] = (time.time() - t0) * 1000
 
         # write as .webp (quality ~90), same basename
+        t0 = time.time()
         out_path.parent.mkdir(parents=True, exist_ok=True)
         Image.fromarray(final).convert("RGB").save(
             out_path, format="WEBP", quality=90
         )
+        stats["write_ms"] = (time.time() - t0) * 1000
 
         # --- inspection artifacts (additive; identical code path) ---
         if inspect_dir is not None:
@@ -949,9 +961,15 @@ def _summarize(per_page: list[dict], wall_clock_s: float, n_pages: int) -> dict:
         },
         "stage_ms_median": {
             "detect": round(med("detect_ms"), 1),
+            "yolo": round(med("yolo_ms"), 1),
             "ocr": round(med("ocr_ms"), 1),
-            "translate": round(med("translate_ms"), 1),
+            "orphan_ocr": round(med("orphan_ocr_ms"), 1),
+            "jp_filter": round(med("jp_filter_ms"), 1),
+            "mask": round(med("mask_ms"), 1),
             "inpaint": round(med("inpaint_ms"), 1),
+            "translate": round(med("translate_ms"), 1),
+            "compose": round(med("compose_ms"), 1),
+            "write": round(med("write_ms"), 1),
         },
         "per_page": per_page,
     }
@@ -967,8 +985,11 @@ def _print_summary(label: str, summ: dict) -> None:
     )
     s = summ["stage_ms_median"]
     print(
-        f"stage median: detect={s['detect']:.0f}  ocr={s['ocr']:.0f}  "
-        f"translate={s['translate']:.0f}  inpaint={s['inpaint']:.0f}"
+        f"stage median: detect={s['detect']:.0f}  yolo={s['yolo']:.0f}  "
+        f"ocr={s['ocr']:.0f}  orphan_ocr={s['orphan_ocr']:.0f}  "
+        f"jp_filter={s['jp_filter']:.0f}  mask={s['mask']:.0f}  "
+        f"inpaint={s['inpaint']:.0f}  translate={s['translate']:.0f}  "
+        f"compose={s['compose']:.0f}  write={s['write']:.0f}"
     )
 
 
