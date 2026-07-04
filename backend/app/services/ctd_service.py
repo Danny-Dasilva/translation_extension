@@ -840,7 +840,11 @@ class ComicTextDetectorService:
         blocks: List[Dict],
         bubbles: Optional[Sequence[Dict]],
         *,
-        max_span: int = 6,
+        max_span: int = 3,   # Re-audit (2026-07-04): cap at 3. Keeps the FULL -66%
+                             # omission win (corrected_omission 17, byte-identical to
+                             # span=6) AND eliminates the >=4-col blank over-merge
+                             # (p070 recovered, 1->0), zero new omissions. (p082/p110/
+                             # p114 blanks are a separate <=3-col/garbled-OCR issue.)
         glyph_mult: float = 1.8,
         y_overlap_min: float = 0.50,
         width_ratio: float = 2.2,

@@ -121,15 +121,24 @@ def test_two_clusters_in_loose_box_do_not_bridge():
 
 # --- genuine 4-column balloon still fuses despite the tighter guards ------------
 
-def test_genuine_four_column_balloon_fuses_to_one():
+def test_four_column_balloon_capped_at_default_span_3():
+    # Default max_span=3 (2026-07-04 audit hardening): a 4-column balloon fuses
+    # its first 3 columns and leaves the 4th solo — 4+-col fused JP choked the
+    # model (all 4 audit regressions were >=4-col). Explicit larger span still
+    # fuses all four (fusion mechanics intact).
     c0 = _b(700, 100, 732, 280)
     c1 = _b(664, 100, 696, 290)
     c2 = _b(628, 110, 660, 285)
     c3 = _b(592, 115, 624, 280)
     bub = {"minX": 575, "minY": 85, "maxX": 750, "maxY": 305}
     out = fuse([c0, c1, c2, c3], [bub])
-    assert len(out) == 1
-    assert _bbox(out[0]) == (592, 100, 732, 290)
+    boxes = [_bbox(b) for b in out]
+    assert len(out) == 2, boxes
+    assert (628, 100, 732, 290) in boxes   # c0+c1+c2 fused (first 3)
+    assert (592, 115, 624, 280) in boxes   # c3 solo, unchanged
+    out_all = fuse([c0, c1, c2, c3], [bub], max_span=4)
+    assert len(out_all) == 1
+    assert _bbox(out_all[0]) == (592, 100, 732, 290)
 
 
 # --- (f) vertically-stacked same-column boxes are NOT column-fused --------------
