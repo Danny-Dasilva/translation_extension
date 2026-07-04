@@ -418,6 +418,7 @@ class ChapterPipeline:
         blocks = ctd["blocks"]
         text_lines = ctd["text_lines"]
         mask = ctd.get("mask")
+        ono_mask = ctd.get("ono_mask")  # v26 SFX seg-mask; None unless inpaint_ono_mask=True
         stats["num_blocks"] = len(blocks)
 
         # --- bubble detection (typeset to bubble interior) ---
@@ -610,6 +611,7 @@ class ChapterPipeline:
             erase_blocks=list(units.erase_only_blocks),
             fit_rects=list(inpaint_fit_rects) if inpaint_fit_rects is not None else None,
             leave_intact_blocks=list(units.leave_intact_blocks),
+            ono_mask=ono_mask,
         )
         stats["mask_ms"] = (time.time() - t0) * 1000
 
