@@ -305,3 +305,208 @@ def test_process_mask_erase_threshold_never_exceeds_detection():
         blocks=None, legacy=True, erase_threshold=ERASE_SEG_THRESHOLD,
     )
     assert erase.max() == 255, "min(erase, detect) must keep the lower 0.3 threshold"
+
+
+# --------------------------------------------------------------------------- #
+# SFX ono-mask port (flag-gated inpaint_ono_mask): build_inpaint_mask's
+# unclipped OR-in of the v26 ch1 onomatopoeia/SFX seg-mask.
+# --------------------------------------------------------------------------- #
+
+
+def test_ono_mask_none_is_byte_identical_to_no_param():
+    """ono_mask=None (the flag-off default) must produce EXACTLY the same mask
+    as not passing the parameter at all — the no-op guard must not perturb any
+    existing pixel, guard, or the dilation pass."""
+    h, w = 300, 300
+    shape = (h, w, 3)
+    kept = _block(10, 10, 60, 60)
+    dropped_line = _block(200, 200, 240, 240)
+    detector_mask = np.zeros((h, w), dtype=np.uint8)
+    detector_mask[20:50, 20:50] = 255
+
+    baseline = build_inpaint_mask(shape, [kept], [dropped_line], detector_mask)
+    with_none = build_inpaint_mask(
+        shape, [kept], [dropped_line], detector_mask, ono_mask=None
+    )
+    assert np.array_equal(baseline, with_none), (
+        "passing ono_mask=None must be byte-identical to omitting the param"
+    )
+
+
+def test_ono_mask_none_matches_pre_existing_erase_and_leave_intact_behavior():
+    """With the flag off (ono_mask=None), the pre-existing erase_blocks /
+    leave_intact_blocks / fit_rects behaviour is untouched pixel-for-pixel."""
+    h, w = 200, 200
+    shape = (h, w, 3)
+    kept = _block(10, 10, 60, 60)
+    bubble = _block(0, 0, 100, 100)
+    erase_only = _block(120, 120, 160, 160)
+
+    a = build_inpaint_mask(
+        shape, [kept], [], None,
+        erase_blocks=[erase_only], fit_rects=[bubble],
+    )
+    b = build_inpaint_mask(
+        shape, [kept], [], None,
+        erase_blocks=[erase_only], fit_rects=[bubble], ono_mask=None,
+    )
+    assert np.array_equal(a, b)
+
+
+def test_ono_mask_erases_ink_outside_every_detected_region():
+    """The core SFX fix: ink in ``ono_mask`` that sits OUTSIDE any kept block,
+    detected text line, or erase-only block (i.e. free-floating hand-drawn SFX
+    over bare artwork) is NOT discarded — proving the OR-in is unclipped,
+    unlike the detector-seg OR (step 4) which clips to ``detected_area``."""
+    h, w = 300, 300
+    shape = (h, w, 3)
+    kept = _block(10, 10, 60, 60)  # far from the SFX region below
+
+    ono_mask = np.zeros((h, w), dtype=np.uint8)
+    ono_mask[220:260, 220:260] = 255  # SFX ink with NO text-line/block box
+
+    # Flag off (ono_mask=None): the SFX region is untouched — this is the
+    # documented bug (round9's ono channel fires, but nothing consumes it).
+    mask_off = build_inpaint_mask(shape, [kept], [], None)
+    assert mask_off[240, 240] == 0, "SFX region erased even without ono_mask"
+
+    # Flag on (ono_mask passed): the SAME region is now in the erase mask,
+    # despite being outside every detected block/line/erase region.
+    mask_on = build_inpaint_mask(shape, [kept], [], None, ono_mask=ono_mask)
+    assert mask_on[240, 240] == 255, "unclipped ono ink was not OR-ed into the mask"
+    # The pre-existing kept-block behaviour elsewhere is unaffected.
+    assert mask_on[35, 35] == 0, "unrelated pixels perturbed by the ono OR-in"
+
+
+def test_ono_mask_still_clipped_by_leave_intact_punch_out():
+    """The leave-intact punch-out (step 6) runs AFTER the ono OR-in, so a
+    human-reference-kept label still wins even if it overlaps SFX-flagged ono
+    ink (defence in depth — the punch-out is unconditional, not ono-aware)."""
+    h, w = 300, 300
+    shape = (h, w, 3)
+    label = _block(200, 200, 260, 260)
+
+    ono_mask = np.zeros((h, w), dtype=np.uint8)
+    ono_mask[210:250, 210:250] = 255  # overlaps the leave-intact label
+
+    mask = build_inpaint_mask(
+        shape, [], [], None, leave_intact_blocks=[label], ono_mask=ono_mask
+    )
+    assert mask[230, 230] == 0, "leave-intact label erased via the ono OR-in"
+
+
+def test_ono_mask_resized_when_shape_mismatch():
+    """An ono_mask produced at a different resolution (e.g. a stale caller) is
+    resized (nearest-neighbor, matching the detector-seg OR) to the page size
+    before being OR-ed in."""
+    h, w = 400, 400
+    shape = (h, w, 3)
+    ono_small = np.zeros((200, 200), dtype=np.uint8)
+    ono_small[120:180, 120:180] = 255  # maps to ~(240:360, 240:360) at full res
+
+    mask = build_inpaint_mask(shape, [], [], None, ono_mask=ono_small)
+    assert mask[300, 300] == 255, "resized ono mask did not erase the mapped region"
+
+
+def test_ono_mask_only_input_still_produces_nonempty_mask():
+    """A page with NO blocks/lines/erase_blocks but a non-empty ono_mask must
+    not early-return a blank mask — pure-SFX pages are the whole point."""
+    h, w = 200, 200
+    shape = (h, w, 3)
+    ono_mask = np.zeros((h, w), dtype=np.uint8)
+    ono_mask[80:120, 80:120] = 255
+
+    mask = build_inpaint_mask(shape, [], [], None, ono_mask=ono_mask)
+    assert mask[100, 100] == 255
+    assert mask.sum() > 0
+
+
+# --------------------------------------------------------------------------- #
+# ComicTextDetectorService._process_ono_mask — ch1 extraction, unclipped by
+# _build_block_bounds_mask (the block-bounds clip _process_mask applies).
+# --------------------------------------------------------------------------- #
+
+
+def test_process_ono_mask_extracts_ch1_only():
+    """``_process_ono_mask`` reads channel 1 (SFX) ALONE, ignoring channel 0
+    (text) entirely — even where ch0 fires strongly and ch1 does not."""
+    from app.services.ctd_service import ComicTextDetectorService
+
+    fake_self = types.SimpleNamespace()
+    raw = np.zeros((1, 2, 20, 20), dtype=np.float32)
+    raw[0, 0, 5:15, 5:15] = 0.9  # ch0 (text) fires strongly
+    raw[0, 1, 2:6, 2:6] = 0.9    # ch1 (ono) fires in a DIFFERENT region
+
+    ono = ComicTextDetectorService._process_ono_mask(
+        fake_self, raw, (20, 20), (20, 20)
+    )
+    assert ono is not None
+    assert ono[3, 3] == 255, "ch1 (ono) ink was not extracted"
+    assert ono[10, 10] == 0, "ch0 (text) ink leaked into the ono-only mask"
+
+
+def test_process_ono_mask_none_when_single_channel():
+    """A legacy single-channel CTD export has no ono channel; the extractor
+    must return None (not raise), so the caller safely no-ops."""
+    from app.services.ctd_service import ComicTextDetectorService
+
+    fake_self = types.SimpleNamespace()
+    raw = np.zeros((1, 1, 20, 20), dtype=np.float32)
+    raw[0, 0, 5:15, 5:15] = 0.9
+
+    assert ComicTextDetectorService._process_ono_mask(
+        fake_self, raw, (20, 20), (20, 20)
+    ) is None
+
+
+def test_process_ono_mask_thresholded_at_erase_seg_threshold():
+    """Ink below ERASE_SEG_THRESHOLD (0.45) is not erased; ink above it is —
+    same erase-seg threshold contract as the combined text mask."""
+    from app.services.ctd_service import ComicTextDetectorService
+
+    fake_self = types.SimpleNamespace()
+    raw = np.zeros((2, 20, 20), dtype=np.float32)  # (C, H, W), no batch dim
+    raw[1, 2:6, 2:6] = 0.40   # below 0.45 -> not erased
+    raw[1, 12:16, 12:16] = 0.60  # above 0.45 -> erased
+
+    ono = ComicTextDetectorService._process_ono_mask(
+        fake_self, raw, (20, 20), (20, 20)
+    )
+    assert ono is not None
+    assert ono[3, 3] == 0, "sub-threshold ono ink was erased"
+    assert ono[13, 13] == 255, "above-threshold ono ink was not erased"
+
+
+def test_process_ono_mask_unletterboxes_and_resizes_like_process_mask():
+    """The padded-region crop + resize-to-original-size must exactly mirror
+    ``_process_mask``'s alignment so ono_mask lines up with the page (a
+    misaligned mask would erase the wrong pixels)."""
+    from app.services.ctd_service import ComicTextDetectorService
+
+    fake_self = types.SimpleNamespace(text_threshold=0.8)
+    # Simulate a letterboxed 20x20 model input where only the top-left 10x14
+    # (padded_size) holds real content; the rest is black padding.
+    raw = np.zeros((1, 2, 20, 20), dtype=np.float32)
+    raw[0, 1, 2:8, 2:8] = 0.9  # ono ink inside the valid (unpadded) region
+
+    padded_size = (14, 10)  # (pw, ph) — the valid region before letterbox pad
+    orig_size = (28, 20)    # (w, h) — final page size (2x upscale)
+
+    ono = ComicTextDetectorService._process_ono_mask(
+        fake_self, raw, padded_size, orig_size
+    )
+    assert ono is not None
+    assert ono.shape == (20, 28)  # (h, w)
+
+    # Cross-check alignment against _process_mask's ch1-only extraction path
+    # (mask.max over channels would mix ch0 in, so build a ch1-only copy here
+    # and confirm both share the same crop+resize geometry).
+    ch1_only = np.zeros((1, 1, 20, 20), dtype=np.float32)
+    ch1_only[0, 0] = raw[0, 1]
+    text_like = ComicTextDetectorService._process_mask(
+        fake_self, ch1_only, padded_size, orig_size, blocks=None,
+        legacy=True, erase_threshold=ERASE_SEG_THRESHOLD,
+    )
+    assert np.array_equal(ono, text_like), (
+        "ono_mask crop/resize geometry diverged from _process_mask's"
+    )

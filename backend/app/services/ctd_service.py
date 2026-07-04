@@ -148,7 +148,11 @@ class ComicTextDetectorService:
             {
                 "blocks": List of text block bboxes,
                 "text_lines": List of tight text line bboxes,
-                "mask": Binary text mask (H, W) or None
+                "mask": Binary text mask (H, W) or None,
+                "ono_mask": Binary v26 ch1 (SFX) mask (H, W), UNCLIPPED by
+                    block bounds, or None. Only populated when
+                    settings.inpaint_ono_mask is True; None otherwise
+                    (flag off, or a legacy detector with no ch1 channel).
             }
         """
         h, w = img.shape[:2]
@@ -184,12 +188,24 @@ class ComicTextDetectorService:
             else None
         )
 
+        # FLAG-GATED (settings.inpaint_ono_mask, default False): extract the v26
+        # ch1 (onomatopoeia/SFX) channel ALONE, unclipped by
+        # _build_block_bounds_mask, so free-floating hand-drawn SFX over artwork
+        # (no text-line/block box) survives into the erase mask instead of being
+        # silently discarded. Guarded so the flag-off path does zero extra work.
+        ono_mask = (
+            self._process_ono_mask(mask, padded_size, (w, h))
+            if mask is not None and settings.inpaint_ono_mask
+            else None
+        )
+
         logger.debug(f"CTD detected {len(blocks)} blocks, {len(text_lines)} text lines")
 
         return {
             "blocks": blocks,
             "text_lines": text_lines,
             "mask": text_mask,
+            "ono_mask": ono_mask,
         }
 
     def _assign_outputs(self, outputs: List[np.ndarray]) -> Tuple[np.ndarray | None, np.ndarray | None, np.ndarray | None]:
@@ -571,6 +587,50 @@ class ComicTextDetectorService:
         refined = cv2.bitwise_and(dilated, in_bounds)
 
         return refined
+
+    def _process_ono_mask(
+        self,
+        mask: np.ndarray,
+        padded_size: Tuple[int, int],
+        orig_size: Tuple[int, int],
+    ) -> Optional[np.ndarray]:
+        """Extract the v26 ch1 (onomatopoeia/SFX) channel ALONE, resized to the
+        original page size, WITHOUT the ``_build_block_bounds_mask`` clip that
+        ``_process_mask`` applies to the combined (ch0 max ch1) erase mask.
+
+        Free-floating hand-drawn SFX ink routinely has no text-line/block box
+        (it sits directly over artwork), so clipping to detected block bounds
+        — as the koharu-style refinement in ``_process_mask`` does — would
+        discard it entirely, defeating the point of a separate ono channel.
+        This mirrors the SAME un-letterbox/resize steps ``_process_mask`` uses
+        (crop to the pre-pad region, then resize to the original page size) so
+        the returned mask stays pixel-aligned with the page, but stops at a
+        plain threshold — no block clip, no morphological close/dilate.
+
+        Returns None when the raw seg output has no second channel (e.g. a
+        legacy single-channel CTD export) since there is no ono signal to
+        extract. Only called when ``settings.inpaint_ono_mask`` is True (see
+        ``detect``); the flag-off path never invokes this method.
+        """
+        if mask.ndim == 4:
+            if mask.shape[1] < 2:
+                return None
+            ono = mask[0, 1]
+        elif mask.ndim == 3:
+            if mask.shape[0] < 2:
+                return None
+            ono = mask[1]
+        else:
+            return None
+
+        pw, ph = padded_size
+        ono = ono[:ph, :pw]
+
+        w, h = orig_size
+        ono = cv2.resize(ono, (w, h), interpolation=cv2.INTER_LINEAR)
+
+        binary = (ono > ERASE_SEG_THRESHOLD).astype(np.uint8) * 255
+        return binary
 
     def _build_block_bounds_mask(
         self,

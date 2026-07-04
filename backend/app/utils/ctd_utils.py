@@ -115,6 +115,7 @@ def build_inpaint_mask(
     erase_blocks: Optional[List[Dict]] = None,
     fit_rects: Optional[List[Optional[Dict]]] = None,
     leave_intact_blocks: Optional[List[Dict]] = None,
+    ono_mask: Optional[np.ndarray] = None,
 ) -> np.ndarray:
     """Binary 0/255 LaMa erase mask covering ALL detected text ink.
 
@@ -152,12 +153,23 @@ def build_inpaint_mask(
     ``fit_rects`` (per-block bubble match, index-aligned with ``blocks``) gates
     the step-(2) solid block fill: only bubble-matched blocks are solid-filled;
     ``None`` entries / a ``None`` list fall back to tight line + seg ink.
+
+    ``ono_mask`` (v26 detector only, flag-gated by ``settings.inpaint_ono_mask``
+    in the caller — see ``app.routers.translate``) is the UNCLIPPED ch1
+    onomatopoeia/SFX seg-mask from ``ComicTextDetectorService._process_ono_mask``.
+    It is OR-ed into the erase mask WITHOUT clipping to ``detected_area`` —
+    free-floating hand-drawn SFX ink rarely sits inside any detected text
+    line/block, so clipping it (as the detector-seg OR above does) would erase
+    nothing. When ``None`` (flag off, or a legacy single-channel detector),
+    this is a no-op and the returned mask is BYTE-IDENTICAL to before this
+    parameter existed.
     """
     erase_blocks = erase_blocks or []
     leave_intact_blocks = leave_intact_blocks or []
     h, w = image_shape[:2]
     mask = np.zeros((h, w), dtype=np.uint8)
-    if not blocks and not erase_blocks and not (text_lines or []):
+    _has_ono = ono_mask is not None and getattr(ono_mask, "size", 0)
+    if not blocks and not erase_blocks and not (text_lines or []) and not _has_ono:
         return mask
 
     page_area = float(h * w)
@@ -260,6 +272,20 @@ def build_inpaint_mask(
         _, dm_bin = cv2.threshold(dm.astype(np.uint8), 127, 255, cv2.THRESH_BINARY)
         dm_bin = cv2.bitwise_and(dm_bin, detected_area)
         mask = np.maximum(mask, dm_bin)
+
+    # (4b) OR in the flag-gated v26 ono/SFX channel mask UNCLIPPED — free-
+    # floating hand-drawn SFX lives outside any detected text block/line, so
+    # clipping to ``detected_area`` (as step 4 does for the combined detector
+    # seg mask) would discard it entirely, defeating the purpose. ``ono_mask``
+    # is None unless the caller passes the v26 ch1 channel AND
+    # ``settings.inpaint_ono_mask`` is True, so this is a no-op (byte-identical
+    # output) on the default flag-off path.
+    if _has_ono:
+        om = ono_mask
+        if om.shape[:2] != (h, w):
+            om = cv2.resize(om, (w, h), interpolation=cv2.INTER_NEAREST)
+        _, om_bin = cv2.threshold(om.astype(np.uint8), 127, 255, cv2.THRESH_BINARY)
+        mask = np.maximum(mask, om_bin)
 
     # (5) Final dilation, proportional to glyph size: max(6, ~0.25 * line short
     #     side). Anti-aliasing left outside a thin mask reseeds LaMa into

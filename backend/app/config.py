@@ -153,6 +153,22 @@ class Settings(BaseSettings):
     # browser canvas, so no frontend change is needed. Set False to restore PNG.
     plate_encode_webp: bool = True
     plate_webp_quality: int = 82
+    # SFX ono-mask erasure (v26 detector only, DEFAULT OFF). The active detector
+    # (comictextdetector_v26_round9_onofix_20260622.onnx) emits a 2-channel seg
+    # mask (ch0=text, ch1=onomatopoeia/SFX). round9's ch1 fires accurately on
+    # stylized SFX glyphs drawn directly over artwork (no text-line/block box),
+    # which the existing erase-mask pipeline silently drops: both
+    # ``ComicTextDetectorService._process_mask`` (clips to
+    # ``_build_block_bounds_mask``) and ``ctd_utils.build_inpaint_mask`` (clips
+    # detector-seg ink to ``detected_area``) only erase pixels inside a detected
+    # text region, so on-art SFX with no box ships raw Japanese. When True, the
+    # unclipped ch1 mask (``ctd_result["ono_mask"]``) is OR-ed into the final
+    # erase mask WITHOUT the block/line clip, so free-floating SFX ink actually
+    # gets erased. When False (default), ono_mask is never consumed downstream
+    # and behaviour is byte-identical to before this flag existed. Gated pending
+    # a full-page GPU render audit (Step-0 experiment covered detection-only,
+    # not the composited output) before flipping the default on.
+    inpaint_ono_mask: bool = False
 
     # --- Final-composite font readability + page consistency ---------------
     # READABILITY FLOOR (resolution-aware). The minimum rendered font size is
