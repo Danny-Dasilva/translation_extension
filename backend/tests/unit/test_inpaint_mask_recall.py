@@ -134,9 +134,13 @@ def test_over_broad_clamp_boundary():
 
     big = _block(0, 0, 60, 60)    # 3600 > 3000 -> rejected
     small = _block(0, 0, 50, 50)  # 2500 < 3000 -> kept (filled)
+    bub = _block(0, 0, 100, 100)  # enclosing bubble so the block IS solid-filled
 
-    assert build_inpaint_mask(shape, [big], [], None).sum() == 0
-    assert build_inpaint_mask(shape, [small], [], None)[25, 25] == 255
+    # The over-broad clamp fires BEFORE the bubble gate, so a giant block is
+    # rejected even when bubble-matched.
+    assert build_inpaint_mask(shape, [big], [], None, fit_rects=[bub]).sum() == 0
+    # A small, bubble-matched block is solid-filled (clamp does not reject it).
+    assert build_inpaint_mask(shape, [small], [], None, fit_rects=[bub])[25, 25] == 255
 
 
 def test_over_broad_giant_line_rejected():
@@ -148,19 +152,101 @@ def test_over_broad_giant_line_rejected():
 
 
 # --------------------------------------------------------------------------- #
-# fix #3 — ALL kept blocks get a solid fill (no longer gated to bubble matches)
+# audit §4.4 — the solid BLOCK fill is BUBBLE-GATED (regression from 22fd106
+# restored): a solid rectangle is painted only INSIDE a matched bubble; an
+# un-bubbled block relies on tight seg ink so no scar lands on artwork.
 # --------------------------------------------------------------------------- #
 
 
-def test_all_kept_blocks_solid_filled_without_bubble():
-    """With no bubble match (fit_rects None) and no detector mask, a kept block
-    still gets a SOLID fill — the flooding-fix bubble gate is removed because
-    fills are median/NS and the clamp protects art."""
+def test_bubbled_block_is_solid_filled():
+    """A kept block matched to a speech bubble (fit_rects[i] not None) gets a
+    SOLID bbox fill — the fill lands inside the balloon interior."""
     h, w = 200, 200
     shape = (h, w, 3)
     kept = _block(40, 40, 90, 90)
-    mask = build_inpaint_mask(shape, [kept], [], None, fit_rects=None)
-    assert mask[65, 65] == 255, "kept block was not solid-filled"
+    bubble = _block(20, 20, 120, 120)  # encloses the block
+    mask = build_inpaint_mask(shape, [kept], [], None, fit_rects=[bubble])
+    assert mask[65, 65] == 255, "bubble-matched block was not solid-filled"
+    # A corner well inside the block bbox (but with no text there) is filled too
+    # because the whole balloon-interior rectangle is safe to erase.
+    assert mask[45, 45] == 255
+
+
+def test_unbubbled_block_not_solid_filled_no_scar():
+    """A kept block with NO bubble match and NO detector mask must NOT be
+    solid-filled — painting its full bbox would scar the artwork underneath
+    (audit §4.4). Without seg ink there is nothing to erase for it."""
+    h, w = 200, 200
+    shape = (h, w, 3)
+    kept = _block(40, 40, 90, 90)
+    # fit_rects present but this block matched no bubble.
+    mask = build_inpaint_mask(shape, [kept], [], None, fit_rects=[None])
+    assert mask[65, 65] == 0, "un-bubbled block was solid-filled (art scar)"
+    assert mask.sum() == 0
+
+    # fit_rects entirely absent -> same safe fallback (no bubble detector).
+    mask_none = build_inpaint_mask(shape, [kept], [], None, fit_rects=None)
+    assert mask_none.sum() == 0, "no-bubble fallback must not solid-fill blocks"
+
+
+def test_unbubbled_block_seg_ink_still_erased():
+    """The recall path is preserved: an un-bubbled kept block is NOT solid-
+    filled, but its TIGHT detector seg ink is still erased (so residual JP over
+    art is removed without a rectangular scar)."""
+    h, w = 200, 200
+    shape = (h, w, 3)
+    kept = _block(40, 40, 90, 90)
+
+    detector_mask = np.zeros((h, w), dtype=np.uint8)
+    detector_mask[55:75, 55:75] = 255   # ink inside the block
+    detector_mask[150:170, 150:170] = 255  # stray ink over art (no detection)
+
+    mask = build_inpaint_mask(
+        shape, [kept], [], detector_mask, fit_rects=[None]
+    )
+    assert mask[65, 65] == 255, "seg ink over an un-bubbled block must be erased"
+    # But the block CORNER with no ink is NOT filled (no solid rectangle scar).
+    assert mask[42, 42] == 0, "un-bubbled block painted a full-bbox scar"
+    # Stray seg over un-detected art stays clipped out.
+    assert mask[160, 160] == 0, "stray seg over art must be clipped"
+
+
+# --------------------------------------------------------------------------- #
+# audit §4.5 — end-of-column tail glyph is covered by the erase mask (the
+# reading-axis pad is a FULL glyph, symmetric on both ends; the cross axis
+# stays tight so the mask does not smear sideways into art).
+# --------------------------------------------------------------------------- #
+
+
+def test_tail_glyph_covered_both_ends_vertical():
+    """A tall-narrow VERTICAL column: the detector bbox routinely clips the
+    first/last glyph of the column. The end-of-line pad (~one glyph ≈ short
+    side) must cover a tail glyph just past BOTH ends of the reading axis."""
+    h, w = 400, 400
+    shape = (h, w, 3)
+    line = _block(100, 100, 130, 300)  # lw=30, lh=200 -> short=30 ≈ one glyph
+    mask = build_inpaint_mask(shape, [], [line], None)
+    # Bottom (end-of-column) tail glyph, ~one glyph past the bbox end.
+    assert mask[322, 115] == 255, "end-of-column tail glyph not covered"
+    # Top (start-of-column) glyph, symmetric on the other end.
+    assert mask[82, 115] == 255, "start-of-column glyph not covered symmetrically"
+    # Cross axis stays TIGHT: it is NOT padded by a full glyph, so the mask does
+    # not smear sideways into neighbouring artwork.
+    assert mask[200, 72] == 0, "cross axis was padded like the reading axis"
+
+
+def test_tail_glyph_covered_horizontal_line():
+    """The same full-glyph end pad applies along the reading axis of a wide
+    HORIZONTAL line (left/right ends)."""
+    h, w = 400, 400
+    shape = (h, w, 3)
+    line = _block(100, 100, 300, 140)  # lw=200, lh=40 -> short=40 ≈ one glyph
+    mask = build_inpaint_mask(shape, [], [line], None)
+    # Right-end glyph, ~one glyph past the bbox end.
+    assert mask[120, 322] == 255, "end-of-line glyph not covered"
+    assert mask[120, 82] == 255, "start-of-line glyph not covered symmetrically"
+    # Cross (vertical) axis stays tight.
+    assert mask[200, 200] == 0, "cross axis was padded like the reading axis"
 
 
 # --------------------------------------------------------------------------- #
