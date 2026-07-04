@@ -224,6 +224,52 @@ def test_english_early_exit_skips_horizontal_latin():
     assert units.erase_only_blocks == []  # english region NOT erased
 
 
+# --- page-level language gate (>90% horizontal => English) --------------------
+
+def _skip_watermark(block, text_lines, ocr_text, is_jp_fn):
+    return ocr_text == "WATERMARK"
+
+
+def test_english_exit_suppressed_on_mostly_vertical_page():
+    # Page-level gate (2026-07-04): a horizontal Latin box on a MOSTLY-VERTICAL
+    # (Japanese) page must NOT be skipped as English -- it stays and is
+    # translated. Here 1/5 boxes are horizontal (< 90%), so the page is Japanese.
+    blocks = [
+        _b(600, 100, 660, 300),   # 60x200 vertical JP
+        _b(600, 320, 660, 520),   # vertical JP
+        _b(500, 100, 560, 300),   # vertical JP
+        _b(500, 320, 560, 520),   # vertical JP
+        _b(100, 600, 400, 640),   # 300x40 HORIZONTAL Latin ("WATERMARK")
+    ]
+    texts = ["台詞ア", "台詞イ", "台詞ウ", "台詞エ", "WATERMARK"]
+    confs = [0.95] * 5
+    units = build_page_translation_units(
+        blocks, texts, confs, None,
+        _settings(japanese_filter_enabled=False, ocr_confidence_gate_enabled=False),
+        is_japanese_fn=_is_jp,
+        is_leave_intact_fn=_never_leave_intact,
+        should_skip_as_english_fn=_skip_watermark,
+    )
+    assert "WATERMARK" in units.kept_texts  # gate suppressed -> NOT dropped as English
+
+
+def test_english_exit_fires_on_mostly_horizontal_page():
+    # >90% horizontal => the page IS English, so the per-box english early-exit
+    # is allowed to fire (the per-box content check still protects the JP boxes).
+    blocks = [_b(100, y, 400, y + 40) for y in (100, 160, 220, 280, 340)]  # all horizontal
+    texts = ["台詞ア", "台詞イ", "台詞ウ", "台詞エ", "WATERMARK"]
+    confs = [0.95] * 5
+    units = build_page_translation_units(
+        blocks, texts, confs, None,
+        _settings(japanese_filter_enabled=False, ocr_confidence_gate_enabled=False),
+        is_japanese_fn=_is_jp,
+        is_leave_intact_fn=_never_leave_intact,
+        should_skip_as_english_fn=_skip_watermark,
+    )
+    assert "WATERMARK" not in units.kept_texts   # 5/5 horizontal -> English exit fires
+    assert units.kept_texts == ["台詞ア", "台詞イ", "台詞ウ", "台詞エ"]
+
+
 # --- call-shape parity --------------------------------------------------------
 
 def test_parity_confs_none_defaults_to_one():
@@ -406,7 +452,9 @@ def test_resplit_continuation_filler():
 def test_on_drop_hook_called_with_reason():
     # A horizontal region whose OCR passes the (loose) JP filter but is caught by
     # the english early-exit geometry check -> drop reason "english_early_exit".
-    blocks = _column(2)
+    # Both boxes horizontal so the page-level gate (>90% horizontal) treats the
+    # page as English and lets the per-box early-exit fire.
+    blocks = [_b(100, 100, 400, 140), _b(100, 160, 400, 200)]  # both horizontal
     texts = ["横書きSFX", "本物の台詞"]
     drops = []
 

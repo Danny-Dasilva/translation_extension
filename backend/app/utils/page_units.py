@@ -36,10 +36,19 @@ from app.utils.ocr_confidence_gate import (
     should_erase_dropped,
 )
 from app.utils.bubble_grouping import group_columns_into_bubbles
+from app.utils.english_region import is_horizontal_region
 from app.utils.sentence_merge import (
     SentenceMergePlan,
     detect_sentence_continuations,
 )
+
+# Page-level language gate: the per-block English early-exit (step 3 below) is
+# only allowed to fire when this fraction of the page's boxes read horizontally.
+# A Japanese page is dominantly vertical; a few horizontal boxes on it (chat /
+# phone-UI bubbles, horizontal SFX) must stay JAPANESE and be translated, not
+# silently skipped as English. Only a page that is overwhelmingly horizontal is
+# treated as genuinely English/already-translated. (User rule 2026-07-04.)
+_ENGLISH_PAGE_HORIZONTAL_MIN = 0.90
 
 
 def _norm(text: Optional[str]) -> str:
@@ -309,6 +318,18 @@ def build_page_translation_units(
             except Exception:
                 pass
 
+    # Page-level language gate (see _ENGLISH_PAGE_HORIZONTAL_MIN): classify the
+    # whole page as English ONLY when >90% of its boxes are horizontal. Otherwise
+    # the page stays Japanese and the per-block english early-exit (step 3) is
+    # suppressed, so horizontal JP boxes (chat/phone-UI, horizontal SFX) are
+    # translated instead of dropped.
+    page_is_english = False
+    if english_exit_on and n > 0:
+        horizontal_ct = sum(
+            1 for b in blocks if is_horizontal_region(b, text_lines)
+        )
+        page_is_english = (horizontal_ct / n) > _ENGLISH_PAGE_HORIZONTAL_MIN
+
     for i in range(n):
         text = ocr_texts[i]
         conf = confs[i]
@@ -332,6 +353,7 @@ def build_page_translation_units(
         #    ORIGINAL pixels (NOT erased, NOT context).
         if (
             english_exit_on
+            and page_is_english
             and should_skip_as_english_fn is not None
             and should_skip_as_english_fn(block, text_lines, text, is_japanese_fn)
         ):
