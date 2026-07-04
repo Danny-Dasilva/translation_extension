@@ -158,6 +158,26 @@ _ITERATION_MARK = "々"
 # katakana laughter (ハハ/フフ/ヘヘ/ホホ) which is genuine speech.
 _LEGIT_KATAKANA_DOUBLE = {"ハ", "フ", "ヘ", "ホ"}
 
+# BUG FIX (audit: p114 idx9 "ヒヒ.." @ conf 0.9082/0.99 silently dropped): this
+# rule ran UNCONDITIONALLY — before the length-based short-text carve-out in
+# ``is_garbled_low_conf`` even gets a chance to run — so a short doubled-kana
+# SFX/giggle like ヒヒ, アア, ヴヴ, シュウウ was always dropped regardless of
+# confidence, no whitelist escape hatch.
+#
+# Re-verified against the 650-row calib table
+# (``scripts/eval/scorecards/ikenie4/preds_for_gold_v1_fair.jsonl``): EVERY
+# false drop this rule produced there (ヒヒ.. x3, アア, ヴヴ x3, シュウウ) was a
+# clean, gold-exact SFX/moan under ``_DUP_KANA_MIN_LEN_TO_FLAG`` chars, while
+# EVERY genuine dup-garble catch (アソコアア, ...チチンの, ...ババブブババブ..,
+# ...濯ササ, ...セッッスく) was at/above it. So — mirroring the module's existing
+# short-text carve-out philosophy (``_SHORT_TEXT_MAX_LEN`` below) — short
+# strings are exempt from this rule instead of widening the katakana
+# whitelist: a broader whitelist (e.g. adding bare ア) would have silently
+# un-caught ``アソコアア`` (a real garbled-suffix duplication at conf 0.92),
+# whereas gating on length leaves that 5-char case caught (5 is not < 5) and
+# recovers only the shorter genuine SFX.
+_DUP_KANA_MIN_LEN_TO_FLAG = 5
+
 
 def _adjacent_dup_kanji(norm: str) -> bool:
     """An adjacent ``X X`` kanji pair that is NOT legitimate reduplication.
@@ -180,7 +200,14 @@ def _adjacent_dup_kana(norm: str) -> bool:
     so flagging it false-drops real dialogue. Doubled katakana is far more
     garble-like (katakana long vowels use ー, not vowel doubling), and the only
     common legit form is laughter (ハハ/フフ), which is whitelisted.
+
+    Length-gated below ``_DUP_KANA_MIN_LEN_TO_FLAG``: short doubled-katakana
+    fragments (ヒヒ, アア, ヴヴ, シュウウ) are overwhelmingly real SFX/interjection
+    text, not PARSeq dup-garble, which shows up on longer/denser runs in the
+    calib table. See the constant's comment for the calibration evidence.
     """
+    if len(norm) < _DUP_KANA_MIN_LEN_TO_FLAG:
+        return False
     for i in range(len(norm) - 1):
         a, b = norm[i], norm[i + 1]
         if a == b and _is_katakana(a) and a not in _LEGIT_KATAKANA_DOUBLE:

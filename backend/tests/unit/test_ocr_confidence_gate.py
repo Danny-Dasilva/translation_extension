@@ -12,7 +12,18 @@ Recalibrated on the 650-row conf x sim-to-gold table
   * multi-char lines need conf >= 0.80 (the 0.65-0.80 band is a ~40-55%-correct
     noise trough) -> raised long-text threshold;
   * adjacent doubled kanji/kana (身身わわ@0.92) are dropped unconditionally,
-    no longer exempted by the DUP_CONF_CEILING.
+    no longer exempted by the DUP_CONF_CEILING;
+  * BUG FIX: the doubled-katakana check (``_adjacent_dup_kana``) ran BEFORE the
+    short-text carve-out even had a chance to apply, so a short doubled-kana
+    giggle/SFX (ヒヒ.., アア, ヴヴ, シュウウ) was always dropped, at any
+    confidence, with no whitelist escape hatch (audit: p114 idx9 "ヒヒ.." @
+    0.9082, re-tested at 0.99, still dropped). Re-verified on the 650-row
+    table: every false drop this rule produced there was a short (< 5 char)
+    gold-exact SFX, while every genuine dup-garble catch (アソコアア,
+    ...チチンの, ...ババブブババブ.., ...濯ササ, ...セッッスく) was 5+ chars. So
+    the rule is now length-gated (mirrors the module's short-text carve-out)
+    instead of widening the katakana whitelist, which would have silently
+    un-caught real garble like アソコアア.
 """
 from __future__ import annotations
 
@@ -54,8 +65,49 @@ def test_drops_dup_kanji_at_falsely_high_conf():
 
 
 def test_drops_dup_katakana_at_high_conf():
-    # Doubled non-laughter katakana (ヌヌ) is dup-garble even at high conf.
-    assert is_implausible_japanese("ヌヌー界", 0.91) is True
+    # Doubled non-laughter katakana (ヌヌ) is dup-garble even at high conf, as
+    # long as the line clears the short-SFX length gate (>= 5 chars) — see
+    # test_keeps_short_giggle_sfx below for the short-string exemption.
+    assert is_implausible_japanese("ヌヌー界だよ", 0.91) is True
+
+
+# --- BUG FIX: short doubled-katakana giggle/SFX is no longer false-dropped --
+def test_keeps_short_giggle_sfx():
+    # p114 idx9 (audit case): ヒヒ (giggle) was dropped as dup-garble at conf
+    # 0.9082 and even at 0.99 — the check was unconditional and had no length
+    # carve-out. A short doubled-kana giggle/SFX is now kept.
+    assert is_implausible_japanese("ヒヒ..", 0.9082) is False
+    assert is_implausible_japanese("ヒヒ..", 0.99) is False
+    assert is_garbled_low_conf("ヒヒ..", 0.9082) is False
+    assert is_garbled_low_conf("ヒヒ..", 0.99) is False
+
+
+def test_keeps_other_short_katakana_dup_sfx():
+    # Other common short doubled-katakana SFX/interjections from the 650-row
+    # calib table, previously false-dropped by the unconditional rule.
+    assert is_implausible_japanese("アア", 0.7351) is False    # moan/interjection
+    assert is_implausible_japanese("ヴヴ", 0.9378) is False    # buzz/vibration SFX
+    assert is_implausible_japanese("シュウウ", 0.811) is False  # trailing ウウ, hiss/spray SFX
+
+
+def test_dup_kana_length_gate_does_not_reopen_real_garble():
+    # アソコアア (gold: アソコ) is a genuine PARSeq dup-garble — a bogus "アア"
+    # appended to a clean word — at conf 0.9213 in the calib table. It is
+    # exactly 5 chars (the length-gate boundary) and must stay caught: this
+    # is the concrete case that rules out simply widening the whitelist to
+    # include ア (which would have silently un-caught it).
+    assert is_implausible_japanese("アソコアア", 0.9213) is True
+    assert is_garbled_low_conf("アソコアア", 0.9213) is True
+
+
+def test_dup_kanji_garble_still_caught_unaffected_by_kana_fix():
+    # 濃濃くへ / 押押えて style doubled-KANJI garble is handled by a separate,
+    # untouched rule (_adjacent_dup_kanji) and is unaffected by the katakana
+    # length gate above — must still be dropped at any confidence.
+    assert is_implausible_japanese("濃濃くへ", 0.9) is True
+    assert is_implausible_japanese("押押えて", 0.9) is True
+    assert is_garbled_low_conf("濃濃くへ", 0.9) is True
+    assert is_garbled_low_conf("押押えて", 0.9) is True
 
 
 def test_dup_ceiling_still_spares_phrase_repeat_signal():
