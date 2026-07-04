@@ -311,7 +311,7 @@ class Settings(BaseSettings):
     # guard, span cap), so different balloons / wide SFX / panel containers never
     # fuse. Requires the YOLO bubble detector (no bubbles => no fusion). Default
     # OFF: safe opt-in pending GPU regen + 3-way omission audit.
-    detection_time_balloon_grouping: bool = False
+    detection_time_balloon_grouping: bool = True
 
     # SAFETY NET 1 (P2.1): EMPTY-BUBBLE BACKFILL. After the marked page-context
     # output is parsed, any KEPT high-OCR-confidence non-empty JP bubble that
