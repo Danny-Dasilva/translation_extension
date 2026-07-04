@@ -57,6 +57,13 @@ MAX_TOKENS_CONST = 4
 MAX_TOKENS_FLOOR = 8
 
 
+# --------------------------------------------------------------------------- #
+# Transient-failure retry knobs (empty-output root-cause fix, see `_chat`)
+# --------------------------------------------------------------------------- #
+_CHAT_RETRY_ATTEMPTS = 2  # additional attempts beyond the first (3 total)
+_CHAT_RETRY_BACKOFF_S = 2.0  # base backoff in seconds; doubles each retry
+
+
 def source_aware_max_tokens(jp: str, ceiling: int) -> int:
     """Per-call output token budget scaled to the Japanese source length.
 
@@ -503,15 +510,52 @@ class VLLMOpenAITranslationService:
             # repetition loops the small model falls into on garbled SFX OCR
             # (those loops eat the token budget and truncate the tail -> mismatch).
             payload["repetition_penalty"] = repetition_penalty
-        async with self._sem:
-            r = await self._client.post(
-                f"{self.base_url}/chat/completions",
-                headers={"Authorization": f"Bearer {self.api_key}"},
-                json=payload,
+        # TRANSIENT-FAILURE RETRY (empty-output root-cause fix, 2026-07-04).
+        # Root-cause audit: the confirmed empty-string cases from the
+        # ikenie4_v1_fair eval line up 1:1 with a sustained local-GPU OOM
+        # cascade (PARSeq batch-size collapse) DURING that specific run
+        # (.bench/ikenie4_v1_fair.log). Replaying the exact same prompts/params
+        # through this real code path (13 isolated calls x3 + a 407-call
+        # concurrency stress test matching translation_client_concurrency)
+        # reproduced ZERO empty completions from the model itself -- every
+        # finish_reason was "stop" with a normal handful of completion tokens,
+        # never a 0-token immediate EOS. That rules out deterministic sampling
+        # collapse and stop-sequence collision (no stop sequences are ever
+        # sent). It IS consistent with a TRANSIENT client-side HTTP failure
+        # (timeout/connection reset/5xx) hitting the box while it was under
+        # resource contention, which every caller here previously swallowed
+        # into a silent "" via a bare `except Exception`, with NO retry. A
+        # short bounded backoff-retry on transient failures ONLY (never on a
+        # 4xx, which is a real request error, not transient) gives the box's
+        # own ~10s cron-keepalive recovery window a chance to heal first.
+        last_exc: Exception | None = None
+        for attempt in range(_CHAT_RETRY_ATTEMPTS + 1):
+            try:
+                async with self._sem:
+                    r = await self._client.post(
+                        f"{self.base_url}/chat/completions",
+                        headers={"Authorization": f"Bearer {self.api_key}"},
+                        json=payload,
+                    )
+                r.raise_for_status()
+                data = r.json()
+                return data["choices"][0]["message"]["content"] or ""
+            except httpx.HTTPStatusError as e:
+                if e.response is not None and e.response.status_code < 500:
+                    raise  # client error (4xx) -- not transient, fail fast
+                last_exc = e
+            except httpx.RequestError as e:
+                last_exc = e
+            if attempt == _CHAT_RETRY_ATTEMPTS:
+                break
+            backoff = _CHAT_RETRY_BACKOFF_S * (2 ** attempt)
+            logger.warning(
+                f"vLLM chat call failed ({last_exc!r}); retrying in "
+                f"{backoff:.1f}s (attempt {attempt + 1}/{_CHAT_RETRY_ATTEMPTS})"
             )
-        r.raise_for_status()
-        data = r.json()
-        return data["choices"][0]["message"]["content"] or ""
+            await asyncio.sleep(backoff)
+        assert last_exc is not None
+        raise last_exc
 
     async def _faithfulness_floor(
         self, cleaned: str, src: str, retry_prompt: str
@@ -752,6 +796,7 @@ class VLLMOpenAITranslationService:
         msg = [{"role": "user", "content": content}]
         # FIX #1: source-length-aware cap (flat translate_max_tokens is the ceiling).
         max_tokens = source_aware_max_tokens(call_src, settings.translate_max_tokens)
+        raw = ""
         try:
             raw = await self._chat(
                 msg,
@@ -760,9 +805,28 @@ class VLLMOpenAITranslationService:
             )
         except Exception as e:  # noqa: BLE001
             logger.warning(f"vLLM translate_page_context line {k_idx + 1} failed: {e!r}")
-            return ""
+            raw = ""
         # One line out; clean exactly as the single-line path does.
         cleaned = clean_translation_output(raw)
+        # EMPTY-OUTPUT GAP-FILL (root-cause fix): unlike the legacy numbered-
+        # block path, this marked-line path previously had NO retry at all --
+        # a transient failure (see `_chat`) or a genuinely empty completion for
+        # a non-trivial source rendered as a silent, permanent "". Retry ONCE,
+        # isolated (no page context, so a different prompt shape than whatever
+        # just failed/emptied), via `translate_single` -- which itself benefits
+        # from `_chat`'s transient-failure backoff-retry.
+        if not cleaned.strip() and call_src.strip():
+            logger.info(
+                f"vLLM translate_page_context line {k_idx + 1}: empty result for "
+                f"non-empty source {call_src!r}; retrying in isolation"
+            )
+            try:
+                retry = await self.translate_single(call_src, target_language)
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"vLLM empty-gap-fill retry failed: {e!r}")
+                retry = ""
+            if retry.strip():
+                cleaned = retry
         # FIX #2: over-expansion floor. The page-context prompt carries the
         # "continue the scene" pressure, so the retry drops to the PLAIN prompt
         # (no page context) before falling back to an ellipsis.
