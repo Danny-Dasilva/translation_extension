@@ -888,7 +888,7 @@ class ComicTextDetectorService:
         a: Dict,
         b: Dict,
         *,
-        height_ratio_max: float = 0.5,
+        height_ratio_max: float = 0.42,
         glyph_mult: float = 1.8,
         y_overlap_min: float = 0.50,
     ) -> bool:
@@ -904,13 +904,18 @@ class ComicTextDetectorService:
         into the middle of the sentence, producing incoherent JP
         (``ruby + kanji + rest`` instead of ``kanji + rest``).
 
-        Conservative guards: requires the height ratio to be well below 1
-        (default 0.5) -- every real (even short) dialogue column pair in the
-        audited/tested geometry has a ratio >= ~0.6, so a genuine short
-        trailing column is never misclassified -- AND the SAME tight
-        column-adjacency geometry (``_adjacent_columns``) the fuser already
-        demands, so two boxes that merely happen to differ in height but sit
-        far apart or do not Y-overlap are never treated as a ruby pair.
+        Conservative guard: ``height_ratio_max`` sits BELOW the ratios of
+        genuine short trailing dialogue columns. A 25-page GPU re-audit
+        (2026-07-04) measured true furigana at ratio ~0.377 but real short
+        columns that must still fuse (p110 ``締めの``/…, p114 ``たかったんだよな``/…,
+        p093 ``理性``/…) at 0.46-0.49 — so the earlier 0.5 default wrongly
+        excluded them and reintroduced blank/omitted translations. 0.42
+        cleanly separates the two (below 0.46, above 0.377) and errs LOW:
+        a false exclusion of a real column (-> blank output) is worse than
+        an occasional mis-fused ruby. Also requires the SAME tight
+        column-adjacency geometry (``_adjacent_columns``) the fuser demands,
+        so boxes that merely differ in height but sit far apart or do not
+        Y-overlap are never treated as a ruby pair.
         """
         ha = float(a["maxY"]) - float(a["minY"])
         hb = float(b["maxY"]) - float(b["minY"])

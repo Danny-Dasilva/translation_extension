@@ -282,3 +282,17 @@ def test_real_short_trailing_column_is_not_treated_as_ruby():
     out = fuse([col_a, col_b], [bub])
     assert len(out) == 1
     assert _bbox(out[0]) == (1032, 573, 1098, 794)
+
+
+def test_short_trailing_column_at_regression_ratio_still_fuses():
+    # Regression lock (2026-07-04 GPU re-audit): genuine short trailing
+    # dialogue columns measured height-ratio 0.46-0.49 (p110 締めの/…, p114
+    # たかったんだよな/…, p093 理性/…). The original 0.5 furigana cutoff wrongly
+    # excluded them -> new blank translations. The cutoff (0.42) must sit
+    # BELOW these; a real short column at ratio ~0.46 must STILL fuse.
+    col_short = _b(1068, 573, 1098, 672)   # height 99
+    col_tall = _b(1032, 578, 1066, 794)    # height 216 (ratio 99/216 = 0.458)
+    bub = {"minX": 1000, "minY": 560, "maxX": 1110, "maxY": 800}
+    out = fuse([col_short, col_tall], [bub])
+    assert len(out) == 1, [_bbox(b) for b in out]
+    assert _bbox(out[0]) == (1032, 573, 1098, 794)
