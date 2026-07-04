@@ -90,14 +90,17 @@ class Settings(BaseSettings):
     # chat endpoint — the v10-it Gemma 4 E4B merged model + Google's MTP
     # drafter) or "transformers" (HF transformers, used for Hy-MT1.5-2bit).
     #
-    # Default is the vLLM + Google MTP path: it's the fastest production config
-    # benched (112 tok/s, 29% draft acceptance, lossless) and gives the best
-    # translation quality. Requires the server from
-    # `backend/scripts/eval/serve_v10it_vllm.sh` to be running on vllm_base_url;
-    # VLLMOpenAITranslationService raises a clear "start it with…" error if not.
+    # PROMOTED 2026-07-03: v1 = Qwen3-VL-8B-abliterated + text-SFT LoRA (merged,
+    # bf16), +10.104 chrF++ over the prior Gemma-4 E4B v11fix8 (CI95 [+7.7,+12.9]
+    # p=0, fair same-code A/B). Served on the box via box_serve_v1_merged.sh
+    # (merged weights + CUDA graphs, VLLM_USE_FLASHINFER_SAMPLER=0, multimodal
+    # image=1 so translation_serve_image_context works). No MTP drafter (Qwen3-VL
+    # has none). Contract: translation_v11_pagecontext=True + short_utterance_
+    # normalize OFF (v1's byte-exact train format; validated by the +10.104 cert).
+    # Prior default: v10it (Gemma-4 v11fix8 + MTP, serve_v10it_vllm.sh, local :8000).
     translation_backend: str = "vllm-openai"
-    vllm_base_url: str = "http://127.0.0.1:8000/v1"
-    vllm_model_name: str = "v10it"
+    vllm_base_url: str = "http://100.64.235.63:8001/v1"
+    vllm_model_name: str = "v1"
     # Max concurrent in-flight requests to the vLLM chat endpoint. This gates
     # every VLLMOpenAITranslationService._chat() call via an asyncio.Semaphore.
     # The service is a module-level singleton shared across ALL concurrently
