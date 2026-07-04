@@ -168,7 +168,7 @@ class Settings(BaseSettings):
     # and behaviour is byte-identical to before this flag existed. Gated pending
     # a full-page GPU render audit (Step-0 experiment covered detection-only,
     # not the composited output) before flipping the default on.
-    inpaint_ono_mask: bool = False
+    inpaint_ono_mask: bool = True
 
     # --- Final-composite font readability + page consistency ---------------
     # READABILITY FLOOR (resolution-aware). The minimum rendered font size is
