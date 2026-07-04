@@ -176,3 +176,109 @@ def test_span_cap_bounds_run():
     assert len(out) == 2
     assert _bbox(out[0]) == (664, 100, 732, 290)  # c0+c1
     assert _bbox(out[1]) == (592, 110, 660, 285)  # c2+c3
+
+
+# --- BUG D2: a near-identical duplicate raw box does not survive as a phantom --
+#
+# Real geometry from .bench/_flagab_on3_insp/082 (audit): a raw CTD column
+# (idx6's bbox, 息子を視界に) was detected TWICE at (near-)identical bbox; one
+# instance fused normally into the balloon's union block, the exact duplicate
+# survived fusion as its own standalone box with a blank translation -- a
+# phantom blank/duplicate render artifact.
+
+def test_duplicate_block_does_not_survive_as_phantom():
+    # A 4-column balloon at the default span cap (max_span=3): c0/c1/c2 fuse
+    # into one union, c3 stays its own separate block (see
+    # test_four_column_balloon_capped_at_default_span_3). An EXACT duplicate
+    # detection of c2 -- the real p082 case: idx6 duplicates a member
+    # already absorbed into the fused block -- must have ZERO effect on this
+    # outcome. Without dedup the duplicate (sharing c2's bbox, which
+    # legitimately passes adjacency with c3) wrongly fuses with c3 INSTEAD OF
+    # c3 staying solo -- corrupting c3's bbox/crop with a ghost repeat of
+    # c2's glyphs (verified: differs from the no-duplicate baseline pre-fix,
+    # identical post-fix).
+    c0 = _b(700, 100, 732, 280)
+    c1 = _b(664, 100, 696, 290)
+    c2 = _b(628, 110, 660, 285)
+    c3 = _b(592, 115, 624, 280)
+    dup_of_c2 = _b(628, 110, 660, 285)  # exact-duplicate raw CTD detection of c2
+    bub = {"minX": 575, "minY": 85, "maxX": 750, "maxY": 305}
+    baseline = fuse([c0, c1, c2, c3], [bub])
+    out = fuse([c0, c1, c2, dup_of_c2, c3], [bub])
+    boxes = [_bbox(b) for b in out]
+    baseline_boxes = [_bbox(b) for b in baseline]
+    # The duplicate must be dropped BEFORE fusion: byte-identical to the
+    # no-duplicate baseline, never a phantom extra entry or a corrupted c3.
+    assert boxes == baseline_boxes, boxes
+    assert (628, 100, 732, 290) in boxes   # c0+c1+c2 fused (unchanged)
+    assert (592, 115, 624, 280) in boxes   # c3 solo, uncorrupted
+
+
+def test_near_duplicate_block_iou_above_threshold_is_dropped():
+    c0 = _b(700, 100, 732, 280)
+    c1 = _b(664, 100, 696, 290)
+    c2 = _b(628, 110, 660, 285)
+    c3 = _b(592, 115, 624, 280)
+    # ~98% IoU with c2 (shifted a few px, not byte-exact) -- still a duplicate.
+    near_dup_of_c2 = _b(628, 113, 660, 285)
+    bub = {"minX": 575, "minY": 85, "maxX": 750, "maxY": 305}
+    baseline = fuse([c0, c1, c2, c3], [bub])
+    out = fuse([c0, c1, c2, near_dup_of_c2, c3], [bub])
+    assert [_bbox(b) for b in out] == [_bbox(b) for b in baseline]
+
+
+# --- BUG D3: a narrow ruby/furigana box flush against a tall kanji column is ---
+# --- not interleaved into fused reading order as its own column ---------------
+#
+# Real geometry from the audit: ruby gloss "あゆむ" (~22x60px) sits flush
+# beside the taller kanji column "息子を視界に" (~33x159px, height ratio
+# ~0.38) it annotates. Naive fusion treats the ruby as an ordinary column and
+# fuses its bbox INTO the kanji union -- OCR then reads both regions of the
+# resulting crop and interleaves the ruby reading ahead of the sentence
+# (``あゆむ`` + ``息子を視界に`` + ...), garbling the JP. Because bbox union
+# is associative, merging ruby+kanji together first is a NO-OP (produces the
+# same final crop as not special-casing it at all) -- the only fix that
+# actually changes the crop is EXCLUDING the pairing so the ruby's pixels
+# never enter the kanji's fused crop; the ruby surfaces as its own tiny
+# isolated block instead (a low-value/blank crop, but not sentence-garbling).
+
+def test_ruby_gloss_excluded_from_kanji_fusion():
+    ruby = _b(495, 480, 517, 540)     # あゆむ -- short (60px), narrow (22px)
+    kanji = _b(469, 497, 502, 656)    # 息子を視界に -- tall (159px), width 33px
+    bub = {"minX": 460, "minY": 470, "maxX": 525, "maxY": 665}
+    out = fuse([ruby, kanji], [bub])
+    boxes = [_bbox(b) for b in out]
+    # Two SEPARATE blocks: the ruby untouched on its own, the kanji untouched
+    # on its own -- crucially NOT one union block (which would still hand OCR
+    # a crop containing both regions).
+    assert len(out) == 2, boxes
+    assert _bbox(ruby) in boxes
+    assert _bbox(kanji) in boxes
+
+
+def test_ruby_gloss_does_not_block_kanji_fusing_with_real_neighbour():
+    # The kanji column must still fuse normally with a genuine FURTHER
+    # dialogue column of the SAME balloon -- excluding the ruby pairing must
+    # not also prevent the kanji's OTHER legitimate fusion.
+    ruby = _b(495, 480, 517, 540)
+    kanji = _b(469, 497, 502, 656)
+    next_col = _b(433, 500, 467, 660)  # further dialogue column, same balloon
+    bub = {"minX": 420, "minY": 470, "maxX": 525, "maxY": 665}
+    out = fuse([ruby, kanji, next_col], [bub])
+    boxes = [_bbox(b) for b in out]
+    # Ruby stays solo; kanji+next_col fuse into ONE union WITHOUT the ruby.
+    assert len(out) == 2, boxes
+    assert _bbox(ruby) in boxes
+    assert (433, 497, 502, 660) in boxes
+
+
+def test_real_short_trailing_column_is_not_treated_as_ruby():
+    # Sanity/conservatism check: a genuine (merely shorter) trailing column
+    # -- height ratio ~0.62, well above the ruby cutoff (0.5) -- still fuses
+    # normally as an ordinary column, not specially "absorbed".
+    col_a = _b(1068, 573, 1098, 707)   # height 134
+    col_b = _b(1032, 578, 1066, 794)   # height 216 (ratio 134/216 ~ 0.62)
+    bub = {"minX": 1000, "minY": 560, "maxX": 1110, "maxY": 800}
+    out = fuse([col_a, col_b], [bub])
+    assert len(out) == 1
+    assert _bbox(out[0]) == (1032, 573, 1098, 794)

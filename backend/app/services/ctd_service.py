@@ -836,6 +836,95 @@ class ComicTextDetectorService:
         }
 
     @staticmethod
+    def _dedup_near_identical_blocks(
+        blocks: List[Dict], *, iou_thresh: float = 0.9
+    ) -> List[Dict]:
+        """Drop near-identical duplicate CTD blocks BEFORE fusion (BUG D2).
+
+        CTD occasionally emits two near-identical raw boxes for the SAME
+        glyph region (verified on p082: two raw column detections at the
+        exact same bbox). Without this pass one instance gets absorbed into
+        a fused multi-column union while its exact duplicate survives as its
+        own standalone block downstream — a blank/duplicate phantom box on
+        the page (the duplicate has no distinguishing text of its own, since
+        it IS the same glyphs, so OCR/translation produces an empty or
+        redundant render).
+
+        Two blocks are treated as duplicates ONLY when their IoU exceeds
+        ``iou_thresh`` (0.9). This is conservative by construction: genuine
+        side-by-side balloon COLUMNS are adjacent, not overlapping — their
+        bounding boxes share little or no area (IoU near 0) even when they
+        touch edge-to-edge, so this can never eat two distinct adjacent
+        columns, only near-exact overlapping repeats. Keeps the
+        larger-area box of each duplicate pair (ties broken by confidence);
+        drops the rest. Preserves input order for survivors; non-mutating.
+        """
+        n = len(blocks)
+        if n < 2:
+            return list(blocks)
+        dropped = [False] * n
+        for i in range(n):
+            if dropped[i]:
+                continue
+            box_i = [blocks[i]["minX"], blocks[i]["minY"], blocks[i]["maxX"], blocks[i]["maxY"]]
+            for j in range(i + 1, n):
+                if dropped[j]:
+                    continue
+                box_j = [blocks[j]["minX"], blocks[j]["minY"], blocks[j]["maxX"], blocks[j]["maxY"]]
+                if ComicTextDetectorService._calc_iou_raw(box_i, box_j) <= iou_thresh:
+                    continue
+                area_i = ComicTextDetectorService._box_area(box_i)
+                area_j = ComicTextDetectorService._box_area(box_j)
+                conf_i = float(blocks[i].get("confidence", 0.9))
+                conf_j = float(blocks[j].get("confidence", 0.9))
+                if area_j > area_i or (area_j == area_i and conf_j > conf_i):
+                    dropped[i] = True
+                    break  # i is gone; stop comparing it against later boxes
+                dropped[j] = True
+        return [b for i, b in enumerate(blocks) if not dropped[i]]
+
+    @staticmethod
+    def _is_furigana_pair(
+        a: Dict,
+        b: Dict,
+        *,
+        height_ratio_max: float = 0.5,
+        glyph_mult: float = 1.8,
+        y_overlap_min: float = 0.50,
+    ) -> bool:
+        """True when one of ``a``/``b`` is a furigana/ruby gloss beside the other (BUG D3).
+
+        A ruby annotation is a TINY side-column (a couple of phonetic
+        characters) running alongside a portion of the kanji column it
+        glosses — geometrically it looks like a normal adjacent column
+        (passes ``_adjacent_columns``: close X, overlapping Y) but it is
+        markedly SHORTER than its neighbour (verified on p082: ruby height
+        ~60px beside a kanji column ~159px tall, ratio ~0.38). Fusing it as
+        an independent reading-order element interleaves the ruby reading
+        into the middle of the sentence, producing incoherent JP
+        (``ruby + kanji + rest`` instead of ``kanji + rest``).
+
+        Conservative guards: requires the height ratio to be well below 1
+        (default 0.5) -- every real (even short) dialogue column pair in the
+        audited/tested geometry has a ratio >= ~0.6, so a genuine short
+        trailing column is never misclassified -- AND the SAME tight
+        column-adjacency geometry (``_adjacent_columns``) the fuser already
+        demands, so two boxes that merely happen to differ in height but sit
+        far apart or do not Y-overlap are never treated as a ruby pair.
+        """
+        ha = float(a["maxY"]) - float(a["minY"])
+        hb = float(b["maxY"]) - float(b["minY"])
+        if ha <= 0 or hb <= 0:
+            return False
+        short, tall = (a, b) if ha <= hb else (b, a)
+        h_short, h_tall = min(ha, hb), max(ha, hb)
+        if h_short / h_tall > height_ratio_max:
+            return False
+        return _adjacent_columns(
+            short, tall, glyph_mult=glyph_mult, y_overlap_min=y_overlap_min
+        )
+
+    @staticmethod
     def fuse_balloon_columns(
         blocks: List[Dict],
         bubbles: Optional[Sequence[Dict]],
@@ -882,6 +971,29 @@ class ComicTextDetectorService:
           * only STRICTLY reading-order-adjacent columns fuse, runs capped at
             ``max_span``.
 
+        Two hardening passes/guards (2026-07-04 audit, p082):
+          * ``_dedup_near_identical_blocks`` drops true near-duplicate raw
+            CTD boxes (IoU > 0.9) BEFORE the greedy loop even runs, so an
+            exact-duplicate detection never survives fusion as a second,
+            blank phantom box (BUG D2),
+          * ``_is_furigana_pair`` EXCLUDES a tiny ruby/furigana gloss from
+            fusing with the taller kanji column it sits beside, inside
+            ``_can_fuse`` (same bubble + column-adjacency geometry it would
+            otherwise pass + markedly shorter). Note this must be an
+            EXCLUSION, not a "merge them together first" pre-pass: since
+            bbox union is associative, pre-merging ruby+kanji produces the
+            IDENTICAL final union bbox/crop the naive loop would have
+            produced anyway (verified: a no-op), which still hands OCR a
+            crop containing both the ruby glyphs and the kanji column and
+            reproduces the exact garbling this guard exists to prevent.
+            Excluding the pairing instead leaves the ruby as its own
+            isolated single-element block (its own small, low-value crop)
+            while the kanji fuses normally with its OTHER genuine
+            neighbours, WITHOUT the ruby's pixels ever entering that crop
+            (BUG D3).
+          Both are conservative geometry gates tuned to never touch two
+          distinct adjacent columns — see their docstrings for the guards.
+
         Blocks are compared in column-major RTL reading order
         (``reading_order_sort``) so the columns of one balloon are consecutive,
         and each pairwise test is between two ORIGINAL single columns (the
@@ -890,6 +1002,10 @@ class ComicTextDetectorService:
         untouched blocks are the same dict objects. Non-mutating.
         """
         if not bubbles or len(blocks) < 2:
+            return list(blocks)
+
+        blocks = ComicTextDetectorService._dedup_near_identical_blocks(blocks)
+        if len(blocks) < 2:
             return list(blocks)
 
         ordered = reading_order_sort(blocks)
@@ -906,6 +1022,14 @@ class ComicTextDetectorService:
             # fusing its contents.
             if _bubble_implausibly_large(
                 bubbles[ba], a, b, area_mult=bubble_area_mult
+            ):
+                return False
+            # A furigana/ruby gloss beside a kanji column is not an
+            # independent utterance -- excluding the pairing here (rather
+            # than merging their boxes) keeps the ruby's pixels out of the
+            # fused crop entirely (BUG D3).
+            if ComicTextDetectorService._is_furigana_pair(
+                a, b, glyph_mult=glyph_mult, y_overlap_min=y_overlap_min
             ):
                 return False
             # Same tight same-balloon column geometry as the grouper.
