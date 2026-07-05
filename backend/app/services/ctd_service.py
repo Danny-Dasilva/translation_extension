@@ -12,7 +12,13 @@ import numpy as np
 import onnxruntime as ort
 
 from app.config import settings
-from app.utils.ctd_utils import ERASE_SEG_THRESHOLD
+from app.utils.ctd_utils import (
+    ERASE_SEG_THRESHOLD,
+    ONO_CLOSE_KERNEL_SIZE,
+    ONO_DILATE_KERNEL_SIZE,
+    ONO_ERASE_SEG_THRESHOLD,
+    ONO_MAX_COMPONENT_AREA_FRAC,
+)
 # Pure geometry helpers reused for DETECTION-TIME balloon-column fusion. These are
 # the SAME guarded predicates the pre-translation `bubble_grouping` grouper uses
 # (column adjacency, glyph-width similarity, Y-overlap, RTL direction, panel-area
@@ -605,7 +611,24 @@ class ComicTextDetectorService:
         This mirrors the SAME un-letterbox/resize steps ``_process_mask`` uses
         (crop to the pre-pad region, then resize to the original page size) so
         the returned mask stays pixel-aligned with the page, but stops at a
-        plain threshold — no block clip, no morphological close/dilate.
+        plain threshold — no block clip.
+
+        PARTIAL-COVERAGE FIX (2026-07-04): a render audit found the raw ch1
+        channel routinely fires on only PART of a stylized glyph's strokes —
+        a legible fragment survives next to a blur remnant, and the
+        largest/most-stylized glyphs survive almost entirely. Raw-heatmap
+        inspection showed the fixable case is small (~10-30px) gaps between
+        detected fragments of the SAME glyph (as opposed to glyphs with
+        near-zero activation across the whole character, which no amount of
+        post-processing can recover — that needs a model fix). So, ono-only:
+        threshold at a lower, SEPARATE ``ONO_ERASE_SEG_THRESHOLD`` (not the
+        shared ``ERASE_SEG_THRESHOLD`` used by the text channel), then a
+        morphological close to bridge inter-fragment gaps into one glyph
+        blob, then a small dilate for the anti-aliased edge. There is still
+        NO block-bounds clip (this mask deliberately lives outside detected
+        text regions), so a per-component area guard
+        (``ONO_MAX_COMPONENT_AREA_FRAC``) drops any component that balloons
+        into an implausibly large blob instead of letting it erase art.
 
         Returns None when the raw seg output has no second channel (e.g. a
         legacy single-channel CTD export) since there is no ono signal to
@@ -629,8 +652,29 @@ class ComicTextDetectorService:
         w, h = orig_size
         ono = cv2.resize(ono, (w, h), interpolation=cv2.INTER_LINEAR)
 
-        binary = (ono > ERASE_SEG_THRESHOLD).astype(np.uint8) * 255
-        return binary
+        binary = (ono > ONO_ERASE_SEG_THRESHOLD).astype(np.uint8) * 255
+
+        close_kernel = cv2.getStructuringElement(
+            cv2.MORPH_ELLIPSE, (ONO_CLOSE_KERNEL_SIZE, ONO_CLOSE_KERNEL_SIZE)
+        )
+        closed = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, close_kernel)
+
+        dilate_kernel = cv2.getStructuringElement(
+            cv2.MORPH_ELLIPSE, (ONO_DILATE_KERNEL_SIZE, ONO_DILATE_KERNEL_SIZE)
+        )
+        grown = cv2.dilate(closed, dilate_kernel, iterations=1)
+
+        # Safety-net art guard: drop any single connected component that ended
+        # up covering an implausible page fraction (a bridging failure into
+        # background texture), rather than erasing it.
+        page_area = grown.shape[0] * grown.shape[1]
+        max_area = ONO_MAX_COMPONENT_AREA_FRAC * page_area
+        n_labels, labels, stats, _ = cv2.connectedComponentsWithStats(grown, connectivity=8)
+        out = np.zeros_like(grown)
+        for i in range(1, n_labels):
+            if stats[i, cv2.CC_STAT_AREA] <= max_area:
+                out[labels == i] = 255
+        return out
 
     def _build_block_bounds_mask(
         self,

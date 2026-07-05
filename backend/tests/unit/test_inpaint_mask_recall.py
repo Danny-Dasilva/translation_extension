@@ -21,6 +21,10 @@ import pytest
 
 from app.utils.ctd_utils import (
     ERASE_SEG_THRESHOLD,
+    ONO_CLOSE_KERNEL_SIZE,
+    ONO_DILATE_KERNEL_SIZE,
+    ONO_ERASE_SEG_THRESHOLD,
+    ONO_MAX_COMPONENT_AREA_FRAC,
     OVER_BROAD_AREA_FRAC,
     build_inpaint_mask,
 )
@@ -429,19 +433,21 @@ def test_ono_mask_only_input_still_produces_nonempty_mask():
 
 def test_process_ono_mask_extracts_ch1_only():
     """``_process_ono_mask`` reads channel 1 (SFX) ALONE, ignoring channel 0
-    (text) entirely — even where ch0 fires strongly and ch1 does not."""
+    (text) entirely — even where ch0 fires strongly and ch1 does not. Regions
+    are placed far enough apart (a 100x100 canvas) that the partial-coverage
+    close/dilate tuning cannot bridge one into the other."""
     from app.services.ctd_service import ComicTextDetectorService
 
     fake_self = types.SimpleNamespace()
-    raw = np.zeros((1, 2, 20, 20), dtype=np.float32)
-    raw[0, 0, 5:15, 5:15] = 0.9  # ch0 (text) fires strongly
-    raw[0, 1, 2:6, 2:6] = 0.9    # ch1 (ono) fires in a DIFFERENT region
+    raw = np.zeros((1, 2, 100, 100), dtype=np.float32)
+    raw[0, 0, 5:15, 5:15] = 0.9    # ch0 (text) fires strongly
+    raw[0, 1, 60:70, 60:70] = 0.9  # ch1 (ono) fires in a DIFFERENT, far region
 
     ono = ComicTextDetectorService._process_ono_mask(
-        fake_self, raw, (20, 20), (20, 20)
+        fake_self, raw, (100, 100), (100, 100)
     )
     assert ono is not None
-    assert ono[3, 3] == 255, "ch1 (ono) ink was not extracted"
+    assert ono[65, 65] == 255, "ch1 (ono) ink was not extracted"
     assert ono[10, 10] == 0, "ch0 (text) ink leaked into the ono-only mask"
 
 
@@ -459,54 +465,192 @@ def test_process_ono_mask_none_when_single_channel():
     ) is None
 
 
-def test_process_ono_mask_thresholded_at_erase_seg_threshold():
-    """Ink below ERASE_SEG_THRESHOLD (0.45) is not erased; ink above it is —
-    same erase-seg threshold contract as the combined text mask."""
+def test_process_ono_mask_thresholded_at_ono_erase_seg_threshold():
+    """Ink below ``ONO_ERASE_SEG_THRESHOLD`` (0.30 — deliberately lower than,
+    and separate from, the shared ``ERASE_SEG_THRESHOLD`` used by the text
+    channel) is not erased; ink above it is. Isolated ink far from any other
+    ink (a 100x100 canvas, blobs 40+px apart) so the gap-bridging close/dilate
+    cannot manufacture coverage where the raw channel emitted none."""
     from app.services.ctd_service import ComicTextDetectorService
 
+    assert ONO_ERASE_SEG_THRESHOLD < ERASE_SEG_THRESHOLD, (
+        "ono threshold must stay decoupled from (and lower than) the shared "
+        "text-channel erase threshold"
+    )
+
     fake_self = types.SimpleNamespace()
-    raw = np.zeros((2, 20, 20), dtype=np.float32)  # (C, H, W), no batch dim
-    raw[1, 2:6, 2:6] = 0.40   # below 0.45 -> not erased
-    raw[1, 12:16, 12:16] = 0.60  # above 0.45 -> erased
+    raw = np.zeros((2, 100, 100), dtype=np.float32)  # (C, H, W), no batch dim
+    raw[1, 10:14, 10:14] = ONO_ERASE_SEG_THRESHOLD - 0.10  # below -> not erased
+    raw[1, 60:64, 60:64] = ONO_ERASE_SEG_THRESHOLD + 0.10  # above -> erased
 
     ono = ComicTextDetectorService._process_ono_mask(
-        fake_self, raw, (20, 20), (20, 20)
+        fake_self, raw, (100, 100), (100, 100)
     )
     assert ono is not None
-    assert ono[3, 3] == 0, "sub-threshold ono ink was erased"
-    assert ono[13, 13] == 255, "above-threshold ono ink was not erased"
+    assert ono[11, 11] == 0, "sub-threshold ono ink was erased"
+    assert ono[61, 61] == 255, "above-threshold ono ink was not erased"
 
 
 def test_process_ono_mask_unletterboxes_and_resizes_like_process_mask():
-    """The padded-region crop + resize-to-original-size must exactly mirror
+    """The padded-region crop + resize-to-original-size must mirror
     ``_process_mask``'s alignment so ono_mask lines up with the page (a
-    misaligned mask would erase the wrong pixels)."""
+    misaligned mask would erase the wrong pixels). The close/dilate tuning
+    means the two paths are no longer byte-identical (ono grows beyond a
+    plain threshold), so this checks GEOMETRIC alignment instead: the ono
+    ink must land inside the region ``_process_mask``'s plain-threshold path
+    (no morphology) places it, and padding-region junk must never survive
+    the crop regardless of which path processes it.
+
+    Uses a page-scale (400x560) canvas rather than a tiny one: the tuned
+    morphology kernels (``ONO_CLOSE_KERNEL_SIZE``/``ONO_DILATE_KERNEL_SIZE``,
+    sized for real ~1280px-wide pages) would dwarf a toy 20x28 image (and a
+    naively-scaled-up single ink blob can still trip the area guard below —
+    see the sizing note inline). A small canvas is an artifact of the test,
+    not a real bleed — ``test_process_ono_mask_drops_oversized_component``
+    covers the actual area-guard behavior directly.
+    """
     from app.services.ctd_service import ComicTextDetectorService
 
     fake_self = types.SimpleNamespace(text_threshold=0.8)
-    # Simulate a letterboxed 20x20 model input where only the top-left 10x14
-    # (padded_size) holds real content; the rest is black padding.
-    raw = np.zeros((1, 2, 20, 20), dtype=np.float32)
-    raw[0, 1, 2:8, 2:8] = 0.9  # ono ink inside the valid (unpadded) region
+    # Simulate a letterboxed 400x400 model input where only the top-left
+    # 280x200 (padded_size) holds real content; the rest is black padding.
+    raw = np.zeros((1, 2, 400, 400), dtype=np.float32)
+    raw[0, 1, 20:40, 20:40] = 0.9  # ono ink inside the valid (unpadded) region
+    raw[0, 1, 300:380, 300:380] = 0.9  # ink IN THE PADDING region — must be cropped out
 
-    padded_size = (14, 10)  # (pw, ph) — the valid region before letterbox pad
-    orig_size = (28, 20)    # (w, h) — final page size (2x upscale)
+    padded_size = (280, 200)  # (pw, ph) — the valid region before letterbox pad
+    orig_size = (560, 400)    # (w, h) — final page size (2x upscale)
 
     ono = ComicTextDetectorService._process_ono_mask(
         fake_self, raw, padded_size, orig_size
     )
     assert ono is not None
-    assert ono.shape == (20, 28)  # (h, w)
+    assert ono.shape == (400, 560)  # (h, w)
 
-    # Cross-check alignment against _process_mask's ch1-only extraction path
-    # (mask.max over channels would mix ch0 in, so build a ch1-only copy here
-    # and confirm both share the same crop+resize geometry).
-    ch1_only = np.zeros((1, 1, 20, 20), dtype=np.float32)
+    # The 2x-upscaled ink footprint (raw cols/rows 20:40 -> resized 40:80)
+    # must be covered; the padding-region ink (raw rows/cols 300:380, OUTSIDE
+    # the 280x200 valid padded_size) must never appear post-crop.
+    assert ono[60, 60] == 255, "ono ink not aligned to the expected upscaled position"
+    assert ono[399, 559] == 0, (
+        "padding-region ink survived the crop (should have been discarded "
+        "before resize, same as _process_mask's letterbox handling)"
+    )
+
+    ch1_only = np.zeros((1, 1, 400, 400), dtype=np.float32)
     ch1_only[0, 0] = raw[0, 1]
     text_like = ComicTextDetectorService._process_mask(
         fake_self, ch1_only, padded_size, orig_size, blocks=None,
         legacy=True, erase_threshold=ERASE_SEG_THRESHOLD,
     )
-    assert np.array_equal(ono, text_like), (
-        "ono_mask crop/resize geometry diverged from _process_mask's"
+    # Every pixel the plain-threshold path erases must be a SUBSET of what the
+    # (lower-threshold, close/dilate-grown) ono path erases — the tuning only
+    # ever adds coverage, on the same aligned geometry, never removes it.
+    assert np.array_equal(np.maximum(ono, text_like), ono), (
+        "ono_mask does not superset the plain-threshold path's aligned ink "
+        "— crop/resize geometry may have diverged"
     )
+
+
+# --------------------------------------------------------------------------- #
+# PARTIAL-COVERAGE FIX (2026-07-04): close/dilate bridges same-glyph stroke
+# gaps; a per-component area guard drops runaway (art-bleed) blobs instead of
+# erasing them. ono_mask has no block-bounds clip to fall back on, so this
+# guard is the ono path's ONLY defense against a bridging failure.
+# --------------------------------------------------------------------------- #
+
+
+def test_process_ono_mask_bridges_small_gap_between_stroke_fragments():
+    """Core partial-coverage fix: two small, separately-detected stroke
+    fragments of the SAME glyph (a realistic ~12px gap, per the render audit)
+    must merge into ONE solid connected component after the close/dilate —
+    a plain threshold with no morphology would leave them as two disjoint
+    islands with the gap still showing the un-erased page underneath."""
+    from app.services.ctd_service import ComicTextDetectorService
+    import cv2
+
+    fake_self = types.SimpleNamespace()
+    raw = np.zeros((2, 100, 100), dtype=np.float32)
+    # Two 6x6 stroke fragments of "one glyph", ~12px gap between their edges.
+    raw[1, 40:46, 40:46] = 0.9
+    raw[1, 40:46, 58:64] = 0.9
+
+    ono = ComicTextDetectorService._process_ono_mask(
+        fake_self, raw, (100, 100), (100, 100)
+    )
+    assert ono is not None
+    # The gap midpoint (un-detected in the raw channel) must now be bridged.
+    assert ono[43, 52] == 255, (
+        "small inter-fragment gap was not bridged — partial-coverage residual "
+        "would survive erase"
+    )
+    n_labels, _ = cv2.connectedComponentsWithStats(ono, connectivity=8)[:2]
+    assert n_labels - 1 == 1, "bridged fragments must form a SINGLE component"
+
+
+def test_process_ono_mask_does_not_bridge_distant_unrelated_glyphs():
+    """Two fragments far apart (~40px, beyond the close+dilate reach) must
+    stay separate — the tuning connects strokes WITHIN a glyph, it must not
+    flood-merge across genuinely distinct glyphs/words."""
+    from app.services.ctd_service import ComicTextDetectorService
+    import cv2
+
+    fake_self = types.SimpleNamespace()
+    raw = np.zeros((2, 100, 100), dtype=np.float32)
+    raw[1, 20:26, 20:26] = 0.9
+    raw[1, 20:26, 70:76] = 0.9  # ~44px gap — a different glyph/word
+
+    ono = ComicTextDetectorService._process_ono_mask(
+        fake_self, raw, (100, 100), (100, 100)
+    )
+    assert ono is not None
+    assert ono[23, 48] == 0, "morphology bled across two unrelated glyphs"
+    n_labels, _ = cv2.connectedComponentsWithStats(ono, connectivity=8)[:2]
+    assert n_labels - 1 == 2, "distant fragments must remain two components"
+
+
+def test_process_ono_mask_drops_oversized_component_as_art_guard():
+    """A component that (after close/dilate) balloons past
+    ``ONO_MAX_COMPONENT_AREA_FRAC`` of the page is DROPPED rather than
+    erased — the safety net for a bridging failure into background texture,
+    since this path has no block-bounds clip to fall back on."""
+    from app.services.ctd_service import ComicTextDetectorService
+
+    fake_self = types.SimpleNamespace()
+    h = w = 100
+    raw = np.zeros((2, h, w), dtype=np.float32)
+    # A single blob covering ~25% of the page — far past the 5% guard.
+    raw[1, 10:60, 10:60] = 0.9
+
+    ono = ComicTextDetectorService._process_ono_mask(fake_self, raw, (w, h), (w, h))
+    assert ono is not None
+    assert ono.sum() == 0, (
+        "oversized component should be dropped by the art-bleed safety net, "
+        "not erased"
+    )
+
+
+def test_process_ono_mask_keeps_normal_sized_component_under_guard():
+    """Sanity check for the guard above: a normal glyph-sized component
+    (well under the area cap) must still survive the drop-if-oversized
+    check — the guard must not be so tight it eats real SFX."""
+    from app.services.ctd_service import ComicTextDetectorService
+
+    fake_self = types.SimpleNamespace()
+    h = w = 100
+    raw = np.zeros((2, h, w), dtype=np.float32)
+    raw[1, 40:50, 40:50] = 0.9  # a 10x10 glyph-sized blob (~1% of page)
+
+    assert 10 * 10 < ONO_MAX_COMPONENT_AREA_FRAC * h * w
+
+    ono = ComicTextDetectorService._process_ono_mask(fake_self, raw, (w, h), (w, h))
+    assert ono is not None
+    assert ono[45, 45] == 255, "normal-sized SFX component was dropped"
+
+
+def test_process_ono_mask_close_and_dilate_kernel_sizes_are_bounded():
+    """Sanity guard on the tuned constants themselves — regression check so a
+    future edit can't silently make the kernels huge (uncontrolled art bleed)
+    or zero (no-op, regressing back to the partial-coverage bug)."""
+    assert 0 < ONO_CLOSE_KERNEL_SIZE <= 41
+    assert 0 < ONO_DILATE_KERNEL_SIZE <= 21
+    assert 0 < ONO_MAX_COMPONENT_AREA_FRAC <= 0.15

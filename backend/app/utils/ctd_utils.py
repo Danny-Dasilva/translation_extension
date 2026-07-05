@@ -17,6 +17,48 @@ import numpy as np
 # thresholds the erase seg mask at this value (detection still uses 0.8).
 ERASE_SEG_THRESHOLD: float = 0.45
 
+# --- Ono (SFX) channel tuning (2026-07-04 partial-coverage audit) -----------
+# The v26 ono/ch1 channel routinely fires on only PART of a stylized glyph's
+# strokes — a render audit found ~60-70% of touched SFX end up partially
+# erased (a legible fragment survives next to a blur remnant), and the
+# largest/most-stylized glyphs survive almost entirely. Raw-heatmap
+# inspection (see thoughts audit) showed two distinct failure modes:
+#   1. Some glyphs get near-zero ch1 activation across the ENTIRE character —
+#      a genuine detector recall miss. No post-processing threshold or
+#      morphology can recover signal that was never emitted; this needs a
+#      model/training fix, not a mask tweak.
+#   2. Other glyphs DO fire, but only on a subset of strokes, leaving small
+#      (~10-30px) gaps between detected fragments of the SAME glyph. This is
+#      the fixable case: a modest threshold drop surfaces marginal fragments,
+#      and a morphological close bridges the inter-fragment gaps into one
+#      solid glyph blob, followed by a small dilate to cover the
+#      anti-aliased glyph edge.
+# ``ONO_ERASE_SEG_THRESHOLD`` is DELIBERATELY SEPARATE from
+# ``ERASE_SEG_THRESHOLD`` (used for the ch0 text channel and the combined
+# ch0-max-ch1 mask in ``_process_mask``) so this tuning touches ONLY the
+# unclipped ono/SFX path — the text-channel erase mask is unaffected.
+ONO_ERASE_SEG_THRESHOLD: float = 0.30
+
+# Close kernel (ellipse, diameter px): bridges gaps BETWEEN nearby stroke
+# fragments of the same glyph. Sized from measured inter-fragment gaps on a
+# densest-SFX sample (~10-30px) — large enough to merge those, small enough
+# to leave genuinely separate glyphs/words (50px+ apart) unmerged.
+ONO_CLOSE_KERNEL_SIZE: int = 25
+
+# Final dilate kernel (ellipse, diameter px) after the close: grows the
+# merged blob out to the glyph's anti-aliased edge, same spirit as the
+# proportional dilate ``build_inpaint_mask`` applies to the combined mask.
+ONO_DILATE_KERNEL_SIZE: int = 9
+
+# Safety-net art guard: since the ono mask has NO block-bounds clip (it
+# deliberately lives outside detected text regions — see
+# ``_process_ono_mask``), an unlucky close/dilate could in principle bridge
+# across unrelated background texture (screentone/hatching) into one runaway
+# blob. Real hand-drawn SFX is localized; any single connected component that
+# ends up covering more than this fraction of the page after the morphology
+# is dropped rather than erased, so a bridging failure cannot smear art.
+ONO_MAX_COMPONENT_AREA_FRAC: float = 0.05
+
 # Over-broad (per-component) art guard: a single detected text region (line or
 # block) whose bbox covers more than this fraction of the page is almost never
 # text — it is a panel-spanning false detection or seg bleed over artwork. Such
