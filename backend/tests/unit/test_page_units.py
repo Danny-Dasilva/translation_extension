@@ -340,6 +340,72 @@ def test_target_positions_index_into_page_context():
     assert units.target_positions == [0, 2]
 
 
+def test_p090_gate_dropped_sibling_does_not_collapse_neighbor_targets():
+    """Regression for the Ikenie5 p090 "duplicate/dropped balloon" report.
+
+    Real incident data (.bench/ikenie5_v1_latest_insp/090/bubbles.json idx 9,
+    16, 17): two SEPARATE, genuinely-identical-JP bubbles ("what should I do")
+    sit in different panels/columns (idx 9 far right, idx 16 far left), and a
+    THIRD bubble (idx 17) tightly column-adjacent to idx 16 has PARSeq OCR
+    hallucination ("心の目のお見つかる!!" for a crop that visually reads only
+    "見つかる!!") at ocr_conf 0.7373 -- below the long-text confidence floor
+    AND below the 12-char dialogue-context floor, so it is correctly gate-
+    dropped and excluded from context (never reaches the model).
+
+    The human EN reference (.bench/ikenie5_sidebyside/sidebyside_090_vs_090.png)
+    confirms idx 9 and idx 16 BOTH legitimately read "What should I" (matches
+    our output exactly) -- that repeat is the source manga's own device, not a
+    pipeline bug. The only real gap is idx 17 rendering blank instead of "I'll
+    be the one", which is a PARSeq recognition failure on a clean crop (verified
+    by cropping the exact reported bbox: zero bleed, zero noise, 4 clean glyphs)
+    -- an OCR-model deficiency outside this module's gate-integration contract,
+    not a translation-assignment mapping bug.
+
+    This test pins the CORRECT behavior so a future change to the gate/merge
+    wiring cannot silently regress it: the two textually-identical KEPT bubbles
+    must land on DISTINCT target positions (never collapsed/duplicated onto one
+    slot), the gate-dropped sibling must not contaminate either neighbor's
+    target, and sentence-merge (enabled, matching production) must NOT fuse the
+    gate-dropped sibling's column-adjacency into a bogus group.
+    """
+    # idx 9 equivalent: a different panel/column, far from the other two.
+    bubble9 = _b(699, 220, 730, 354)
+    # idx 16 equivalent: kept, high-confidence.
+    bubble16 = _b(184, 550, 217, 729)
+    # idx 17 equivalent: tightly column-adjacent to bubble16, PARSeq-hallucinated
+    # text at sub-gate confidence (real production values from the incident).
+    bubble17 = _b(148, 558, 182, 699)
+    blocks = [bubble9, bubble16, bubble17]
+    texts = ["どうしよう", "どうしよう..", "心の目のお見つかる!!"]
+    confs = [0.9261, 0.9273, 0.7373]
+
+    units = build_page_translation_units(
+        blocks, texts, confs, None,
+        _settings(translation_sentence_merge=True),
+        is_japanese_fn=_is_jp,
+        is_leave_intact_fn=_never_leave_intact,
+        should_skip_as_english_fn=_never_skip_english,
+    )
+
+    # The corrupted sibling is gate-dropped and too short to re-enter context.
+    assert units.kept_indices == [0, 1]
+    assert units.page_context_lines == ["どうしよう", "どうしよう.."]
+
+    # THE CORE INVARIANT: each kept bubble -- even though their JP text is
+    # genuinely identical -- gets its OWN distinct position into the page
+    # context. Neither collapses onto, copies, or overwrites the other's slot.
+    assert units.target_positions == [0, 1]
+    assert len(set(units.target_positions)) == len(units.target_positions)
+
+    # The dropped hallucinated line is real JP ink -> erased, never rendered.
+    assert len(units.erase_only_blocks) == 1
+
+    # Sentence-merge is ON (production default) but must NOT fuse anything here:
+    # the two kept lines are NOT same-column (different panels) and the
+    # gate-dropped sibling never reached page_context_lines to be fusable.
+    assert units.merge_plan is None
+
+
 # --- sentence-merge wiring ----------------------------------------------------
 
 def test_sentence_merge_plan_populated_when_enabled():
