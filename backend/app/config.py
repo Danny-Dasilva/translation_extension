@@ -77,6 +77,43 @@ class Settings(BaseSettings):
     ctd_block_confidence: float = 0.4
     ctd_min_text_area: int = 100
     ctd_nms_free: bool = True  # v26 det head is NMS-free (one-to-one, 300 slots)
+    # OBB oriented-text-line confidence gate, DECOUPLED from ctd_block_confidence.
+    # None (default) preserves the exact prior behavior
+    # (``min(ctd_block_confidence, 0.3)``, i.e. 0.3 at the current
+    # ctd_block_confidence=0.4) so this setting is a no-op until explicitly set.
+    # Recall-gap investigation (2026-07-04, detection_recall_eval.py +
+    # furube 010/015 chat-bubble audit): the v26 OBB line head under-scores
+    # horizontal chat/phone-UI text at 0.05-0.32, straddling the 0.3 op-point.
+    # Lowering this recovers a HANDFUL of near-miss lines per page (e.g. one
+    # p010 chat line at conf 0.278) but the bulk of missed chat text sits at
+    # 0.05-0.20 -- a genuine model-recall gap no threshold change fixes (see
+    # scripts/eval/detection_recall_eval.py measurements in the PR/handoff
+    # notes for the precision/recall tradeoff at 0.15). Left at None (i.e.
+    # off) pending a clean recall win with acceptable precision cost; set to
+    # e.g. 0.15 to trade some false-positive noise for a few extra lines.
+    ctd_obb_line_confidence: Optional[float] = None
+
+    # CV fallback region proposer (app.utils.region_fallback), EXPERIMENTAL,
+    # DEFAULT OFF. Classical-CV (Otsu + morphology + contour gating, zero
+    # model dependency) pass that proposes horizontal text-line boxes in page
+    # area the OBB head detected NOTHING in, targeting the SAME chat/UI-text
+    # recall gap as ctd_obb_line_confidence but from the opposite direction
+    # (a geometry-based proposer instead of a lower model-confidence bar).
+    # Proposed boxes are appended to ``text_lines`` so they flow through the
+    # EXISTING orphan-line-recovery pipeline unmodified. Measured
+    # (2026-07-04, furube p010/p015 + a 25-page AnimeText sample): recovers
+    # real isolated chat lines / small UI labels / SFX the OBB head missed
+    # with LOW false-positive incidence on ordinary manga pages (~20/25
+    # sampled pages produced >=1 candidate, averaging ~2/page, nearly all
+    # visually verified as genuine small missed text; a small minority were
+    # borderline icon/symbol shapes, not egregious floods). Does NOT
+    # reliably recover the densest multi-line stacked chat bubble case (see
+    # region_fallback.py's "KNOWN CEILING" docstring) -- that needs an OBB
+    # retrain or a learned line-splitter, not more CV. Left OFF by default
+    # because "borderline icon shape gets OCR'd and rendered" is a real,
+    # if infrequent, downside on ordinary pages; enable to trade a little of
+    # that risk for materially better chat/UI-page coverage.
+    ctd_cv_region_fallback: bool = False
 
     # Orphan-line recovery: text_lines whose center sits inside NO detected
     # block are otherwise silently dropped before OCR (SMS balloons, vertical
@@ -513,6 +550,28 @@ class Settings(BaseSettings):
     # WS path to be byte-identical to the pre-streaming behavior. The HTTP
     # POST /translate endpoint is ALWAYS monolithic regardless of this flag.
     translation_stream_events: bool = True
+
+    # HONORIFIC PRESERVATION (post-edit, see app/services/honorific_glossary.py).
+    # The furube/Ikenie human-EN side-by-side audit found the model sometimes
+    # drops a Japanese honorific (-san/-sama/-chan/-kun/-sensei/-senpai) the
+    # human scanlation keeps (Ikenie5 p017: source addresses "Maki-sama", ours
+    # drops it entirely). Master switch for the whole restoration pass —
+    # TIER A only (append a suffix to an ALREADY-PRESENT bare name; never
+    # invents a name). Source-conditioned and conservative: only fires on a
+    # verified per-title name-lock (kanji-safe) or a katakana/long-vowel kana
+    # span (kanji readings are never guessed). Default ON — this tier cannot
+    # invent text, only restore a suffix the source unambiguously supports.
+    postedit_restore_honorifics: bool = True
+
+    # TIER B (EXPERIMENTAL, default OFF): when the honorific-bearing name is
+    # ABSENT from the EN output entirely (not just missing its honorific, e.g.
+    # p017's fully-dropped "Maki-sama" vocative), insert a mechanically
+    # romanized "Name-suffix, " prefix. This DOES invent new text — kana
+    # romanization is approximate (the long-vowel mark "ー" is rendered as
+    # vowel elongation, e.g. "まーき" -> "Maaki", not the human translator's
+    # stylized "Ma-ki") — so it stays opt-in pending a wider validation pass.
+    # Requires postedit_restore_honorifics=True to have any effect.
+    postedit_restore_dropped_honorific_vocative: bool = False
 
     class Config:
         env_file = ".env"

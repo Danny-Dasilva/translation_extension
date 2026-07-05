@@ -29,6 +29,7 @@ from app.utils.bubble_grouping import (
     bubble_id_of,
 )
 from app.utils.orphan_lines import reading_order_sort
+from app.utils.region_fallback import propose_horizontal_text_regions
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +69,10 @@ class ComicTextDetectorService:
         self.block_confidence = settings.ctd_block_confidence
         self.min_area = settings.ctd_min_text_area
         self.nms_free = settings.ctd_nms_free  # YOLOv10 uses one-to-one assignment
+        # None (default) => byte-identical to the pre-existing hardcoded
+        # ``min(block_confidence, 0.3)`` op-point; see settings.ctd_obb_line_confidence
+        # docstring for the recall-gap context this decouples from.
+        self.obb_line_confidence = settings.ctd_obb_line_confidence
 
         providers = self._select_providers()
         logger.info(f"Loading Comic Text Detector from {model_path}")
@@ -177,6 +182,25 @@ class ComicTextDetectorService:
         if not blocks and text_lines:
             logger.info("No block detections; deriving blocks from text lines")
             blocks = self._derive_blocks_from_text_lines(text_lines)
+
+        # EXPERIMENTAL, flag-gated (settings.ctd_cv_region_fallback, default
+        # False): classical-CV proposer for horizontal chat/UI text lines the
+        # OBB head produced NO candidate for at all (see
+        # app/utils/region_fallback.py). Appended to ``text_lines`` (not
+        # ``blocks``) so they are picked up by the router's EXISTING
+        # orphan-line-recovery pass (find_orphan_lines/cluster_orphan_lines)
+        # exactly like any other undetected-by-a-block line -- zero changes
+        # needed there. Computed from ``blocks`` + the ORIGINAL (pre-fallback)
+        # text_lines, so proposals never look inside area already claimed by
+        # a real detection.
+        if settings.ctd_cv_region_fallback:
+            cv_lines = await asyncio.to_thread(
+                propose_horizontal_text_regions, img, blocks, text_lines,
+                input_is_bgr=input_is_bgr,
+            )
+            if cv_lines:
+                logger.info("CV region fallback proposed %d extra line(s)", len(cv_lines))
+                text_lines = text_lines + cv_lines
 
         # Expand line bboxes using koharu's font-aware padding (item #6)
         text_lines = self._expand_text_lines(text_lines, (w, h))
@@ -441,7 +465,14 @@ class ComicTextDetectorService:
         arr = lines_map[0] if lines_map.ndim == 3 else lines_map
         if arr.ndim == 2 and arr.shape[1] <= 16:
             w, h = orig_size
-            line_conf = min(self.block_confidence, 0.3)  # OBB op-point (~0.25-0.4)
+            # Independent OBB-line confidence gate (settings.ctd_obb_line_confidence).
+            # Falls back to the original coupled op-point when unset (None) so
+            # default behavior is byte-identical to before this setting existed.
+            line_conf = (
+                self.obb_line_confidence
+                if self.obb_line_confidence is not None
+                else min(self.block_confidence, 0.3)  # OBB op-point (~0.25-0.4)
+            )
             out: List[Dict] = []
             for row in arr:
                 cx, cy, bw, bh = (float(v) for v in row[:4])
