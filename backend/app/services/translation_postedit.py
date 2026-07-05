@@ -13,6 +13,9 @@ Chain order (each is conservative and idempotent):
   4. clean_sfx_output   — suppress "SFX for a ..." meta-leaks; fix onomatopoeia
   5. strip_model_artifacts — drop markdown-bold + assistant-refusal leaks
   6. strip_romaji_honorifics — drop leaked "-chan"/"-san" honorifics; onii->big bro
+  7. restore_honorifics — put back a SOURCE-CONFIRMED honorific step 6 removed
+     (or that the model dropped outright), when the source unambiguously
+     carries it. See app/services/honorific_glossary.py for the design.
 """
 from __future__ import annotations
 
@@ -20,6 +23,7 @@ import math
 import re
 from typing import List, Optional, Sequence
 
+from app.config import settings
 from app.services.register_glossary import restore_register
 from app.services.name_glossary import canonicalize_names
 from app.services.address_glossary import lock_address_terms
@@ -28,6 +32,7 @@ from app.services.output_sanitize import (
     strip_model_artifacts,
     strip_romaji_honorifics,
 )
+from app.services.honorific_glossary import restore_honorifics
 
 
 # --------------------------------------------------------------------------- #
@@ -142,6 +147,21 @@ def postedit_one(
     # ellipsis. Runs last so all glossary fixes apply first; conservative
     # thresholds mean faithful short->meaningful lines are never touched.
     en = gate_over_expansion(en, jp)
+    # HONORIFIC RESTORATION (discourse-fidelity safe mitigation): put back a
+    # source-confirmed honorific (e.g. "Maki-sama") that step 6 stripped or
+    # that the model dropped outright. Gated: TIER A (append a suffix to an
+    # already-present bare name) always runs when the master flag is on;
+    # TIER B (invent a vocative prefix when the name is fully absent) is a
+    # separate, higher-risk opt-in. Runs absolute last so nothing downstream
+    # can re-strip it. See app/services/honorific_glossary.py.
+    if getattr(settings, "postedit_restore_honorifics", True):
+        en = restore_honorifics(
+            en,
+            jp,
+            allow_vocative_insertion=getattr(
+                settings, "postedit_restore_dropped_honorific_vocative", False
+            ),
+        )
     return en
 
 
